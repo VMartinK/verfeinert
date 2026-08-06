@@ -31,7 +31,7 @@ verfeinert
 - canonical JSON schemas for candidates, staged packages, analysis results,
   experiments, and evolution runs;
 - packaged schema resources available after installation;
-- Sanz19-style ansatz generation and canonical Candidate/StagedPackage export;
+- standarized ansatz generation and canonical Candidate/StagedPackage export;
 - analyzer structural cost, Pareto/ranking foundations, and v1-aligned
   expressibility/trainability metric implementations;
 - reference-based evolver population, mutation, selection, and EvolutionRun
