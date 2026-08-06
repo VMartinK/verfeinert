@@ -10,6 +10,8 @@ Developed by Víctor Martín Kruglova
 If you use Verfeinert in academic work, please cite the software according to the citation metadata provided in `CITATION.cff`.
 [View citation information](CITATION.cff)
 
+The citation file is also available through GitHub's "Cite this repository" functionality.
+
 ## Namespace
 
 ```text
@@ -26,12 +28,12 @@ verfeinert
 - canonical JSON schemas for candidates, staged packages, analysis results,
   experiments, and evolution runs;
 - packaged schema resources available after installation;
-- standarized ansatz generation and canonical Candidate/StagedPackage export;
+- standardized ansatz generation and canonical Candidate/StagedPackage export;
 - analyzer structural cost, Pareto/ranking foundations, and v1-aligned
   expressibility/trainability metric implementations;
 - reference-based evolver population, mutation, selection, and EvolutionRun
   export foundations;
-- workflow runner and researcher-facing CX-01 and MIXT-5G smoke reproduction
+- workflow runner and researcher-facing CX-01 and MIXT-5G reproducibility
   examples.
 
 ## Install For Development
