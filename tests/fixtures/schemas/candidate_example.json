@@ -1,0 +1,103 @@
+{
+  "schema_version": "verfeinert.candidate.v1",
+  "candidate_id": "reference-a02-l1-parent",
+  "identity": {
+    "structural_hash": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+    "lineage_hash": "abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789",
+    "hash_schema_version": "verfeinert.candidate_hash.v1"
+  },
+  "circuit": {
+    "n_qubits": 2,
+    "wire_order": [0, 1],
+    "parameters": [
+      {
+        "parameter_id": "theta-0",
+        "kind": "trainable",
+        "symbol": "theta_0"
+      },
+      {
+        "parameter_id": "theta-1",
+        "kind": "trainable",
+        "symbol": "theta_1"
+      }
+    ],
+    "operations": [
+      {
+        "operation_id": "op-000",
+        "gate": {
+          "name": "rx",
+          "namespace": "verfeinert.default_gates"
+        },
+        "qubits": [0],
+        "parameters": [
+          {
+            "kind": "reference",
+            "parameter_id": "theta-0"
+          }
+        ],
+        "layer": 0,
+        "order": 0,
+        "role": "rotation",
+        "metadata": {
+          "block": "initial_rotation"
+        }
+      },
+      {
+        "operation_id": "op-001",
+        "gate": {
+          "name": "rz",
+          "namespace": "verfeinert.default_gates"
+        },
+        "qubits": [1],
+        "parameters": [
+          {
+            "kind": "reference",
+            "parameter_id": "theta-1"
+          }
+        ],
+        "layer": 0,
+        "order": 1,
+        "role": "rotation",
+        "metadata": {
+          "block": "initial_rotation"
+        }
+      },
+      {
+        "operation_id": "op-002",
+        "gate": {
+          "name": "cz",
+          "namespace": "verfeinert.default_gates"
+        },
+        "qubits": [0, 1],
+        "parameters": [],
+        "layer": 0,
+        "order": 2,
+        "role": "entangler",
+        "metadata": {
+          "block": "entangler"
+        }
+      }
+    ]
+  },
+  "lineage": {
+    "generation": 0,
+    "root_candidate_id": "reference-a02-l1-parent",
+    "parent_candidate_id": null,
+    "mutation": null
+  },
+  "metadata": {
+    "family": "reference_template",
+    "template": "sanz19-a02",
+    "layer_count": 1
+  },
+  "provenance": {
+    "created_at": "2026-08-04T00:00:00Z",
+    "source": {
+      "kind": "template",
+      "label": "sanz19-reference-builder"
+    },
+    "software_version": "0.0.0",
+    "git_commit": null,
+    "input_hashes": {}
+  }
+}

@@ -1,0 +1,31 @@
+{
+  "schema_version": "verfeinert.reference_metric_fixture.v1",
+  "metric": "trainability",
+  "classification": "A",
+  "candidate_id": "reference-a02-l1-parent",
+  "configuration": {
+    "n_qubits": 2,
+    "n_repeats": 3,
+    "trainability_n_pairs": 3,
+    "rng_seed": 123,
+    "rng_policy": "per_circuit",
+    "parameter_low": -3.141592653589793,
+    "parameter_high": 3.141592653589793,
+    "hamiltonian_kind": "sum_x",
+    "hamiltonian_scale": 1.0,
+    "active_grad_tol": 1e-10
+  },
+  "expected": {
+    "trainability_score": 1.812491433840209,
+    "trainability": 1.812491433840209,
+    "holmes_metric": 1.812491433840209,
+    "mean_squared_gradient_active": 1.812491433840209,
+    "gradient_variance": 1.7550310098911357,
+    "mean_abs_gradient": 1.324367952090139,
+    "gradient_mean": -0.23970904019054784,
+    "active_parameter_count": 2,
+    "inactive_parameter_count": 0,
+    "gradient_components": 6,
+    "rng_seed_used": 12587416754151051800
+  }
+}

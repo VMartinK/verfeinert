@@ -1,0 +1,19 @@
+{
+  "schema_version": "verfeinert.reference_metrics_manifest.v1",
+  "phase": "8.0.1",
+  "created_at": "2026-08-06T00:00:00Z",
+  "source": "Verfeinert v1 versus Verfeinert tiny deterministic metric comparison",
+  "candidate_id": "reference-a02-l1-parent",
+  "fixtures": [
+    {
+      "metric": "expressibility",
+      "path": "expressibility_tiny_reference.json",
+      "classification": "A"
+    },
+    {
+      "metric": "trainability",
+      "path": "trainability_tiny_reference.json",
+      "classification": "A"
+    }
+  ]
+}

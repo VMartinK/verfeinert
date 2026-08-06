@@ -1,0 +1,25 @@
+{
+  "schema_version": "verfeinert.reference_metric_fixture.v1",
+  "metric": "expressibility",
+  "classification": "A",
+  "candidate_id": "reference-a02-l1-parent",
+  "configuration": {
+    "n_qubits": 2,
+    "n_pairs": 8,
+    "n_bins": 5,
+    "rng_seed": 123,
+    "rng_policy": "per_circuit",
+    "parameter_low": 0.0,
+    "parameter_high": 6.283185307179586
+  },
+  "expected": {
+    "dkl": 1.4305071798944682,
+    "expressibility": -0.15549004192507934,
+    "fidelity_mean": 0.4725258589842154,
+    "fidelity_std": 0.41943375717494746,
+    "fidelity_min": 0.00029213308520058127,
+    "fidelity_max": 0.9980627624255919,
+    "qnode_calls": 16,
+    "rng_seed_used": 3048681661433210822
+  }
+}

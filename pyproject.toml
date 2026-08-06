@@ -1,0 +1,64 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "verfeinert"
+version = "0.0.0"
+description = "Open-source scientific framework for quantum ansatz generation, analysis, and evolution."
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "Apache-2.0" }
+authors = [
+    { family-names = "Martín Kruglova", given-name = "Víctor", affiliation = "Universitat Politècnica de València", orcid = "https://orcid.org/0009-0002-9508-3840" },
+]
+keywords = [
+    "quantum-computing",
+    "ansatz",
+    "variational-quantum-algorithms",
+    "scientific-computing",
+]
+classifiers = [
+    "Development Status :: 1 - Planning",
+    "Intended Audience :: Science/Research",
+    "License :: OSI Approved :: Apache Software License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Topic :: Scientific/Engineering",
+]
+dependencies = [
+    "PyYAML>=6",
+    "jsonschema>=4",
+    "numpy>=1.26",
+    "pennylane>=0.36",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pandas",
+    "pytest",
+    "pytest-cov",
+]
+quantum = [
+    "joblib",
+]
+visualization = [
+    "matplotlib",
+]
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["verfeinert*"]
+
+[tool.setuptools.package-data]
+"verfeinert.schemas" = ["*.schema.json"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
+addopts = "-ra"
+markers = [
+    "slow: marks tests as slow",
+    "quantum: marks tests that execute QNodes or expensive quantum routines",
+    "integration: marks integration tests",
+]

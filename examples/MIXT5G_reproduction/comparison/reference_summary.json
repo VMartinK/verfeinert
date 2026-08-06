@@ -1,0 +1,23 @@
+{
+  "reference_id": "mixt5g-v1-scientific-configuration",
+  "campaign_name": "MIXT-5G",
+  "initial_population": {
+    "source": "filtered_sanz19_reference_pool",
+    "template_ids": ["A04", "A07", "A08", "A10", "A11", "A12", "A13", "A14", "A15", "A17"],
+    "layers": [1, 2, 3],
+    "max_seed_parents": 30
+  },
+  "mutation_schedule": ["crx_insert", "crz_insert", "cz_insert", "crx_insert", "crz_insert"],
+  "selection": {
+    "mode": "strict_pareto_feedback_true_multithreshold",
+    "thresholds": [1.0, 0.2, 0.1],
+    "threshold_trajectory_mode": "independent",
+    "fallback_policy": "none"
+  },
+  "analysis": {
+    "expressibility_n_pairs": 5000,
+    "expressibility_n_bins": 75,
+    "trainability_n_pairs": 5000
+  },
+  "comparison_status": "configuration_reference_for_v2_reproduction"
+}

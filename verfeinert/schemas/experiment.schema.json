@@ -1,0 +1,221 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://verfeinert.org/schemas/v1/experiment.schema.json",
+  "title": "Verfeinert Experiment Configuration",
+  "description": "Canonical experiment configuration contract for caller-provided inputs, outputs, execution, and reproducibility settings.",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "experiment_id",
+    "inputs",
+    "outputs",
+    "execution",
+    "reproducibility"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": {
+      "const": "verfeinert.experiment.v1"
+    },
+    "experiment_id": {
+      "$ref": "#/$defs/identifier"
+    },
+    "description": {
+      "type": "string"
+    },
+    "inputs": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/input"
+      }
+    },
+    "outputs": {
+      "$ref": "#/$defs/outputs"
+    },
+    "execution": {
+      "$ref": "#/$defs/execution"
+    },
+    "reproducibility": {
+      "$ref": "#/$defs/reproducibility"
+    },
+    "modules": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "core": {
+          "type": "object"
+        },
+        "ansatz_generator": {
+          "type": "object"
+        },
+        "ansatz_analyzer": {
+          "type": "object"
+        },
+        "ansatz_evolver": {
+          "type": "object"
+        }
+      }
+    },
+    "metadata": {
+      "type": "object"
+    },
+    "extensions": {
+      "type": "object"
+    }
+  },
+  "$defs": {
+    "identifier": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]*$"
+    },
+    "uri": {
+      "type": "string",
+      "minLength": 1
+    },
+    "sha256": {
+      "type": "string",
+      "pattern": "^[a-fA-F0-9]{64}$"
+    },
+    "input": {
+      "type": "object",
+      "required": [
+        "input_id",
+        "kind",
+        "uri"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "input_id": {
+          "$ref": "#/$defs/identifier"
+        },
+        "kind": {
+          "enum": [
+            "candidate",
+            "candidate_set",
+            "experiment_config",
+            "reference_data",
+            "analysis_result",
+            "evolution_run",
+            "other"
+          ]
+        },
+        "uri": {
+          "$ref": "#/$defs/uri"
+        },
+        "hash": {
+          "$ref": "#/$defs/sha256"
+        },
+        "schema_version": {
+          "type": "string"
+        },
+        "metadata": {
+          "type": "object"
+        }
+      }
+    },
+    "outputs": {
+      "type": "object",
+      "required": [
+        "root_uri",
+        "artifact_policy"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "root_uri": {
+          "$ref": "#/$defs/uri"
+        },
+        "artifact_policy": {
+          "enum": [
+            "write_new",
+            "overwrite",
+            "append_versioned"
+          ]
+        },
+        "formats": {
+          "type": "array",
+          "items": {
+            "enum": [
+              "json",
+              "csv",
+              "parquet"
+            ]
+          },
+          "uniqueItems": true
+        },
+        "metadata": {
+          "type": "object"
+        }
+      }
+    },
+    "execution": {
+      "type": "object",
+      "required": [
+        "mode",
+        "scope",
+        "worker_count",
+        "parallelize_candidates"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "mode": {
+          "enum": [
+            "sequential",
+            "multiprocessing"
+          ]
+        },
+        "scope": {
+          "enum": [
+            "candidate"
+          ]
+        },
+        "worker_count": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "parallelize_candidates": {
+          "type": "boolean"
+        },
+        "backend": {
+          "enum": [
+            "local"
+          ]
+        }
+      }
+    },
+    "reproducibility": {
+      "type": "object",
+      "required": [
+        "random_seed",
+        "record_git_commit",
+        "hash_inputs"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "random_seed": {
+          "oneOf": [
+            {
+              "type": "integer",
+              "minimum": 0
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "record_git_commit": {
+          "type": "boolean"
+        },
+        "hash_inputs": {
+          "type": "boolean"
+        },
+        "provenance_level": {
+          "enum": [
+            "minimal",
+            "standard",
+            "full"
+          ]
+        }
+      }
+    }
+  }
+}

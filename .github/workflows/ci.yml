@@ -1,0 +1,99 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+
+jobs:
+  base:
+    name: Base validation / Python ${{ matrix.python-version }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.11", "3.12"]
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Install package
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install ".[dev]"
+
+      - name: Parse JSON schemas
+        run: |
+          for schema in schemas/*.schema.json; do
+            python -m json.tool "$schema" > /dev/null
+          done
+
+      - name: Validate public imports and packaged schemas
+        run: |
+          python - <<'PY'
+          from verfeinert.core import load_schema, schema_names
+          from verfeinert.ansatz_generator import build_sanz19_candidate_record
+          from verfeinert.ansatz_analyzer import AnalysisPipeline
+          from verfeinert.ansatz_evolver import CandidateRef
+          from verfeinert.workflow import WorkflowConfig
+
+          assert load_schema("candidate")["$id"].endswith("/candidate.schema.json")
+          assert len(schema_names()) == 5
+          record = build_sanz19_candidate_record("A02", 1, n_qubits=2)
+          assert record["operations"]
+          assert AnalysisPipeline
+          assert CandidateRef(candidate_id="ci-candidate").candidate_id == "ci-candidate"
+          assert WorkflowConfig.from_mapping({"run_id": "ci-import", "output_root": "outputs"})
+          PY
+
+      - name: Run unittest suite
+        env:
+          PYTHONDONTWRITEBYTECODE: "1"
+          MPLCONFIGDIR: /tmp/matplotlib-verfeinertv2
+        run: python -m unittest discover -s tests -q
+
+      - name: Run pytest suite
+        run: python -m pytest tests -q
+
+      - name: Run CX-01 smoke example
+        run: |
+          python examples/CX01_reproduction/scripts/run_cx01_reproduction.py \
+            --profile smoke \
+            --output-root "$RUNNER_TEMP/cx01-reproduction"
+
+      - name: Run MIXT-5G smoke example
+        run: |
+          python examples/MIXT5G_reproduction/scripts/run_mixt5g_reproduction.py \
+            --profile smoke \
+            --output-root "$RUNNER_TEMP/mixt5g-reproduction"
+
+  visualization:
+    name: Visualization validation / Python 3.12
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install package with visualization extras
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install ".[dev,visualization]"
+
+      - name: Run visualization tests
+        env:
+          PYTHONDONTWRITEBYTECODE: "1"
+          MPLCONFIGDIR: /tmp/matplotlib-verfeinertv2
+        run: python -m unittest tests/test_ansatz_analyzer_phase_5_7_visualization.py -q

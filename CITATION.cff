@@ -1,0 +1,17 @@
+cff-version: 1.2.0
+message: "If you use Verfeinert in research, please cite the framework."
+title: "Verfeinert"
+version: "0.0.0"
+date-released: "2026-08-06"
+license: "Apache-2.0"
+authors:
+  - family-names: "Martín Kruglova"
+  - given-name: "Víctor"
+  - affiliation: "Universitat Politècnica de València"
+  - orcid: "https://orcid.org/0009-0002-9508-3840"
+keywords:
+  - quantum ansatz
+  - variational quantum algorithms
+  - scientific computing
+  - quantum machine learning
+abstract: "Verfeinert is an open-source scientific framework for quantum ansatz generation, analysis, evolution, and reproducible workflow orchestration."

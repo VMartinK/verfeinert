@@ -1,0 +1,57 @@
+# Python bytecode and caches
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# Virtual environments
+.venv/
+venv/
+env/
+ENV/
+
+# Packaging and build outputs
+build/
+dist/
+*.egg-info/
+*.whl
+*.tar.gz
+
+# Jupyter
+.ipynb_checkpoints/
+
+# Local/generated experiment outputs
+outputs/
+results/
+tmp/
+plots/
+data/raw/
+data/cache/
+*.h5
+*.hdf5
+*.npy
+*.npz
+*.pkl
+*.joblib
+
+# Example output roots: keep placeholders only
+!examples/**/outputs/
+examples/**/outputs/*
+!examples/**/outputs/.gitkeep
+
+# External validation outputs
+external_validation_summary.json
+
+# OS/editor files
+.DS_Store
+Thumbs.db
+desktop.ini
+.vscode/
+*.tmp
+*.bak
+*.swp
+*~

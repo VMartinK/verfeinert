@@ -1,0 +1,28 @@
+{
+  "reference_id": "cx01-v1-scientific-configuration",
+  "campaign_name": "CX-01",
+  "library": "sanz19",
+  "n_qubits": 4,
+  "layers": [1, 2, 3],
+  "mutation": {
+    "type": "knock_in",
+    "gate": "cx",
+    "scope": "template_mutation",
+    "propagation_policy": "repeat_mutated_single_layer"
+  },
+  "candidate_policy": {
+    "parent_templates": "all",
+    "edges": "all_valid",
+    "placement": "after_rotation_block",
+    "acceptance": "valid_all_layers"
+  },
+  "analysis": {
+    "metrics": ["expressibility", "trainability", "structural_cost", "pareto_front"],
+    "pareto_objectives": {
+      "expressibility": "maximize",
+      "trainability": "maximize"
+    },
+    "cost_thresholds": [1.0, 0.2, 0.1]
+  },
+  "comparison_status": "configuration_reference_for_v2_reproduction"
+}

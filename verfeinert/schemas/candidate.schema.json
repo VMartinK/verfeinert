@@ -1,0 +1,390 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://verfeinert.org/schemas/v1/candidate.schema.json",
+  "title": "Verfeinert Candidate",
+  "description": "Canonical hierarchical JSON representation of a backend-independent ansatz candidate.",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "candidate_id",
+    "identity",
+    "circuit",
+    "lineage",
+    "metadata",
+    "provenance"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": {
+      "const": "verfeinert.candidate.v1"
+    },
+    "candidate_id": {
+      "$ref": "#/$defs/identifier"
+    },
+    "identity": {
+      "type": "object",
+      "required": [
+        "structural_hash",
+        "hash_schema_version"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "structural_hash": {
+          "$ref": "#/$defs/sha256"
+        },
+        "lineage_hash": {
+          "oneOf": [
+            {
+              "$ref": "#/$defs/sha256"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "hash_schema_version": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    },
+    "circuit": {
+      "type": "object",
+      "required": [
+        "n_qubits",
+        "parameters",
+        "operations"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "n_qubits": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "wire_order": {
+          "type": "array",
+          "items": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "uniqueItems": true
+        },
+        "parameters": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/circuit_parameter"
+          },
+          "uniqueItems": true
+        },
+        "operations": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "$ref": "#/$defs/operation"
+          }
+        }
+      }
+    },
+    "lineage": {
+      "$ref": "#/$defs/lineage"
+    },
+    "metadata": {
+      "type": "object"
+    },
+    "provenance": {
+      "$ref": "#/$defs/provenance"
+    },
+    "extensions": {
+      "type": "object"
+    }
+  },
+  "$defs": {
+    "identifier": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]*$"
+    },
+    "sha256": {
+      "type": "string",
+      "pattern": "^[a-fA-F0-9]{64}$"
+    },
+    "non_empty_string": {
+      "type": "string",
+      "minLength": 1
+    },
+    "scalar": {
+      "oneOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "number"
+        },
+        {
+          "type": "boolean"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "circuit_parameter": {
+      "type": "object",
+      "required": [
+        "parameter_id",
+        "kind"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "parameter_id": {
+          "$ref": "#/$defs/identifier"
+        },
+        "kind": {
+          "enum": [
+            "trainable",
+            "fixed",
+            "derived"
+          ]
+        },
+        "symbol": {
+          "$ref": "#/$defs/non_empty_string"
+        },
+        "value": {
+          "$ref": "#/$defs/scalar"
+        },
+        "metadata": {
+          "type": "object"
+        }
+      }
+    },
+    "parameter_reference": {
+      "type": "object",
+      "required": [
+        "kind",
+        "parameter_id"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "kind": {
+          "const": "reference"
+        },
+        "parameter_id": {
+          "$ref": "#/$defs/identifier"
+        }
+      }
+    },
+    "parameter_literal": {
+      "type": "object",
+      "required": [
+        "kind",
+        "value"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "kind": {
+          "const": "literal"
+        },
+        "value": {
+          "$ref": "#/$defs/scalar"
+        }
+      }
+    },
+    "operation": {
+      "type": "object",
+      "required": [
+        "operation_id",
+        "gate",
+        "qubits",
+        "parameters"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "operation_id": {
+          "$ref": "#/$defs/identifier"
+        },
+        "gate": {
+          "type": "object",
+          "required": [
+            "name"
+          ],
+          "additionalProperties": false,
+          "properties": {
+            "name": {
+              "$ref": "#/$defs/non_empty_string"
+            },
+            "namespace": {
+              "$ref": "#/$defs/non_empty_string"
+            },
+            "version": {
+              "$ref": "#/$defs/non_empty_string"
+            }
+          }
+        },
+        "qubits": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "integer",
+            "minimum": 0
+          }
+        },
+        "parameters": {
+          "type": "array",
+          "items": {
+            "oneOf": [
+              {
+                "$ref": "#/$defs/parameter_reference"
+              },
+              {
+                "$ref": "#/$defs/parameter_literal"
+              }
+            ]
+          }
+        },
+        "layer": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "order": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "role": {
+          "enum": [
+            "rotation",
+            "entangler",
+            "controlled_rotation",
+            "basis_change",
+            "measurement_preparation",
+            "other"
+          ]
+        },
+        "metadata": {
+          "type": "object"
+        }
+      }
+    },
+    "lineage": {
+      "type": "object",
+      "required": [
+        "generation",
+        "root_candidate_id",
+        "parent_candidate_id",
+        "mutation"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "generation": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "root_candidate_id": {
+          "$ref": "#/$defs/identifier"
+        },
+        "parent_candidate_id": {
+          "oneOf": [
+            {
+              "$ref": "#/$defs/identifier"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "mutation": {
+          "oneOf": [
+            {
+              "$ref": "#/$defs/mutation"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      }
+    },
+    "mutation": {
+      "type": "object",
+      "required": [
+        "mutation_id",
+        "type",
+        "source_candidate_id"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "mutation_id": {
+          "$ref": "#/$defs/identifier"
+        },
+        "type": {
+          "$ref": "#/$defs/non_empty_string"
+        },
+        "source_candidate_id": {
+          "$ref": "#/$defs/identifier"
+        },
+        "operation": {
+          "type": "string"
+        },
+        "parameters": {
+          "type": "object"
+        },
+        "metadata": {
+          "type": "object"
+        }
+      }
+    },
+    "provenance": {
+      "type": "object",
+      "required": [
+        "created_at",
+        "source"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "created_at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "source": {
+          "type": "object",
+          "required": [
+            "kind",
+            "label"
+          ],
+          "additionalProperties": false,
+          "properties": {
+            "kind": {
+              "enum": [
+                "template",
+                "mutation",
+                "import",
+                "manual",
+                "generated"
+              ]
+            },
+            "label": {
+              "$ref": "#/$defs/non_empty_string"
+            }
+          }
+        },
+        "software_version": {
+          "type": "string"
+        },
+        "git_commit": {
+          "oneOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "input_hashes": {
+          "type": "object",
+          "additionalProperties": {
+            "$ref": "#/$defs/sha256"
+          }
+        }
+      }
+    }
+  }
+}

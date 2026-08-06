@@ -1,0 +1,221 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://verfeinert.org/schemas/v1/analysis_result.schema.json",
+  "title": "Verfeinert Analysis Result",
+  "description": "Canonical analysis output referencing candidates and recording metrics, costs, classifications, and provenance.",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "analysis_result_id",
+    "candidate_ref",
+    "metrics",
+    "cost",
+    "classifications",
+    "provenance"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": {
+      "const": "verfeinert.analysis_result.v1"
+    },
+    "analysis_result_id": {
+      "$ref": "#/$defs/identifier"
+    },
+    "candidate_ref": {
+      "$ref": "#/$defs/candidate_ref"
+    },
+    "metrics": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/metric"
+      }
+    },
+    "cost": {
+      "$ref": "#/$defs/cost"
+    },
+    "classifications": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/classification"
+      }
+    },
+    "provenance": {
+      "$ref": "#/$defs/provenance"
+    },
+    "metadata": {
+      "type": "object"
+    },
+    "extensions": {
+      "type": "object"
+    }
+  },
+  "$defs": {
+    "identifier": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]*$"
+    },
+    "sha256": {
+      "type": "string",
+      "pattern": "^[a-fA-F0-9]{64}$"
+    },
+    "candidate_ref": {
+      "type": "object",
+      "required": [
+        "candidate_id"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "candidate_id": {
+          "$ref": "#/$defs/identifier"
+        },
+        "candidate_uri": {
+          "type": "string"
+        },
+        "structural_hash": {
+          "$ref": "#/$defs/sha256"
+        }
+      }
+    },
+    "metric": {
+      "type": "object",
+      "required": [
+        "metric_id",
+        "name",
+        "status"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "metric_id": {
+          "$ref": "#/$defs/identifier"
+        },
+        "name": {
+          "type": "string",
+          "minLength": 1
+        },
+        "status": {
+          "enum": [
+            "computed",
+            "skipped",
+            "failed"
+          ]
+        },
+        "value": {
+          "oneOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "object"
+            },
+            {
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "units": {
+          "type": "string"
+        },
+        "error": {
+          "type": "string"
+        },
+        "metadata": {
+          "type": "object"
+        }
+      }
+    },
+    "cost": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "structural_cost": {
+          "type": "number"
+        },
+        "operation_count": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "two_qubit_operation_count": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "parameter_count": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "metadata": {
+          "type": "object"
+        }
+      }
+    },
+    "classification": {
+      "type": "object",
+      "required": [
+        "classification_id",
+        "name",
+        "label"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "classification_id": {
+          "$ref": "#/$defs/identifier"
+        },
+        "name": {
+          "type": "string",
+          "minLength": 1
+        },
+        "label": {
+          "type": "string",
+          "minLength": 1
+        },
+        "threshold": {
+          "type": "number"
+        },
+        "confidence": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        },
+        "metadata": {
+          "type": "object"
+        }
+      }
+    },
+    "provenance": {
+      "type": "object",
+      "required": [
+        "created_at",
+        "analyzer"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "created_at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "analyzer": {
+          "type": "string",
+          "minLength": 1
+        },
+        "software_version": {
+          "type": "string"
+        },
+        "git_commit": {
+          "oneOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "execution": {
+          "type": "object"
+        }
+      }
+    }
+  }
+}

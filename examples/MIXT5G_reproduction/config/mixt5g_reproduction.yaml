@@ -1,0 +1,110 @@
+run:
+  run_id: mixt5g-reproduction
+  created_at: "2026-08-06T00:00:00Z"
+  random_seed: 12345
+
+paths:
+  output_root: outputs
+
+generation:
+  family: provided
+  candidate_id_prefix: mixt5g
+  source_label: mixt5g_reproduction
+  n_qubits: 4
+  metadata:
+    reproduction: mixt5g
+    default_profile: smoke
+
+analyzer:
+  selected_metrics: [structural_cost]
+  structural_cost:
+    reference_id: mixt5g-reference
+    reference_bounds:
+      parameter_count:
+        min: 1
+        max: 96
+      depth:
+        min: 1
+        max: 192
+      two_qubit_operation_count:
+        min: 0
+        max: 64
+    component_weights:
+      parameter_count: 1
+      depth: 1
+      two_qubit_operation_count: 1
+    allow_operation_count_as_depth_proxy: true
+  ranking:
+    score_components:
+      cost.structural_cost: 1
+    combination: weighted_sum
+    ascending: true
+
+evolver:
+  selection_mode: strict_pareto
+  policy_id: mixt5g-strict-pareto-smoke
+  objectives:
+    - name: structural_cost
+      direction: minimize
+  max_generations: 5
+
+mixt5g_campaign:
+  name: MIXT-5G
+  source_family: Sanz19
+  initial_population:
+    source: filtered_sanz19_reference_pool
+    template_ids: [A04, A07, A08, A10, A11, A12, A13, A14, A15, A17]
+    layers: [1, 2, 3]
+    max_seed_parents: 30
+  mutation_schedule:
+    - generation: 1
+      mutation_gate: crx
+      mutation_code: crx_insert
+      mutation_expansion_mode: exhaustive
+    - generation: 2
+      mutation_gate: crz
+      mutation_code: crz_insert
+      mutation_expansion_mode: exhaustive
+    - generation: 3
+      mutation_gate: cz
+      mutation_code: cz_insert
+      mutation_expansion_mode: exhaustive
+    - generation: 4
+      mutation_gate: crx
+      mutation_code: crx_insert
+      mutation_expansion_mode: exhaustive
+    - generation: 5
+      mutation_gate: crz
+      mutation_code: crz_insert
+      mutation_expansion_mode: exhaustive
+  selection:
+    mode: strict_pareto_feedback_true_multithreshold
+    thresholds: [1.0, 0.2, 0.1]
+    threshold_trajectory_mode: independent
+    objectives: [expressibility_score, trainability_score]
+    cost_filter_role: threshold_specific_selection_filter_only
+    combined_score_role: diagnostic_only
+    strict_ties: true
+    fallback_policy: none
+  metrics:
+    expressibility_n_pairs: 5000
+    expressibility_n_bins: 75
+    trainability_n_pairs: 5000
+    expensive_metrics_default: false
+
+profiles:
+  smoke:
+    initial_template_ids: [A04, A07]
+    layers: [1]
+    generations: 2
+    parents_per_generation: 1
+    edges:
+      - [0, 1]
+    max_initial_parents: 2
+  full:
+    initial_template_ids: [A04, A07, A08, A10, A11, A12, A13, A14, A15, A17]
+    layers: [1, 2, 3]
+    generations: 5
+    parents_per_generation: null
+    edges: all_valid
+    max_initial_parents: 30

@@ -1,0 +1,179 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://verfeinert.org/schemas/v1/staged_package.schema.json",
+  "title": "Verfeinert Staged Candidate Package",
+  "description": "Canonical hierarchical package for exchanging candidate records and generated artifacts between modules.",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "package_id",
+    "manifest",
+    "candidates",
+    "artifacts",
+    "provenance"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": {
+      "const": "verfeinert.staged_package.v1"
+    },
+    "package_id": {
+      "$ref": "#/$defs/identifier"
+    },
+    "manifest": {
+      "type": "object",
+      "required": [
+        "package_kind",
+        "created_at",
+        "producer",
+        "candidate_count",
+        "execution_flags"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "package_kind": {
+          "const": "candidate_package"
+        },
+        "created_at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "producer": {
+          "type": "string",
+          "minLength": 1
+        },
+        "candidate_count": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "schema_versions": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "string"
+          }
+        },
+        "execution_flags": {
+          "type": "object",
+          "required": [
+            "qnodes_executed",
+            "scientific_metrics_executed",
+            "generated_callables_imported"
+          ],
+          "additionalProperties": false,
+          "properties": {
+            "qnodes_executed": {
+              "const": false
+            },
+            "scientific_metrics_executed": {
+              "const": false
+            },
+            "generated_callables_imported": {
+              "const": false
+            }
+          }
+        }
+      }
+    },
+    "candidates": {
+      "type": "array",
+      "items": {
+        "$ref": "https://verfeinert.org/schemas/v1/candidate.schema.json"
+      }
+    },
+    "artifacts": {
+      "type": "array",
+      "items": {
+        "$ref": "https://verfeinert.org/schemas/v1/staged_package.schema.json#/$defs/artifact"
+      }
+    },
+    "provenance": {
+      "$ref": "https://verfeinert.org/schemas/v1/staged_package.schema.json#/$defs/provenance"
+    },
+    "metadata": {
+      "type": "object"
+    },
+    "extensions": {
+      "type": "object"
+    }
+  },
+  "$defs": {
+    "identifier": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]*$"
+    },
+    "sha256": {
+      "type": "string",
+      "pattern": "^[a-fA-F0-9]{64}$"
+    },
+    "artifact": {
+      "type": "object",
+      "required": [
+        "artifact_id",
+        "kind",
+        "uri"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "artifact_id": {
+          "$ref": "#/$defs/identifier"
+        },
+        "kind": {
+          "enum": [
+            "metadata",
+            "callable_source",
+            "derived_table",
+            "manifest",
+            "other"
+          ]
+        },
+        "uri": {
+          "type": "string",
+          "minLength": 1
+        },
+        "format": {
+          "type": "string"
+        },
+        "hash": {
+          "$ref": "#/$defs/sha256"
+        }
+      }
+    },
+    "provenance": {
+      "type": "object",
+      "required": [
+        "created_at",
+        "source"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "created_at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "source": {
+          "type": "string",
+          "minLength": 1
+        },
+        "software_version": {
+          "type": "string"
+        },
+        "git_commit": {
+          "oneOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "input_hashes": {
+          "type": "object",
+          "additionalProperties": {
+            "$ref": "#/$defs/sha256"
+          }
+        }
+      }
+    }
+  }
+}

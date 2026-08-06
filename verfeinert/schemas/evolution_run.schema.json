@@ -1,0 +1,335 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://verfeinert.org/schemas/v1/evolution_run.schema.json",
+  "title": "Verfeinert Evolution Run",
+  "description": "Canonical record of an ansatz evolution run, including configuration, generations, candidate references, and provenance.",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "evolution_run_id",
+    "run_metadata",
+    "configuration",
+    "generations",
+    "provenance"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": {
+      "const": "verfeinert.evolution_run.v1"
+    },
+    "evolution_run_id": {
+      "$ref": "#/$defs/identifier"
+    },
+    "run_metadata": {
+      "type": "object",
+      "required": [
+        "created_at",
+        "status"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "created_at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "status": {
+          "enum": [
+            "planned",
+            "running",
+            "completed",
+            "failed",
+            "cancelled"
+          ]
+        },
+        "software_version": {
+          "type": "string"
+        },
+        "git_commit": {
+          "oneOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "execution": {
+          "type": "object",
+          "additionalProperties": true,
+          "properties": {
+            "evolver_executed_metrics": {
+              "const": false
+            },
+            "qnodes_executed_by_evolver": {
+              "const": false
+            },
+            "analysis_requested": {
+              "type": "boolean"
+            },
+            "analysis_results_ingested": {
+              "type": "boolean"
+            },
+            "selection_executed": {
+              "type": "boolean"
+            },
+            "plots_generated_by_evolver": {
+              "const": false
+            }
+          }
+        }
+      }
+    },
+    "configuration": {
+      "type": "object",
+      "required": [
+        "random_seed",
+        "execution"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "experiment_ref": {
+          "$ref": "#/$defs/document_ref"
+        },
+        "random_seed": {
+          "oneOf": [
+            {
+              "type": "integer",
+              "minimum": 0
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "execution": {
+          "type": "object"
+        },
+        "mutation_policy": {
+          "type": "object"
+        },
+        "selection_policy": {
+          "type": "object"
+        },
+        "stopping_policy": {
+          "type": "object"
+        }
+      }
+    },
+    "generations": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/generation"
+      }
+    },
+    "provenance": {
+      "$ref": "#/$defs/provenance"
+    },
+    "metadata": {
+      "type": "object"
+    },
+    "extensions": {
+      "type": "object"
+    }
+  },
+  "$defs": {
+    "identifier": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]*$"
+    },
+    "sha256": {
+      "type": "string",
+      "pattern": "^[a-fA-F0-9]{64}$"
+    },
+    "document_ref": {
+      "type": "object",
+      "required": [
+        "document_id"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "document_id": {
+          "$ref": "#/$defs/identifier"
+        },
+        "uri": {
+          "type": "string"
+        },
+        "schema_version": {
+          "type": "string"
+        },
+        "hash": {
+          "$ref": "#/$defs/sha256"
+        }
+      }
+    },
+    "candidate_ref": {
+      "type": "object",
+      "required": [
+        "candidate_id"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "candidate_id": {
+          "$ref": "#/$defs/identifier"
+        },
+        "candidate_uri": {
+          "type": "string"
+        },
+        "structural_hash": {
+          "$ref": "#/$defs/sha256"
+        },
+        "lineage_hash": {
+          "$ref": "#/$defs/sha256"
+        }
+      }
+    },
+    "analysis_result_ref": {
+      "type": "object",
+      "required": [
+        "analysis_result_id",
+        "candidate_id"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "analysis_result_id": {
+          "$ref": "#/$defs/identifier"
+        },
+        "candidate_id": {
+          "$ref": "#/$defs/identifier"
+        },
+        "analysis_result_uri": {
+          "type": "string"
+        },
+        "schema_version": {
+          "type": "string"
+        },
+        "hash": {
+          "$ref": "#/$defs/sha256"
+        },
+        "metadata": {
+          "type": "object"
+        }
+      }
+    },
+    "event": {
+      "type": "object",
+      "required": [
+        "event_type"
+      ],
+      "additionalProperties": true,
+      "properties": {
+        "event_type": {
+          "type": "string",
+          "minLength": 1
+        },
+        "created_at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "candidate_id": {
+          "$ref": "#/$defs/identifier"
+        },
+        "analysis_result_id": {
+          "$ref": "#/$defs/identifier"
+        },
+        "policy_id": {
+          "$ref": "#/$defs/identifier"
+        },
+        "status": {
+          "type": "string"
+        },
+        "reason": {
+          "type": "string"
+        },
+        "metadata": {
+          "type": "object"
+        }
+      }
+    },
+    "generation": {
+      "type": "object",
+      "required": [
+        "generation_index",
+        "candidate_refs",
+        "survivor_refs",
+        "archive_refs"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "generation_index": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "candidate_refs": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/candidate_ref"
+          }
+        },
+        "parent_refs": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/candidate_ref"
+          }
+        },
+        "survivor_refs": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/candidate_ref"
+          }
+        },
+        "rejected_refs": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/candidate_ref"
+          }
+        },
+        "archive_refs": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/candidate_ref"
+          }
+        },
+        "analysis_result_refs": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/analysis_result_ref"
+          }
+        },
+        "configuration": {
+          "type": "object"
+        },
+        "events": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/event"
+          }
+        }
+      }
+    },
+    "provenance": {
+      "type": "object",
+      "required": [
+        "created_at",
+        "source"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "created_at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "source": {
+          "type": "string",
+          "minLength": 1
+        },
+        "input_hashes": {
+          "type": "object",
+          "additionalProperties": {
+            "$ref": "#/$defs/sha256"
+          }
+        }
+      }
+    }
+  }
+}
