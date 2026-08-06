@@ -3,11 +3,6 @@
 Verfeinert is an open-source scientific framework for quantum ansatz generation,
 analysis, evolution, and reproducible workflow orchestration.
 
-This directory is being prepared as the future standalone `verfeinert`
-repository root. During development it may still be nested inside a larger
-research workspace, but public APIs and examples must not rely on that parent
-layout.
-
 ## Authors
 Developed by Víctor Martín Kruglova
 
