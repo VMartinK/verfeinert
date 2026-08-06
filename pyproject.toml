@@ -10,7 +10,7 @@ readme = "README.md"
 requires-python = ">=3.11"
 license = { text = "Apache-2.0" }
 authors = [
-    { family-names = "Martín Kruglova", given-name = "Víctor", affiliation = "Universitat Politècnica de València", orcid = "https://orcid.org/0009-0002-9508-3840" },
+    { name = "Víctor Martín Kruglova" },
 ]
 keywords = [
     "quantum-computing",
