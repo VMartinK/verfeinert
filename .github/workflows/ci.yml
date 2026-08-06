@@ -57,7 +57,7 @@ jobs:
       - name: Run unittest suite
         env:
           PYTHONDONTWRITEBYTECODE: "1"
-          MPLCONFIGDIR: /tmp/matplotlib-verfeinertv2
+          MPLCONFIGDIR: /tmp/matplotlib-verfeinert
         run: python -m unittest discover -s tests -q
 
       - name: Run pytest suite
