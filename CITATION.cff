@@ -1,7 +1,7 @@
 cff-version: 1.2.0
-message: "If you use Verfeinert in research, please cite the framework."
+message: "If you use this software, please cite it using the metadata provided in this file."
 title: "Verfeinert"
-version: "0.0.0"
+version: "0.1.0"
 date-released: "2026-08-06"
 license: "Apache-2.0"
 authors:
