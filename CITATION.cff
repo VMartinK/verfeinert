@@ -6,9 +6,9 @@ date-released: "2026-08-06"
 license: "Apache-2.0"
 authors:
   - family-names: "Martín Kruglova"
-  - given-name: "Víctor"
-  - affiliation: "Universitat Politècnica de València"
-  - orcid: "https://orcid.org/0009-0002-9508-3840"
+    given-name: "Víctor"
+    affiliation: "Universitat Politècnica de València"
+    orcid: "https://orcid.org/0009-0002-9508-3840"
 keywords:
   - quantum ansatz
   - variational quantum algorithms
