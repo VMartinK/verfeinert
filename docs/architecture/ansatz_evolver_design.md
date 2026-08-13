@@ -32,15 +32,16 @@ Forbidden dependencies:
 - PennyLane/QNode execution;
 - campaign-name code branches.
 
-The evolver may define optional integration hooks that a caller wires to the
-generator and analyzer. Those hooks exchange JSON documents and paths, not
-internal Python objects.
+Workflow orchestration may wire the evolver to the generator and analyzer.
+Those boundaries exchange JSON documents, refs, paths, and public factory
+interfaces, not analyzer internals.
 
-## Target Package Layout
+## Package Layout
 
 ```text
 verfeinert/ansatz_evolver/
     __init__.py
+    candidate_factory.py
     config.py
     models.py
     validation.py
@@ -50,7 +51,7 @@ verfeinert/ansatz_evolver/
         __init__.py
         refs.py
         deduplication.py
-        archives.py
+        snapshots.py
     mutation/
         __init__.py
         policies.py
@@ -60,6 +61,7 @@ verfeinert/ansatz_evolver/
     selection/
         __init__.py
         fitness.py
+        multithreshold.py
         pareto.py
         thresholds.py
         strict_pareto.py
@@ -76,8 +78,9 @@ verfeinert/ansatz_evolver/
         evolution_run_json.py
 ```
 
-This layout is conceptual for implementation planning. The first coding slice
-should start smaller, but it should preserve these ownership boundaries.
+This layout preserves a reference-based model: population, mutation,
+selection, evaluation refs, and exporters are separate from analyzer metric
+execution.
 
 ## Population Representation
 
@@ -104,7 +107,7 @@ provenance across modules.
 The evolver describes what child candidates should be produced. It should not
 compile circuits or execute scientific workloads.
 
-The preferred v2 boundary is:
+The active boundary is:
 
 ```text
 parent Candidate refs
@@ -124,7 +127,7 @@ validated StagedPackage JSON document.
 
 ## Mutation Model
 
-A mutation policy is a declarative configuration. It should include:
+A mutation policy is declarative configuration. It includes or can include:
 
 - policy ID and version;
 - operator type, such as insert, replace, remove, swap, reorder, or
@@ -180,7 +183,7 @@ workflow runner. The evolver only ingests the resulting AnalysisResult JSON.
 
 Selection policies operate over canonical AnalysisResult JSON fields.
 
-Supported target policy families:
+Supported policy families:
 
 - fitness-based selection using configurable metric/cost/classification
   expressions;
@@ -190,7 +193,7 @@ Supported target policy families:
 - multi-threshold trajectory selection where each threshold keeps independent
   survivor/archive state.
 
-Selection output should include:
+Selection output records:
 
 - selected survivor candidate refs;
 - rejected candidate refs;
@@ -204,7 +207,7 @@ No policy should hardcode CX, MIXT, Sanz19, or research campaign names.
 
 ## Evolution State
 
-The run state is the durable orchestration record. It should include:
+The run state is the durable orchestration record. It includes:
 
 - evolution run ID and status;
 - configuration snapshot;
@@ -218,13 +221,13 @@ The run state is the durable orchestration record. It should include:
 - provenance and input hashes.
 
 The canonical exchange document is EvolutionRun JSON. Derived CSV summaries,
-frontier tables, and plot data may be exported later, but they are not the
+frontier tables, and plot data are downstream artifacts; they are not the
 internal state contract.
 
 ## Stopping Conditions
 
-Stopping conditions are policy data, not hardcoded runner behavior. Initial
-conditions should include:
+Stopping conditions are policy data, not hardcoded campaign behavior. Current
+and future conditions include:
 
 - maximum generations reached;
 - no candidates generated;
@@ -251,16 +254,17 @@ Evolution configuration must record:
 - software version and Git commit when available;
 - execution permissions and truthful execution flags.
 
-This phase defines requirements only. It does not introduce a new
-reproducibility subsystem.
+The workflow runner records the effective evolution fingerprint used for
+continuation compatibility. Resume preserves historical generations and
+analysis refs; branch mode records the source EvolutionRun relationship.
 
 ## CX01 And MIXT-5G Support
 
-CX01 remains an individual analysis example. It should remain outside the
-evolver and demonstrates the upstream generator/analyzer flow.
+CX01 remains an individual analysis example outside the evolver and
+demonstrates the upstream generator/analyzer flow.
 
-MIXT-5G is the motivating evolutionary example. The architecture must support
-its scientific pattern:
+MIXT-5G is an evolutionary example using the public workflow/evolver boundary.
+The architecture supports its scientific pattern:
 
 - scheduled gate mutations across generations;
 - independent threshold trajectories;
@@ -271,16 +275,9 @@ its scientific pattern:
 Those concepts must be configurable policies. MIXT-5G names, paths, and exact
 historical run artifacts must not become package branches.
 
-## First Implementation Slice
+## Current Implementation Boundary
 
-The first evolver implementation should not run analyzer jobs. It should:
-
-1. validate canonical JSON inputs;
-2. build reference-based population snapshots;
-3. build an empty/planned EvolutionRun JSON document;
-4. record candidate, survivor, archive, and analysis-result references;
-5. validate output against the existing schema or block on the documented
-   schema gap.
-
-Mutation execution, selection policies, external analyzer orchestration, and
-MIXT-5G examples should follow only after the data boundary is stable.
+The evolver validates canonical JSON inputs, builds reference-based population
+state, applies generic selection and mutation request policies, records
+candidate/survivor/archive/analysis refs, and writes validated EvolutionRun
+JSON. It does not run analyzer jobs or QNodes.

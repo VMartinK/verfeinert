@@ -38,16 +38,35 @@ verfeinert
 - workflow runner and researcher-facing CX-01 and MIXT-5G reproducibility
   examples.
 
-## Install For Development
+## Installation
 
-From this directory:
+For a released package:
+
+```bash
+python -m pip install verfeinert
+```
+
+From a repository checkout:
+
+```bash
+python -m pip install .
+```
+
+Visualization is optional:
+
+```bash
+python -m pip install "verfeinert[visualization]"
+```
+
+For development and test work from this directory:
+
 
 ```bash
 python -m pip install -e ".[dev]"
 ```
 
-The scientific metric reference implementation requires NumPy and PennyLane as
-runtime dependencies. Visualization support is optional:
+The scientific analyzer runtime uses NumPy and PennyLane as declared runtime
+dependencies. Matplotlib is required only for plotting and figure export:
 
 ```bash
 python -m pip install -e ".[dev,visualization]"
@@ -69,11 +88,11 @@ check.
 ```bash
 python examples/CX01_reproduction/scripts/run_cx01_reproduction.py \
   --profile smoke \
-  --output-root /tmp/verfeinert-cx01
+  --output-root outputs/cx01-smoke
 
 python examples/MIXT5G_reproduction/scripts/run_mixt5g_reproduction.py \
   --profile smoke \
-  --output-root /tmp/verfeinert-mixt5g
+  --output-root outputs/mixt5g-smoke
 ```
 
 Generated artifacts must be written under caller-provided output roots and
@@ -131,6 +150,44 @@ postprocessing. A workflow may request only the operations it needs, for
 example `generate -> analyze`, `Candidate JSON -> analyze`, or
 `AnalysisResult -> ranking`, without recomputing unrelated upstream artifacts.
 
+Minimal individual workflow configuration:
+
+```yaml
+run:
+  run_id: minimal-individual
+paths:
+  output_root: outputs/minimal-individual
+workflow:
+  campaign_type: individual
+  scientific_execution: [generate, analyze]
+  postprocessing: [ranking, export_csv]
+generation:
+  family: sanz19
+  template_ids: [A02]
+  layers: [1]
+  n_qubits: 4
+  candidate_id_prefix: demo
+analyzer:
+  selected_metrics: [structural_cost]
+  structural_cost:
+    reference_bounds:
+      parameter_count: {min: 0, max: 32}
+      depth: {min: 0, max: 64}
+      two_qubit_operation_count: {min: 0, max: 16}
+  ranking:
+    score_components: {cost.structural_cost: 1.0}
+    combination: weighted_sum
+    ascending: true
+```
+
+Run it through the thin CLI:
+
+```bash
+verfeinert run workflow.yaml
+```
+
+The same workflow can be run through Python:
+
 ```python
 from verfeinert.workflow import WorkflowConfig, WorkflowRunner
 
@@ -150,8 +207,18 @@ config = WorkflowConfig.from_mapping({
 result = WorkflowRunner(config).run()
 ```
 
-Postprocessing is independently selectable. For example, comparison/global
-analysis uses only explicitly selected compatible AnalysisResult sources:
+Postprocessing is independently selectable:
+
+- `Candidate` or `StagedPackage` artifacts can feed `analyze`.
+- `AnalysisResult` artifacts can feed ranking, Pareto, comparison, CSV export,
+  and optional visualization.
+- `EvolutionRun` artifacts can be resumed or branched by compatible workflow
+  configs.
+- `ComparisonResult` artifacts can feed CSV export or visualization without
+  recomputing comparison.
+
+Comparison/global analysis uses only explicitly selected compatible
+AnalysisResult sources:
 
 ```python
 config = WorkflowConfig.from_mapping({
@@ -201,17 +268,17 @@ result = WorkflowRunner(WorkflowConfig.from_mapping(config)).run(
 )
 ```
 
-The optional CLI is a thin wrapper around the same API:
-
-```bash
-verfeinert run workflow.yaml --output-root /tmp/verfeinert-run
-```
+To define a third campaign, compose the same public pieces: canonical workflow
+configuration, candidate records or `family: provided`, public mutation
+policies/factories such as `InsertGateMutationFactory`, and `WorkflowRunner`.
+Do not copy CX-01 or MIXT-5G internals unless you are reproducing those
+specific studies.
 
 ## External Validation
 
 ```bash
 python scripts/validate_external_install.py \
-  --output-root /tmp/verfeinert-external-validation
+  --output-root outputs/external-validation
 ```
 
 This creates a temporary virtual environment, installs the package, checks

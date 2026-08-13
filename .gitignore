@@ -37,7 +37,9 @@ data/cache/
 *.npz
 *.pkl
 *.joblib
-visualization_reference_notebooks/
+# Private visualization reference bundle. Keep only the public README stub.
+visualization_reference_notebooks/*
+!visualization_reference_notebooks/README.md
 
 # Example output roots: keep placeholders only
 !examples/**/outputs/

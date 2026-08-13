@@ -1,17 +1,18 @@
-# Visualization Reference Notebooks
+# Visualization Reference Material
 
-This directory contains historical visualization notebooks used as reference
-material during the development of the Verfeinert visualization system.
+This directory is reserved for local development/reference material used while
+designing the Verfeinert visualization system.
 
-These notebooks are not runtime dependencies and are not imported by the
-framework.
+Raw notebooks, raw global exports, notebook outputs, and handoff scratch files
+are not runtime dependencies, are not package data, and are excluded from the
+public release tree by `.gitignore`.
 
-Their purpose is to document:
+Public visualization architecture is documented in:
 
-- scientific plot categories;
-- visual conventions;
-- style decisions;
-- expected reproducibility targets.
+- `docs/architecture/visualization.md`;
+- `docs/architecture/visualization_system.md`;
+- `docs/architecture/comparison.md`.
 
-The implemented visualization API must remain campaign-independent and must
-operate on exported Verfeinert analysis artifacts.
+Reusable plotting behavior belongs in `verfeinert.ansatz_analyzer.visualization`
+and must operate on canonical or derived Verfeinert artifacts, not on private
+local reference paths.

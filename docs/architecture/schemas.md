@@ -1,8 +1,9 @@
 # Schema Contracts
 
 Verfeinert schema files live under the repository-level `schemas/` directory
-and use JSON Schema Draft 2020-12. The `$id` values are future stable public
-schema URIs. Tests resolve the files locally.
+and are mirrored under `verfeinert/schemas/` for package resources. They use
+JSON Schema Draft 2020-12. Runtime validation loads packaged schema resources
+so installed packages do not depend on repository-relative paths.
 
 ## Versioning
 
@@ -14,6 +15,7 @@ verfeinert.experiment.v1
 verfeinert.staged_package.v1
 verfeinert.analysis_result.v1
 verfeinert.evolution_run.v1
+verfeinert.comparison_result.v1
 ```
 
 Schema versions are semantic data-contract labels, not package versions. Any
@@ -98,11 +100,28 @@ Required areas:
 The schema is intentionally reference-based so a run can point to candidate
 packages and analysis results without duplicating large documents.
 
+## Comparison Result Schema
+
+`comparison_result.schema.json` records explicit global/comparative
+postprocessing over selected AnalysisResult collections.
+
+Required areas:
+
+- comparison ID and transform version;
+- explicit source refs;
+- compatibility report;
+- global Pareto and optional ranking rows;
+- candidate rows preserving candidate and analysis refs;
+- comparison provenance.
+
+The schema keeps plotting and CSV export derived from the persisted
+ComparisonResult rather than making figures or tables scientific source data.
+
 ## Cross-Schema References
 
-`staged_package.schema.json` references `candidate.schema.json`. Tests load the
-schema store locally, but published consumers should resolve the public `$id`
-URIs once the framework repository is independent.
+`staged_package.schema.json` references `candidate.schema.json`. Runtime
+validators use the packaged schema store, and tests enforce root/package mirror
+parity.
 
 Analysis and evolution schemas use lightweight candidate references instead of
 embedding candidates by default.
@@ -116,11 +135,10 @@ future module consumes.
 
 ## Open Design Decisions
 
-- Decide whether to publish schemas in package data, documentation, or both.
 - Decide whether runtime APIs should validate every document by default or
   expose explicit validation commands.
 - Decide whether metric values need typed sub-schemas once analyzer APIs
-  begins.
+  require stricter domain validation.
 - Define transform records for future CSV/Parquet derived tables.
 - Define a stable URI policy for packaged records stored outside local
   filesystems.

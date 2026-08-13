@@ -2,20 +2,21 @@
 
 ## Role
 
-The first `verfeinert.ansatz_analyzer` implementation slice provides a
-schema-first, structural-cost-only analysis path. It consumes canonical
-Candidate JSON or canonical StagedPackage JSON and emits canonical
-AnalysisResult JSON.
+`verfeinert.ansatz_analyzer` provides schema-first scientific analysis and
+postprocessing over canonical Candidate, StagedPackage, and AnalysisResult
+JSON. It emits canonical AnalysisResult JSON for per-candidate analysis and
+derived Pareto, ranking, comparison, table, CSV, and optional visualization
+artifacts for postprocessing workflows.
 
-This layer intentionally does not migrate expressibility, trainability,
-Pareto, ranking, visualization, notebooks, generated callable loading, or
-legacy Beta table workflows.
+The analyzer owns PennyLane-backed scientific execution when explicitly
+enabled. It does not depend on notebooks, generated local packages,
+campaign-name branches, or private reference data.
 
 ## Implemented Modules
 
 `config.py` defines analyzer configuration, execution permissions, selected
-metric validation, input/output roots, random seed policy, and structural-cost
-settings. The only implemented metric is `structural_cost`.
+metric validation, input/output roots, random seed policy, structural-cost
+settings, Pareto options, and ranking policies.
 
 `models.py` defines internal lightweight records:
 
@@ -30,14 +31,18 @@ settings. The only implemented metric is `structural_cost`.
 These records are helpers around canonical JSON. They are not a public
 exchange format.
 
-`validation.py` performs runtime validation against the existing schema files
-under `schemas/` using JSON Schema Draft 2020-12.
+`validation.py` performs runtime validation against packaged schema resources
+using JSON Schema Draft 2020-12.
 
 `io.py` reads Candidate or StagedPackage JSON and writes AnalysisResult JSON
 under caller-owned guarded output roots.
 
 `metrics/structural_cost.py` implements record-based structural cost without
-pandas, NumPy, PennyLane, Matplotlib, notebooks, generated callables, or QNodes.
+PennyLane, Matplotlib, notebooks, generated callables, or QNodes.
+
+`metrics/expressibility.py` and `metrics/trainability.py` define explicit
+scientific metric execution. Materialization through PennyLane is analyzer
+owned, opt-in, and truthfully recorded in AnalysisResult provenance.
 
 `pipeline.py` wires the foundation flow:
 
@@ -45,7 +50,7 @@ pandas, NumPy, PennyLane, Matplotlib, notebooks, generated callables, or QNodes.
 Candidate or StagedPackage JSON
     -> schema validation
     -> CandidateView records
-    -> structural cost
+    -> metric computation or skipped metric records
     -> AnalysisResultRecord
     -> optional AnalysisResult JSON write
 ```
@@ -65,8 +70,9 @@ Output uses:
 verfeinert.analysis_result.v1
 ```
 
-The analyzer writes one AnalysisResult per candidate. Tables, summaries, plots,
-and notebooks are future derived outputs, not foundation exchange contracts.
+The analyzer writes one AnalysisResult per candidate. Tables, summaries, CSV,
+plots, and comparison views are derived outputs, not replacements for the
+canonical AnalysisResult contract.
 
 ## Structural Cost
 
@@ -94,8 +100,9 @@ The AnalysisResult `cost` object stores:
 
 ## Execution Boundary
 
-Foundation analysis never imports or executes generated callables and never
-constructs QNodes. AnalysisResult provenance records false execution flags for:
+The default structural-cost path never imports or executes generated callables
+and never constructs QNodes. AnalysisResult provenance records false execution
+flags for:
 
 - QNode execution;
 - generated callable execution;
@@ -103,16 +110,19 @@ constructs QNodes. AnalysisResult provenance records false execution flags for:
 - expensive metric execution;
 - plot generation.
 
-Expressibility and trainability remain deferred because they require explicit
-scientific execution boundaries and optional heavy dependencies.
+Expressibility and trainability require explicit configuration, materialization,
+and execution permissions because they can construct QNodes and run expensive
+scientific workloads.
 
 ## Dependency Boundary
 
-The foundation analyzer depends on:
+The analyzer depends on:
 
 - Python standard library;
 - `jsonschema`;
-- `verfeinert.core`.
+- `verfeinert.core`;
+- declared scientific runtime dependencies for analyzer execution, including
+  NumPy and PennyLane.
 
 It must not depend on:
 
@@ -120,28 +130,27 @@ It must not depend on:
 - `verfeinert.ansatz_evolver`;
 - notebooks;
 - `external research notebooks`;
-- PennyLane;
 - Matplotlib;
 - pandas;
-- NumPy.
+- notebooks and private reference data.
 
-## Deferred Layers
+## Postprocessing
 
-Deferred analyzer work includes:
+Postprocessing consumes existing AnalysisResult collections. It can compute:
 
-- expressibility metric runtime;
-- trainability metric runtime;
 - Pareto and threshold classification;
 - ranking;
-- derived CSV/Parquet tables;
-- visualization;
-- notebook/example endpoints;
-- compatibility adapters for historical Beta tables.
+- comparison/global analysis over explicitly selected compatible sources;
+- derived JSON and CSV tables;
+- optional visualization data and Matplotlib figures.
 
-## Open Decisions
+Postprocessing must not trigger unrelated scientific execution or mutate
+canonical candidate identity.
 
-- Whether metric-specific values need stricter sub-schemas.
-- How uncertainty and diagnostic arrays should be represented.
-- Whether ranking policies should use named profiles or plain JSON config.
-- Whether result collections need a canonical schema separate from
+## Extension Points
+
+- stricter metric-specific value sub-schemas;
+- richer uncertainty and diagnostic array representation;
+- optional named ranking profiles over the current plain JSON policy surface;
+- a canonical result-collection schema separate from
   per-candidate AnalysisResult documents.

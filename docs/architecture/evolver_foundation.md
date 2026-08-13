@@ -2,10 +2,9 @@
 
 ## Scope
 
-The Phase 6 implementation establishes `verfeinert.ansatz_evolver` as a
-JSON-first orchestration layer. It consumes canonical Candidate JSON and
-AnalysisResult JSON, stores reference-only population state, and exports
-canonical EvolutionRun JSON.
+`verfeinert.ansatz_evolver` is a JSON-first orchestration layer. It consumes
+canonical Candidate JSON and AnalysisResult JSON, stores reference-only
+population state, and exports canonical EvolutionRun JSON.
 
 The evolver does not compute scientific metrics, execute QNodes, import
 analyzer internals, import visualization modules, or use pandas.
@@ -17,7 +16,7 @@ analyzer internals, import visualization modules, or use pandas.
   `GenerationRecord`, and `EvolutionRunState`.
 
 `validation.py`
-: Loads local JSON schemas and validates Candidate, StagedPackage,
+: Loads packaged JSON schemas and validates Candidate, StagedPackage,
   AnalysisResult, and EvolutionRun documents without analyzer imports.
 
 `io.py`
@@ -86,11 +85,10 @@ Forbidden dependencies include analyzer internals, pandas, Matplotlib,
 PennyLane, notebooks, external research-notebook folders, generated callables, and
 campaign-specific branches.
 
-## Deferred
+## Extension Points
 
 - richer event subtype schemas;
 - archive summary models;
 - derived CSV/Parquet run tables;
 - additional production workflow integrations;
-- full runner that invokes external analyzer processes;
 - richer stochastic mutation schedules.

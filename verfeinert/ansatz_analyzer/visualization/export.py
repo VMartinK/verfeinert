@@ -32,11 +32,22 @@ class FigureExportConfig:
 
 def require_pyplot():
     """Return matplotlib.pyplot or raise a clear optional-dependency error."""
-    if importlib.util.find_spec("matplotlib") is None:
+    try:
+        matplotlib_spec = importlib.util.find_spec("matplotlib")
+    except ModuleNotFoundError as exc:
+        raise VisualizationDependencyError(
+            "Matplotlib is required for plotting. Install the 'visualization' extra.",
+        ) from exc
+    if matplotlib_spec is None:
         raise VisualizationDependencyError(
             "Matplotlib is required for plotting. Install the 'visualization' extra.",
         )
-    return importlib.import_module("matplotlib.pyplot")
+    try:
+        return importlib.import_module("matplotlib.pyplot")
+    except ModuleNotFoundError as exc:
+        raise VisualizationDependencyError(
+            "Matplotlib is required for plotting. Install the 'visualization' extra.",
+        ) from exc
 
 
 def save_figure(

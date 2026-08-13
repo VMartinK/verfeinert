@@ -1,7 +1,6 @@
 # Visualization Architecture
 
-Full plotting API coverage is intentionally staged. Visualization will live
-outside `verfeinert.core` under the analyzer package:
+Visualization lives outside `verfeinert.core` under the analyzer package:
 
 ```text
 verfeinert/ansatz_analyzer/visualization/
@@ -36,9 +35,9 @@ Visualization code may depend on plotting libraries inside the analyzer
 visualization package. It must not be imported by `verfeinert.core`, and
 scientific metric execution must not require plotting to be installed.
 
-Research notebooks may remain outside the package, but reusable plotting logic
-should be exposed through public analyzer visualization APIs during a later
-development phase.
+Research notebooks and raw reference exports remain outside the package and are
+development material. Reusable plotting logic belongs in public analyzer
+visualization APIs.
 
 Visualization consumes persisted or derived objects such as
 `AnalysisResultCollection`, `ParetoResult`, `RankingResult`, `ComparisonResult`,

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from contextlib import redirect_stdout
+from contextlib import redirect_stderr, redirect_stdout
 import importlib.util
 import io
 import json
@@ -221,6 +221,60 @@ class PublicReproducibilityPhase103Tests(unittest.TestCase):
         self.assertIn("workflow YAML configuration", stdout.getvalue())
         pyproject = tomllib.loads((PROJECT_ROOT / "pyproject.toml").read_text(encoding="utf-8"))
         self.assertEqual(pyproject["project"]["scripts"]["verfeinert"], "verfeinert.cli:main")
+
+    def test_cli_missing_config_fails_without_traceback(self) -> None:
+        stderr = io.StringIO()
+        with redirect_stderr(stderr):
+            exit_code = cli_main(["run", "missing-workflow.yaml"])
+
+        self.assertEqual(exit_code, 1)
+        error = stderr.getvalue()
+        self.assertIn("workflow config file not found", error)
+        self.assertNotIn("Traceback", error)
+
+    def test_cli_malformed_yaml_fails_without_traceback(self) -> None:
+        with TemporaryDirectory() as temp_dir:
+            config_path = Path(temp_dir) / "workflow.yaml"
+            config_path.write_text("run: [\n", encoding="utf-8")
+            stderr = io.StringIO()
+            with redirect_stderr(stderr):
+                exit_code = cli_main(["run", str(config_path)])
+
+        self.assertEqual(exit_code, 1)
+        error = stderr.getvalue()
+        self.assertIn("unable to parse workflow config", error)
+        self.assertNotIn("Traceback", error)
+
+    def test_cli_invalid_config_shape_and_semantics_fail_without_traceback(self) -> None:
+        with TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            cases = {
+                "shape": "[]\n",
+                "semantics": textwrap.dedent(
+                    f"""
+                    run:
+                      run_id: invalid-cli
+                    paths:
+                      output_root: {root / "outputs"}
+                    workflow:
+                      campaign_type: individual
+                      scientific_execution: [evolve]
+                      postprocessing: []
+                    """
+                ),
+            }
+            for name, content in cases.items():
+                with self.subTest(name=name):
+                    config_path = root / f"{name}-workflow.yaml"
+                    config_path.write_text(content, encoding="utf-8")
+                    stderr = io.StringIO()
+                    with redirect_stderr(stderr):
+                        exit_code = cli_main(["run", str(config_path)])
+
+                    self.assertEqual(exit_code, 1)
+                    error = stderr.getvalue()
+                    self.assertIn("verfeinert: error:", error)
+                    self.assertNotIn("Traceback", error)
 
 
 if __name__ == "__main__":

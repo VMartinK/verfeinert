@@ -11,7 +11,7 @@ folders, or campaign-name code branches.
 The analyzer is the first module allowed to run scientific metric execution,
 but execution must be explicit, bounded, and truthfully recorded.
 
-## Target Package Layout
+## Package Layout
 
 ```text
 verfeinert/ansatz_analyzer/
@@ -30,24 +30,27 @@ verfeinert/ansatz_analyzer/
         runtime.py
     classification/
         __init__.py
-        pareto.py
         thresholds.py
+    comparison.py
+    pareto.py
     ranking.py
     tables/
         __init__.py
-        scoring.py
         exports.py
-        summaries.py
-        matrices.py
     visualization/
         __init__.py
-        style.py
-        objective_space.py
+        comparison.py
         evolution.py
+        export.py
+        lineage.py
+        pareto.py
+        ranking.py
+        styles/
+            default.py
 ```
 
-The `visualization` package is a planned layer, not part of the first analyzer
-implementation slice.
+The `visualization` package is optional and imports Matplotlib only when plot
+functions or figure export are called.
 
 ## Module Responsibilities
 
@@ -67,23 +70,22 @@ module-level invariants that JSON Schema cannot express conveniently.
 writes derived artifacts through guarded output roots. It must not create
 implicit experiment roots.
 
-`pipeline.py` coordinates analysis steps. The default safe pipeline should
-support metadata-only structural cost and derived classification/ranking from
-already available metrics. Expensive metric execution requires explicit
-configuration.
+`pipeline.py` coordinates analysis steps. The default safe pipeline supports
+metadata-only structural cost. Expensive metric execution requires explicit
+configuration and permissions.
 
 `results.py` assembles canonical AnalysisResult records and provenance,
 including metric execution flags, software version, Git commit when available,
 input hashes, and configuration snapshot.
 
 `metrics.structural_cost` computes structural cost from candidate operations.
-It is the first metric to migrate because it is pure and no-QNode.
+It is pure and no-QNode.
 
 `metrics.expressibility` and `metrics.trainability` own the scientific metric
-definitions, but backend/QNode calls flow through `metrics.runtime` and require
-explicit execution permission.
+definitions. Analyzer materialization owns PennyLane-backed executable circuit
+construction, and expensive metrics require explicit execution permission.
 
-`classification.pareto` classifies result collections using objective
+`pareto.py` classifies result collections using objective
 directions and optional cost constraints. Cost is an external filter, not a
 Pareto objective.
 
@@ -94,11 +96,16 @@ eligibility. Threshold values are configuration data.
 or derived score. Ranking produces derived records/tables and does not mutate
 canonical AnalysisResult JSON.
 
-`tables.*` builds analytical CSV/JSON/Parquet-ready views from canonical JSON.
-Tables must carry source AnalysisResult IDs and transform version.
+`comparison.py` compares explicitly selected compatible AnalysisResult
+collections using structured metric and cost provenance rather than campaign
+names.
 
-`visualization.*` will turn derived tables into plots using centralized style.
-Metric code must never import Matplotlib or notebook APIs.
+`tables.*` writes analytical CSV/JSON views from canonical and derived JSON.
+Tables carry source refs and transform versions.
+
+`visualization.*` turns canonical or derived artifacts into plot data and
+optional figures using centralized style. Metric code never imports Matplotlib
+or notebook APIs.
 
 ## Data Flow
 
@@ -122,8 +129,8 @@ StagedPackage JSON
     -> optional result collection summary
 ```
 
-For evolution workflows, the analyzer should accept prior AnalysisResult
-collections as reference sets for Pareto and ranking. It should not import
+For postprocessing workflows, the analyzer accepts prior AnalysisResult
+collections as sources for Pareto, ranking, and comparison. It does not import
 evolver internals.
 
 ## Dependency Rules
@@ -131,8 +138,8 @@ evolver internals.
 - Allowed shared dependency: `verfeinert.core`.
 - Candidate inputs are canonical JSON. Analyzer should not require generator
   construction APIs for normal operation.
-- Metric runtime may use scientific dependencies in the analyzer package or
-  optional extras, but `core` remains dependency-light.
+- Metric runtime may use scientific dependencies in the analyzer package, but
+  `core` remains dependency-light.
 - No analyzer module may import notebooks, external research-notebook folders, local
   paths, generated output packages, or evolver internals.
 - Visualization may import Matplotlib, but metrics, classification, ranking,
@@ -217,23 +224,8 @@ External research notebooks may serve as visual references for:
 
 They are not dependencies and should not be copied into package structure.
 
-## First Implementation Slice
-
-The first analyzer slice should implement:
-
-- Candidate JSON ingestion;
-- AnalysisResult model and writer;
-- structural cost;
-- schema validation tests;
-- no-QNode dependency boundary tests.
-
-This creates a useful analyzer core before migrating expensive metrics or
-visual outputs.
-
 ## Deferred Design Work
 
-- full backend adapter API for QNode execution;
-- expressibility/trainability runtime extras;
 - Parquet table writer;
 - visualization style schema;
 - notebook endpoint templates;

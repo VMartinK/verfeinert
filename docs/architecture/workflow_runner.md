@@ -1,82 +1,165 @@
 # Workflow Runner
 
-The `verfeinert.workflow` package is the public orchestration layer for JSON-first Verfeinert workflows. It coordinates the existing module APIs without becoming a new scientific engine.
+`verfeinert.workflow` is the public orchestration layer for JSON-first
+Verfeinert workflows. It coordinates generator, analyzer, evolver, comparison,
+table export, and optional visualization APIs without becoming a scientific
+engine.
 
 ## Role
 
 `WorkflowRunner` composes:
 
-- public `verfeinert.ansatz_generator` generation and canonical exporters;
-- public `verfeinert.ansatz_analyzer` analysis, collections, ranking, and derived table writers;
-- public `verfeinert.ansatz_evolver` references, analysis-result ingestion, selection policies, and `EvolutionRun` export.
+- public `verfeinert.ansatz_generator` candidate generation and canonical
+  Candidate/StagedPackage exporters;
+- public `verfeinert.ansatz_analyzer` analysis, collections, Pareto, ranking,
+  comparison, and derived table writers;
+- public `verfeinert.ansatz_evolver` refs, selection policies, mutation
+  requests, generation records, and EvolutionRun persistence;
+- optional analyzer visualization functions only when visualization is
+  requested.
 
-It does not implement campaign branches, metric algorithms, mutation algorithms, plotting, notebook execution, QNode execution, pandas tables, or legacy adapters.
+It does not implement campaign-specific branches, scientific metric
+algorithms, PennyLane/QNode construction, mutation algorithms, plotting logic,
+or notebook execution.
 
-## Public Records
+## Public Configuration
 
 `WorkflowConfig` defines one run:
 
-- `run_id`;
-- caller-owned `input_roots` and `output_root`;
-- generation configuration;
-- analyzer configuration;
-- evolver selection configuration;
-- selected stages;
-- execution settings;
-- random seed and provenance metadata.
+- `run.run_id`, optional seed and timestamp;
+- caller-owned `paths.input_roots` and `paths.output_root`;
+- explicit `workflow.campaign_type`: `individual` or `evolutionary`;
+- scientific execution operations: `generate`, `analyze`, and optionally
+  `evolve`;
+- independent postprocessing operations: `ranking`, `pareto`, `comparison`,
+  `export_csv`, and `visualization`;
+- generation, analyzer, evolver, comparison, artifact, resume, and execution
+  configuration blocks.
 
-`WorkflowResult` is a JSON-safe artifact manifest:
+Legacy `stages` declarations are normalized into the same conceptual model.
+Conflicting legacy and structured declarations fail during validation.
 
-- canonical Candidate JSON paths;
-- canonical StagedPackage JSON path;
-- AnalysisResult JSON paths;
-- EvolutionRun JSON path;
-- optional derived ranking JSON/CSV paths;
-- survivor and rejected candidate IDs;
-- warnings and execution flags.
+## WorkflowResult
+
+`WorkflowResult` is a JSON-safe artifact manifest. It records:
+
+- requested and executed operations;
+- consumed, reused, and produced artifacts;
+- Candidate, StagedPackage, AnalysisResult, EvolutionRun, ComparisonResult,
+  CSV, and visualization paths when produced;
+- candidate, analysis, survivor, and rejected IDs;
+- warnings;
+- workflow provenance.
+
+It is a run manifest, not the canonical scientific artifact replacing the
+versioned JSON contracts.
 
 ## Data Flow
 
-The runner implements the current minimal public flow:
+The runner supports partial and discontinuous flows:
 
 ```text
-candidate records
-  -> generator canonical staged package exporter
-  -> analyzer structural-cost pipeline
-  -> AnalysisResultCollection
-  -> evolver selection
-  -> EvolutionRun JSON
-  -> optional derived ranking artifacts
+candidate records or persisted Candidate/StagedPackage
+    -> analyze
+    -> AnalysisResult collection
+    -> optional evolve
+    -> optional Pareto / ranking / comparison / export / visualization
 ```
 
-The canonical exchange artifacts remain JSON. Ranking files are derived outputs and are not module-to-module contracts.
+Artifact-only flows are first-class:
+
+```text
+AnalysisResult -> ranking -> CSV
+AnalysisResult -> Pareto -> CSV
+AnalysisResult sources -> ComparisonResult -> CSV
+ComparisonResult -> CSV / visualization
+EvolutionRun -> resume / branch / lineage visualization
+```
+
+The runner does not silently recompute compatible artifacts supplied by the
+caller.
+
+## Campaign Type
+
+`individual` workflows may generate and analyze candidates and run
+postprocessing. They must not execute evolution and cannot implicitly create an
+EvolutionRun.
+
+`evolutionary` workflows may execute `evolve` when a compatible candidate
+factory, mutation policy, and parent population are available. Evolution is
+still requested explicitly.
 
 ## Generation Boundary
 
-The generic generation mode supports Sanz19 records through public generator APIs. Campaign-specific reproduction logic can pass `candidate_records` into a `provided` generation stage. This keeps campaign factories in examples while preserving a campaign-neutral framework.
+The built-in generation families are:
+
+- `sanz19`, a public reference-template generator family;
+- `provided`, where the caller supplies candidate records.
+
+Campaign-specific preparation, such as selecting a research seed set or
+constructing a reproduction fixture, belongs in examples or caller code. The
+framework core consumes candidate records and public factories.
 
 ## Analysis Boundary
 
-The runner calls the analyzer pipeline with explicit configuration. Smoke workflows use `structural_cost` only. Optional scientific metrics can be supplied later through analyzer metric callables and explicit permissions; the workflow runner itself does not calculate them.
+The runner calls `AnalysisPipeline` with explicit analyzer configuration.
+Materialization and QNode execution are owned by `ansatz_analyzer` and require
+the analyzer's permissions. The workflow runner records orchestration
+provenance but does not calculate metrics.
 
 ## Evolution Boundary
 
-The runner uses evolver selection policies over AnalysisResult JSON documents. It exports reference-based `EvolutionRun` JSON with `candidate_refs`, `analysis_result_refs`, survivor refs, rejected refs, events, configuration, and provenance.
+The runner uses evolver selection and mutation request APIs over canonical
+Candidate and AnalysisResult refs. It exports EvolutionRun JSON with
+generations, parent/candidate/survivor/archive refs, analysis refs, events,
+configuration, and provenance.
+
+## Resume And Branch
+
+Continuation of a persisted EvolutionRun requires a compatible continuation
+fingerprint. Historical generations and historical analysis artifacts are
+preserved and not recomputed. If the requested evolution contract changes,
+continuation fails unless the caller requests a branch with a new run ID.
+
+Branch provenance records the source EvolutionRun and the branch relationship.
+
+## Comparison And Postprocessing
+
+Comparison uses explicitly configured sources. It validates scientific
+compatibility through structured metric/cost provenance and writes
+ComparisonResult JSON plus optional CSV. Multiple comparisons can coexist in
+one workflow.
+
+Ranking and Pareto consume AnalysisResult collections. CSV exports are
+deterministic derived tables and preserve canonical candidate and analysis
+refs.
+
+## Visualization
+
+Visualization is optional postprocessing. The runner imports visualization
+helpers only for requested visualization operations. Plotting consumes existing
+AnalysisResult, Pareto, Ranking, ComparisonResult, or EvolutionRun artifacts
+and writes figures under caller-owned output roots.
 
 ## Output Policy
 
 All writes go below the caller-provided output root:
 
-- `<output_root>/<run_id>/candidates/`;
-- `<output_root>/<run_id>/analysis/`;
-- `<output_root>/<run_id>/evolution/`;
-- `<output_root>/<run_id>/derived_outputs/`.
+```text
+<output_root>/<run_id>/candidates/
+<output_root>/<run_id>/analysis/
+<output_root>/<run_id>/evolution/
+<output_root>/<run_id>/derived_outputs/
+```
 
 Output-root separation is enforced with `verfeinert.core.io.ensure_output_root`.
+Input artifacts may be outside the output root but are recorded as consumed or
+reused artifacts.
 
-## Limitations
+## Provenance
 
-- The runner currently executes a single generation batch per invocation.
-- Multi-generation mutation loops remain example-level until a dedicated evolver pipeline is promoted.
-- Full expressibility/trainability reproduction is opt-in and requires analyzer runtime callables.
-- Visualization hooks remain outside the runner.
+Workflow provenance records the runner, software version, Git commit when
+available, config snapshot, requested operations, executed operations, artifact
+reuse, campaign type, resume/branch relationship, and truth flags such as
+`notebooks_executed = false` and
+`campaign_specific_logic_in_framework = false`.

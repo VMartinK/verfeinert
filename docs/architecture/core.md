@@ -1,7 +1,7 @@
 # Core Architecture
 
 `verfeinert.core` is the lightweight shared layer for Verfeinert. It exists
-to make the future generator, analyzer, and evolver modules agree on stable
+to make the generator, analyzer, evolver, workflow runner, and CLI agree on stable
 configuration, execution, I/O, metadata, schemas, validation, and hashing
 contracts without moving scientific behavior into the shared package.
 

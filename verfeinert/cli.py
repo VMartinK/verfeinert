@@ -4,12 +4,20 @@ from __future__ import annotations
 
 import argparse
 import json
+import sys
 from collections.abc import Sequence
 from pathlib import Path
 from typing import Any, Mapping
 
+import yaml
+
+from verfeinert.core import CoreValidationError
 from verfeinert.core import read_yaml
 from verfeinert.workflow import WorkflowConfig, run_workflow
+
+
+class CliError(RuntimeError):
+    """Raised for user-facing CLI input errors."""
 
 
 def main(argv: Sequence[str] | None = None) -> int:
@@ -23,7 +31,11 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     args = parser.parse_args(argv)
     if args.command == "run":
-        result = _run_config(args.config, output_root=args.output_root)
+        try:
+            result = _run_config(args.config, output_root=args.output_root)
+        except (CliError, CoreValidationError, ValueError) as exc:
+            print(f"verfeinert: error: {exc}", file=sys.stderr)
+            return 1
         print(json.dumps(result.to_dict(), sort_keys=True))
         return 0
     parser.error(f"unknown command: {args.command}")
@@ -31,9 +43,18 @@ def main(argv: Sequence[str] | None = None) -> int:
 
 
 def _run_config(config_path: str | Path, *, output_root: str | Path | None):
-    payload = read_yaml(config_path)
+    try:
+        payload = read_yaml(config_path)
+    except FileNotFoundError as exc:
+        raise CliError(f"workflow config file not found: {config_path}") from exc
+    except PermissionError as exc:
+        raise CliError(f"workflow config file is not readable: {config_path}") from exc
+    except OSError as exc:
+        raise CliError(f"unable to read workflow config {config_path}: {exc}") from exc
+    except yaml.YAMLError as exc:
+        raise CliError(f"unable to parse workflow config {config_path}: {exc}") from exc
     if not isinstance(payload, Mapping):
-        raise SystemExit("workflow config must be a mapping")
+        raise CliError("workflow config must be a mapping.")
     mapping = dict(payload)
     if output_root is not None:
         paths = dict(mapping.get("paths", {}))
@@ -42,7 +63,7 @@ def _run_config(config_path: str | Path, *, output_root: str | Path | None):
     return run_workflow(WorkflowConfig.from_mapping(mapping))
 
 
-__all__ = ["main"]
+__all__ = ["CliError", "main"]
 
 
 if __name__ == "__main__":

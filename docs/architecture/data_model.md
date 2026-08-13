@@ -1,158 +1,179 @@
 # Canonical Data Model
 
-Verfeinert uses hierarchical JSON as its canonical internal exchange format.
-CSV and Parquet tables may be derived later for analytical workflows, reporting,
-or notebook convenience, but tables are not the source of truth between
-framework modules.
-
-These contracts describe the public exchange model for framework modules. They
-are not compatibility records for historical run artifacts.
+Verfeinert uses hierarchical JSON as its canonical exchange format. CSV tables,
+figures, examples, and notebooks are derived views over versioned records; they
+are not the source of truth between framework modules.
 
 ## Design Principles
 
-- Prefer future scientific clarity over backward compatibility.
-- Preserve Verfeinert v1 concepts only when they are correct abstractions:
-  candidates, operations, parameters, lineage, metrics, costs, classifications,
-  staged packages, experiment configuration, and provenance.
-- Keep communication records hierarchical and self-describing.
-- Avoid campaign-specific fields and project-specific paths.
-- Reference large or external records by ID/URI where embedding would couple
-  modules unnecessarily.
-- Treat generated artifacts as outputs, not source code.
+- Keep scientific records hierarchical, explicit, and self-describing.
+- Preserve canonical identity in one owner and propagate refs downstream.
+- Avoid campaign-specific fields, local paths, and publication-specific naming
+  in framework defaults.
+- Treat generated outputs as artifacts, not source code.
+- Record enough provenance to reproduce and compare science without requiring
+  total configuration equality when differences are irrelevant.
 
-## Module Boundaries
+## First-Class Persistent Artifacts
 
-`core` owns shared validation, serialization, provenance primitives, path
-guards, and lightweight schema constants. It does not own scientific semantics.
+### Candidate
 
-`ansatz_generator` owns candidate construction and representation. Its public
-exports are canonical `Candidate` documents and `StagedPackage` documents.
+Owned by `verfeinert.ansatz_generator`.
 
-`ansatz_analyzer` will consume candidate references and produce
-`AnalysisResult` documents. Analysis results reference candidates rather than
-embedding full candidates by default.
+A Candidate is a backend-independent ansatz description. It contains:
 
-`ansatz_evolver` will consume candidates and analysis results, then produce
-`EvolutionRun` documents recording generations, selection, archives, and
-configuration.
+- `candidate_id`, the canonical scientific identity;
+- structural and lineage hashes;
+- circuit qubit count, wire order, parameters, and ordered operations;
+- lineage root/parent/generation/mutation metadata;
+- non-canonical annotations in `metadata`;
+- source and software provenance.
 
-## Candidate Model
+Operations identify gates, wires, parameter references, and literal fixed
+values without binding to PennyLane, Qiskit, notebooks, or generated modules.
+Repeated symbolic parameters preserve identity through the circuit parameter
+map.
 
-A candidate is a complete backend-independent ansatz description. The canonical
-candidate document contains:
+### StagedPackage
 
-- `candidate_id`: stable framework identifier;
-- `identity`: structural and lineage hashes plus hash schema version;
-- `circuit`: qubit count, optional wire order, parameters, and ordered
-  operations;
-- `lineage`: root/parent relationship, generation number, and mutation
-  provenance;
-- `metadata`: non-campaign-specific annotations;
-- `provenance`: source, timestamp, software version, Git commit when available,
-  and input hashes.
+Owned by `verfeinert.ansatz_generator`.
 
-The circuit is the canonical representation. Derived counts such as operation
-count or parameter count can be computed by consumers or written into derived
-tables.
+A StagedPackage groups ordered Candidate documents and export metadata for
+analysis or workflow entry. It may also point at generated callable source, but
+generated source is not imported or executed by the generator.
 
-## Operation Model
+### AnalysisResult
 
-Operations are backend-independent. An operation identifies:
+Owned by `verfeinert.ansatz_analyzer`.
 
-- an `operation_id`;
-- a gate by name and optional namespace/version;
-- qubits as integer wire indices;
-- parameters as references to circuit-level parameters or literal fixed values;
-- optional layer/order/role metadata for later visualization and analysis.
+An AnalysisResult references one Candidate through `candidate_ref` and stores:
 
-The operation model deliberately avoids PennyLane, Qiskit, or generated source
-fields.
+- metric records with status, values, errors, units, and metadata;
+- cost records such as structural cost and component counts;
+- classifications such as Pareto or threshold labels;
+- analyzer provenance including metric configuration, permissions,
+  materialization/QNode truth flags, seeds, software version, and config
+  snapshot;
+- structured `candidate_semantics` when lineage/source context needs to be
+  propagated.
 
-## Lineage Model
+Metrics are not written back onto Candidate JSON. One Candidate can have
+multiple AnalysisResult records from different runs, methods, or configurations.
 
-Lineage records the scientific ancestry of a candidate:
+### EvolutionRun
 
-- `generation`;
-- `root_candidate_id`;
-- `parent_candidate_id`;
-- optional mutation record with mutation ID, type, source candidate, and
-  parameters.
+Owned by `verfeinert.ansatz_evolver`.
 
-Lineage is not a historical import format. Only relationships needed for future
-generation, evolution, reproducibility, and analysis are retained.
+An EvolutionRun records:
 
-## Analysis Result Model
+- evolution run identity and configuration snapshot;
+- ordered generations;
+- parent, candidate, survivor, rejected, and archive refs;
+- analysis-result refs;
+- mutation and selection events;
+- continuation or branch metadata;
+- evolver/workflow provenance.
 
-An analysis result references one candidate and stores:
+Evolution records reference Candidate and AnalysisResult artifacts rather than
+duplicating complete scientific documents.
 
-- metric records with status, value, units, errors, and metadata;
-- cost records such as structural cost or operation counts;
-- classifications such as Pareto labels or threshold-based categories;
-- provenance of the analysis boundary.
+### ComparisonResult
 
-Metrics are not placed on the candidate itself. This lets one candidate have
-multiple analysis results produced by different methods, versions, hardware, or
-execution settings.
+Owned by `verfeinert.ansatz_analyzer.comparison`.
 
-## Evolution Run Model
+A ComparisonResult records an explicit postprocessing transform over selected
+AnalysisResult collections:
 
-An evolution run records:
+- comparison ID and transform version;
+- explicit source refs and roles;
+- compatibility report and fingerprints;
+- candidate rows with canonical candidate and analysis refs;
+- global Pareto membership;
+- optional ranking data;
+- cost eligibility and threshold views;
+- comparison provenance.
 
-- run metadata and status;
-- configuration snapshot or experiment reference;
-- generations;
-- candidate references;
-- survivor and archive references;
-- provenance.
+ComparisonResult is independent of plotting. Visualization and CSV are derived
+views over it.
 
-Evolution records reference candidates rather than duplicating complete
-candidate documents in every generation.
+## Derived Artifacts
 
-## Experiment Configuration Model
+Ranking JSON/CSV, Pareto JSON/CSV, AnalysisResult CSV, comparison CSV, and
+figures are derived artifacts. They preserve source refs, transform names, and
+transform versions, but they do not replace the first-class JSON contracts.
 
-Experiment configuration records:
+Broad arbitrary external CSV import is outside the current contract. CSV export
+from canonical and derived Verfeinert artifacts is supported where the result
+is naturally tabular.
 
-- caller-provided inputs;
-- caller-provided outputs;
-- execution settings;
-- reproducibility options;
-- module-specific configuration blocks.
+## Schema Resources
 
-No public schema field assumes local or project-specific paths, repository-relative research
-outputs, or campaign-specific identifiers.
+Root schemas under `schemas/` mirror packaged schemas under
+`verfeinert/schemas/`. The package exposes schema resources through
+`verfeinert.core.schema_resources`, so installed validation does not depend on
+repository-relative files.
+
+The first-class schema versions are:
+
+- `verfeinert.candidate.v1`;
+- `verfeinert.staged_package.v1`;
+- `verfeinert.analysis_result.v1`;
+- `verfeinert.evolution_run.v1`;
+- `verfeinert.comparison_result.v1`.
+
+Experiment schemas remain shared configuration/provenance support.
+
+## Identity Model
+
+Candidate JSON owns canonical candidate identity. Downstream records propagate
+it through `candidate_ref.candidate_id`, derived rows, and structured semantic
+fields. They do not introduce another independent canonical candidate ID.
+
+Lineage/root/parent/generation/layer/run/campaign/mutation fields are
+structured context with defined owners:
+
+- Candidate owns scientific lineage and mutation provenance.
+- AnalysisResult propagates candidate semantics needed for analysis and
+  postprocessing.
+- EvolutionRun owns generation state and evolution relationships.
+- ComparisonResult owns source selection and comparison rows.
+- Visualization owns presentation labels only.
+
+Display aliases are optional presentation metadata. They fall back to canonical
+candidate IDs and never mutate scientific identity.
+
+## Provenance Model
+
+Analyzer provenance owns metric execution facts, metric configuration,
+materialization backend/settings, QNode execution flags, seeds, and software
+version.
+
+Evolver provenance owns selection, mutation, generation state, resume/branch
+relationships, and evolution configuration.
+
+Workflow provenance owns orchestration: requested/executed operations, artifact
+reuse, campaign type, config snapshot, output roots, and truth flags such as
+notebook execution.
+
+Comparison provenance owns explicit source selection, compatibility decisions,
+metric/cost fingerprints, objectives, directions, thresholds, and score
+definitions.
+
+## Scientific Comparison Data
+
+Compatibility uses structured provenance instead of campaign names. Depending
+on the requested analysis, comparison checks trainability Hamiltonian,
+trainability config, expressibility config, structural-cost model and
+normalization reference, component bounds, weights, score configuration,
+Pareto objectives and directions, and thresholds.
+
+Output paths, filenames, visualization settings, CLI invocation, and display
+labels are not scientific compatibility dimensions.
 
 ## Table Derivation Policy
 
-CSV and Parquet tables are derived analytical views. They may flatten metrics,
-costs, candidate summaries, or generation trajectories, but they must be
-reproducible from canonical JSON documents or explicitly record the source JSON
-documents and transform version.
-
-## Current Generator Assessment
-
-The current Verfeinert `ansatz_generator` APIs provide the core pieces needed
-for this model:
-
-- operations are backend-independent;
-- parameter maps exist;
-- lineage and candidate metadata are represented;
-- Sanz19 templates are reproducible;
-- staged packages are metadata-only;
-- callable source generation is optional and no-QNode.
-
-Generator records are implementation records, while canonical Candidate JSON is
-the external exchange format. Public exporters provide nested `candidate_id`,
-`circuit`, `identity`, `lineage`, and `provenance` documents matching
-`candidate.schema.json`.
-
-## Open Design Decisions
-
-- Whether canonical schema validation should become a runtime dependency or
-  remain a development/integration validation tool.
-- Whether operation gate namespaces should use short framework labels or full
-  URIs.
-- How strict future cross-document URI resolution should be for packaged runs.
-- Whether analysis result metric values need domain-specific sub-schemas for
-  high-dimensional outputs.
-- How derived table transform versions should be named once CSV/Parquet export
-  APIs are implemented.
+Derived tables must be reproducible from canonical JSON or explicitly record
+their source artifact refs and transform versions. They should preserve
+canonical candidate IDs and analysis-result IDs, use deterministic column
+ordering, and avoid implicit scientific assumptions about units, metrics,
+normalization, or cost definitions.

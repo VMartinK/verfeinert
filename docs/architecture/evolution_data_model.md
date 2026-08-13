@@ -56,7 +56,7 @@ available. Status values are `planned`, `running`, `completed`, `failed`, and
 
 `metadata`
 : Optional non-canonical annotations. This should not contain campaign-specific
-logic or local local or project-specific paths.
+logic or local or project-specific paths.
 
 ## Configuration
 
@@ -72,7 +72,8 @@ The configuration object may also include:
 - `selection_policy`.
 - `stopping_policy`.
 
-For v2 implementation, the effective configuration should record:
+The effective configuration records the scientific and orchestration choices
+needed to resume, branch, audit, or compare compatible runs:
 
 - run ID and output-root policy;
 - maximum generations;
@@ -131,9 +132,9 @@ Candidate JSON
 ```
 
 EvolutionRun must preserve which AnalysisResult documents informed selection.
-The Phase 6.1 schema refinement adds a first-class
-`generation.analysis_result_refs` field while keeping
-`verfeinert.evolution_run.v1` compatible with earlier minimal documents.
+The current schema supports first-class `generation.analysis_result_refs`
+while keeping `verfeinert.evolution_run.v1` compatible with earlier minimal
+documents.
 
 Analysis result references use:
 
@@ -162,10 +163,10 @@ Recommended generation roles:
 - `archive`: candidate retained in accumulated run memory;
 - `rejected`: candidate considered but not selected.
 
-The Phase 6.1 schema refinement adds optional `parent_refs` and `rejected_refs`
-alongside the original `candidate_refs`, `survivor_refs`, and `archive_refs`.
-Population events can still record richer provenance, but membership no longer
-requires event-only encoding.
+The current schema supports optional `parent_refs` and `rejected_refs`
+alongside `candidate_refs`, `survivor_refs`, and `archive_refs`. Population
+events can still record richer provenance, but membership does not require
+event-only encoding.
 
 Recommended event examples:
 
@@ -273,7 +274,7 @@ recorded through provenance.
 No local paths, external data-processing folders, generated callable package paths, or
 notebook paths should appear in public EvolutionRun documents.
 
-## Open Schema Decisions
+## Extension Points
 
 The current schema supports:
 
@@ -282,7 +283,7 @@ The current schema supports:
 - event records that require `event_type`;
 - optional run-level execution flags.
 
-Still open for later schema work:
+Later schema releases may add:
 
 - stricter typed event variants;
 - archive summary structure;

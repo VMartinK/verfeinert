@@ -60,13 +60,12 @@ content hashes. Execution flags are always truthful and false:
 ## Internal And External Representations
 
 Generator records remain implementation records optimized for template
-building, structural mutation, and future campaign logic. Canonical Candidate
+building, structural mutation, and campaign logic. Canonical Candidate
 and StagedPackage JSON are the external exchange formats shared with analyzer,
 evolver, examples, and downstream researchers.
 
-Historical Beta-style compiler outputs remain separate from these exporters.
-They are not removed in this phase, but new examples should use the canonical
-exporters instead of local conversion helpers.
+Historical compiler outputs remain separate from these exporters. Public
+examples use the canonical exporters instead of local conversion helpers.
 
 ## Future Compatibility
 
