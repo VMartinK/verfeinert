@@ -40,10 +40,10 @@ verfeinert
 
 ## Installation
 
-For a released package:
+From a GitHub release wheel once downloaded:
 
 ```bash
-python -m pip install verfeinert
+python -m pip install ./verfeinert-0.2.0-py3-none-any.whl
 ```
 
 From a repository checkout:
@@ -55,7 +55,7 @@ python -m pip install .
 Visualization is optional:
 
 ```bash
-python -m pip install "verfeinert[visualization]"
+python -m pip install ".[visualization]"
 ```
 
 For development and test work from this directory:

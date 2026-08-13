@@ -2,13 +2,16 @@
 
 from __future__ import annotations
 
+from importlib import metadata
 import math
 from pathlib import Path
 import tempfile
+import tomllib
 import unittest
 
 import numpy as np
 
+import verfeinert
 from verfeinert.ansatz_analyzer import (
     AnalysisPipeline,
     AnalyzerConfig,
@@ -19,6 +22,7 @@ from verfeinert.ansatz_analyzer import (
     materialize_candidate,
     validate_analysis_result_document,
 )
+from verfeinert._version import PACKAGE_NAME, SOURCE_TREE_VERSION
 from verfeinert.core.io import read_json
 from verfeinert.workflow import WorkflowConfig, WorkflowRunner
 
@@ -424,7 +428,12 @@ class AnalyzerPhase101MaterializationTests(unittest.TestCase):
             config = _analysis_config(Path(tmp))
             payload = AnalysisPipeline(config).run(CANDIDATE_EXAMPLE)[0].to_dict()
 
-        self.assertEqual(payload["provenance"]["software_version"], "0.1.0")
+        project_metadata = tomllib.loads((PROJECT_ROOT / "pyproject.toml").read_text(encoding="utf-8"))
+        expected_version = project_metadata["project"]["version"]
+        self.assertEqual(SOURCE_TREE_VERSION, expected_version)
+        self.assertEqual(metadata.version(PACKAGE_NAME), expected_version)
+        self.assertEqual(verfeinert.__version__, expected_version)
+        self.assertEqual(payload["provenance"]["software_version"], expected_version)
 
     def test_structural_cost_result_is_unchanged_by_disabled_materialization(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

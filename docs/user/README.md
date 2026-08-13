@@ -6,10 +6,10 @@ These guides describe reproducible researcher workflows built on public
 
 ## Installation
 
-For a released package:
+From a GitHub release wheel once downloaded:
 
 ```bash
-python -m pip install verfeinert
+python -m pip install ./verfeinert-0.2.0-py3-none-any.whl
 ```
 
 From a repository checkout:
@@ -27,7 +27,7 @@ python -m pip install -e ".[dev]"
 Plotting is optional:
 
 ```bash
-python -m pip install "verfeinert[visualization]"
+python -m pip install ".[visualization]"
 ```
 
 NumPy, PennyLane, PyYAML, and JSON Schema support are standard runtime

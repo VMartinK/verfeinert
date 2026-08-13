@@ -11,5 +11,6 @@ quantum ansatz generation, analysis, evolution, and reproducible workflows.
 - `user/`: researcher-facing reproduction examples for CX-01 and MIXT-5G.
 - `development/`: contributor validation and CI guidance.
 
-The `docs/migration/` directory is release-preparation provenance kept in this
-working tree. It is excluded from the first public repository.
+The `docs/migration/` directory is historical release-preparation provenance
+kept in the repository. It is not current user guidance or public release
+notes.
