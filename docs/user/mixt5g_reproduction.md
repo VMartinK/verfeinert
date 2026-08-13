@@ -12,18 +12,23 @@ The MIXT-5G reproduction example lives in `examples/MIXT5G_reproduction/`. It pr
 
 ## Workflow
 
-The example runs a bounded multi-generation reproduction loop:
+The example runs a bounded generic evolutionary workflow:
 
 ```text
-generation-0 Sanz19 parents
-  -> workflow runner per generation
-  -> analyzer structural-cost results
+canonical YAML workflow config
+  -> campaign_type: evolutionary
+  -> generation-0 Sanz19 parents
+  -> public WorkflowRunner
+  -> public insert-gate CandidateFactory
+  -> analyzer structural-cost results per generation
   -> strict-Pareto selection
-  -> scheduled example-local child records
-  -> combined EvolutionRun JSON
+  -> resume-compatible EvolutionRun JSON
 ```
 
-Each generation uses public `WorkflowRunner` orchestration. The final combined EvolutionRun JSON records all generation snapshots, parent references, analysis-result references, survivor references, and campaign reference metadata.
+The example wrapper compiles compact profile/schedule data into a generic
+`evolver.mutation_policy`; it does not run a separate campaign engine. The
+EvolutionRun JSON records all generation snapshots, parent references,
+analysis-result references, survivor references, and workflow provenance.
 
 ## Profiles
 
@@ -61,6 +66,7 @@ Use `--output-root` to direct all artifacts to a caller-owned run directory.
 
 All artifacts are written below the configured output root:
 
-- generation-local candidate, staged package, analysis, evolution, and ranking artifacts;
-- a combined `EvolutionRun` JSON document;
+- candidate, staged package, analysis, evolution, and ranking artifacts from
+  one generic workflow run;
+- a resume-compatible `EvolutionRun` JSON document;
 - comparison report.

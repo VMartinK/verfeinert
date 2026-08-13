@@ -7,7 +7,11 @@ paths:
   output_root: outputs
 
 workflow:
-  stages: [generate, analyze, evolve, rank]
+  campaign_type: individual
+  scientific_execution: [generate, analyze]
+  postprocessing: [ranking]
+  resume:
+    mode: continue
 
 generation:
   family: provided
@@ -20,6 +24,15 @@ generation:
 
 analyzer:
   selected_metrics: [structural_cost]
+  permissions:
+    allow_expensive_metrics: false
+    allow_qnode_execution: false
+  materialization:
+    enabled: false
+    backend: pennylane
+    device: default.qubit
+    interface: autograd
+    diff_method: best
   structural_cost:
     reference_id: cx01-reference-L123
     reference_bounds:
@@ -42,14 +55,14 @@ analyzer:
       cost.structural_cost: 1
     combination: weighted_sum
     ascending: true
-
-evolver:
-  selection_mode: fitness
-  policy_id: cx01-structural-smoke-selection
-  metric_name: structural_cost
-  keep: 2
-  direction: minimize
-  max_generations: 1
+  metric_configs:
+    expressibility:
+      n_pairs: 5000
+      n_bins: 75
+      rng_seed: 12345
+    trainability:
+      n_repeats: 5000
+      rng_seed: 12345
 
 cx01_campaign:
   name: CX-01
@@ -82,6 +95,31 @@ profiles:
       - [0, 1]
       - [1, 2]
     max_candidates: 4
+  materialized_smoke:
+    template_ids: [A02]
+    layers: [1]
+    edges:
+      - [0, 1]
+    max_candidates: 1
+    analyzer:
+      selected_metrics: [structural_cost, expressibility, trainability]
+      permissions:
+        allow_expensive_metrics: true
+        allow_qnode_execution: true
+      materialization:
+        enabled: true
+        backend: pennylane
+        device: default.qubit
+        interface: autograd
+        diff_method: best
+      metric_configs:
+        expressibility:
+          n_pairs: 3
+          n_bins: 3
+          rng_seed: 7
+        trainability:
+          n_repeats: 2
+          rng_seed: 7
   full:
     template_ids: all
     layers: [1, 2, 3]

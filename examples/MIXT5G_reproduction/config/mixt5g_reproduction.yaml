@@ -6,6 +6,13 @@ run:
 paths:
   output_root: outputs
 
+workflow:
+  campaign_type: evolutionary
+  scientific_execution: [generate, analyze, evolve]
+  postprocessing: [ranking]
+  resume:
+    mode: continue
+
 generation:
   family: provided
   candidate_id_prefix: mixt5g
@@ -17,6 +24,15 @@ generation:
 
 analyzer:
   selected_metrics: [structural_cost]
+  permissions:
+    allow_expensive_metrics: false
+    allow_qnode_execution: false
+  materialization:
+    enabled: false
+    backend: pennylane
+    device: default.qubit
+    interface: autograd
+    diff_method: best
   structural_cost:
     reference_id: mixt5g-reference
     reference_bounds:
@@ -39,6 +55,14 @@ analyzer:
       cost.structural_cost: 1
     combination: weighted_sum
     ascending: true
+  metric_configs:
+    expressibility:
+      n_pairs: 5000
+      n_bins: 75
+      rng_seed: 12345
+    trainability:
+      n_repeats: 5000
+      rng_seed: 12345
 
 evolver:
   selection_mode: strict_pareto
@@ -46,7 +70,64 @@ evolver:
   objectives:
     - name: structural_cost
       direction: minimize
-  max_generations: 5
+  max_generations: 6
+  mutation_policy:
+    policy_id: mixt5g-insert-schedule
+    variants_per_parent: 1
+    recipes:
+      - recipe_id: crx_insert
+        mutation_type: insert
+        parameters:
+          gate: crx
+          insertion_strategy: before_first_multiqubit
+          edge_selection: parent_index_cycle
+          candidate_id_template: "{root_candidate_id}_g{generation:03d}-{recipe_id}-v{parent_ordinal:03d}"
+    generation_overrides:
+      "1":
+        recipes:
+          - recipe_id: crx_insert
+            mutation_type: insert
+            parameters:
+              gate: crx
+              insertion_strategy: before_first_multiqubit
+              edge_selection: parent_index_cycle
+              candidate_id_template: "{root_candidate_id}_g{generation:03d}-{recipe_id}-v{parent_ordinal:03d}"
+      "2":
+        recipes:
+          - recipe_id: crz_insert
+            mutation_type: insert
+            parameters:
+              gate: crz
+              insertion_strategy: before_first_multiqubit
+              edge_selection: parent_index_cycle
+              candidate_id_template: "{root_candidate_id}_g{generation:03d}-{recipe_id}-v{parent_ordinal:03d}"
+      "3":
+        recipes:
+          - recipe_id: cz_insert
+            mutation_type: insert
+            parameters:
+              gate: cz
+              insertion_strategy: before_first_multiqubit
+              edge_selection: parent_index_cycle
+              candidate_id_template: "{root_candidate_id}_g{generation:03d}-{recipe_id}-v{parent_ordinal:03d}"
+      "4":
+        recipes:
+          - recipe_id: crx_insert
+            mutation_type: insert
+            parameters:
+              gate: crx
+              insertion_strategy: before_first_multiqubit
+              edge_selection: parent_index_cycle
+              candidate_id_template: "{root_candidate_id}_g{generation:03d}-{recipe_id}-v{parent_ordinal:03d}"
+      "5":
+        recipes:
+          - recipe_id: crz_insert
+            mutation_type: insert
+            parameters:
+              gate: crz
+              insertion_strategy: before_first_multiqubit
+              edge_selection: parent_index_cycle
+              candidate_id_template: "{root_candidate_id}_g{generation:03d}-{recipe_id}-v{parent_ordinal:03d}"
 
 mixt5g_campaign:
   name: MIXT-5G

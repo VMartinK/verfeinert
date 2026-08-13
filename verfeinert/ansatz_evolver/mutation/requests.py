@@ -86,7 +86,8 @@ def build_mutation_requests(
     if not isinstance(policy, MutationPolicy):
         raise ValueError("policy must be a MutationPolicy.")
     requests: list[MutationRequest] = []
-    for parent in tuple(parent_refs):
+    parents = tuple(parent_refs)
+    for parent_index, parent in enumerate(parents):
         if not isinstance(parent, CandidateRef):
             raise ValueError("parent_refs must contain CandidateRef records.")
         for variant_index in range(policy.variants_per_parent):
@@ -109,7 +110,11 @@ def build_mutation_requests(
                     recipe_id=recipe.recipe_id,
                     variant_index=variant_index,
                     parameters=dict(recipe.parameters),
-                    metadata={"structural_hash": parent.structural_hash},
+                    metadata={
+                        "structural_hash": parent.structural_hash,
+                        "parent_index": parent_index,
+                        "parent_count": len(parents),
+                    },
                 ),
             )
     return tuple(requests)

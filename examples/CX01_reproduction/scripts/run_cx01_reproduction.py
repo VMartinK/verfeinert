@@ -83,7 +83,7 @@ def run_reproduction(
     config = load_config(config_path)
     output_root = _resolve_output_root(config, config_path=config_path, override=output_root_override)
     candidate_records = build_cx01_candidate_records(config, profile=profile)
-    workflow_mapping = _workflow_mapping(config, output_root=output_root)
+    workflow_mapping = _workflow_mapping(config, output_root=output_root, profile=profile)
     workflow_result = WorkflowRunner(WorkflowConfig.from_mapping(workflow_mapping)).run(
         candidate_records=candidate_records,
     )
@@ -187,17 +187,32 @@ def _edges(raw: object, *, n_qubits: int) -> tuple[tuple[int, int], ...]:
     return tuple((int(edge[0]), int(edge[1])) for edge in raw)  # type: ignore[index]
 
 
-def _workflow_mapping(config: Mapping[str, Any], *, output_root: Path) -> dict[str, Any]:
+def _workflow_mapping(config: Mapping[str, Any], *, output_root: Path, profile: str) -> dict[str, Any]:
     workflow = dict(config)
+    profile_config = dict(config["profiles"][profile])
     workflow["paths"] = {"output_root": str(output_root)}
     workflow["generation"] = dict(config["generation"])
     workflow["generation"]["family"] = "provided"
     workflow["generation"]["created_at"] = config["run"]["created_at"]
+    workflow["analyzer"] = _merged_mapping(config["analyzer"], profile_config.get("analyzer", {}))
     workflow["metadata"] = {
         "example": "cx01_reproduction",
         "campaign_reference": config["cx01_campaign"],
+        "profile": profile,
     }
     return workflow
+
+
+def _merged_mapping(base: Mapping[str, Any], override: object) -> dict[str, Any]:
+    result = copy.deepcopy(dict(base))
+    if not isinstance(override, Mapping):
+        return result
+    for key, value in override.items():
+        if isinstance(value, Mapping) and isinstance(result.get(key), Mapping):
+            result[key] = _merged_mapping(result[key], value)
+        else:
+            result[key] = copy.deepcopy(value)
+    return result
 
 
 def _write_comparison_report(
@@ -242,7 +257,7 @@ def main(argv: Sequence[str] | None = None) -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--config", default=str(DEFAULT_CONFIG_PATH))
     parser.add_argument("--output-root", default=None)
-    parser.add_argument("--profile", default="smoke", choices=("smoke", "full"))
+    parser.add_argument("--profile", default="smoke", choices=("smoke", "materialized_smoke", "full"))
     args = parser.parse_args(argv)
     result = run_reproduction(args.config, output_root_override=args.output_root, profile=args.profile)
     print(result.to_dict())

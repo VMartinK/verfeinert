@@ -9,5 +9,8 @@ This directory contains official reproducible examples for Verfeinert.
 - `MIXT5G_reproduction/`: mixed-gate five-generation strict-Pareto reproduction
   with a bounded smoke profile and documented full schedule.
 
+CX-01 demonstrates an `individual` workflow. MIXT-5G demonstrates an
+`evolutionary` workflow with a public candidate-factory extension.
+
 Generated artifacts must be written under the configured example output root
 and should not be committed.

@@ -15,17 +15,20 @@ The CX-01 reproduction example lives in `examples/CX01_reproduction/`. It is a r
 The script and notebook run:
 
 ```text
-YAML config
-  -> example-local CX knock-in candidate factory
+canonical YAML workflow config
+  -> campaign_type: individual
+  -> example-local CX knock-in candidate record preparation
   -> public workflow runner
   -> canonical Candidate JSON
   -> canonical StagedPackage JSON
   -> structural-cost AnalysisResult JSON
-  -> EvolutionRun JSON
   -> ranking and comparison artifacts
 ```
 
-The candidate factory is intentionally example-local. It encodes CX-01 reproduction intent without adding campaign-specific branches to `verfeinert`.
+The candidate preparation is intentionally example-local. It encodes CX-01
+reproduction inputs without adding campaign-specific branches to `verfeinert`.
+The migrated example does not request `evolve` and does not produce an
+EvolutionRun.
 
 ## Profiles
 
@@ -36,6 +39,13 @@ The candidate factory is intentionally example-local. It encodes CX-01 reproduct
 - two valid CX edges;
 - four generated candidates;
 - structural-cost-only analysis.
+
+`materialized_smoke` is a tiny bridge profile:
+
+- one generated candidate;
+- analyzer-owned PennyLane materialization enabled;
+- expressibility/trainability permissions enabled;
+- very small metric sample counts for development validation.
 
 `full` preserves the reference configuration:
 
@@ -63,6 +73,5 @@ All artifacts are written below the configured output root:
 - candidate JSON files;
 - `staged_package.json`;
 - analyzer result JSON files;
-- `evolution_run.json`;
 - ranking JSON/CSV;
 - comparison report.

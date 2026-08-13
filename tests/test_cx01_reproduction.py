@@ -11,10 +11,10 @@ import unittest
 
 from verfeinert.ansatz_evolver import (
     validate_candidate_document,
-    validate_evolution_run_document,
 )
 from verfeinert.ansatz_analyzer import validate_analysis_result_document
 from verfeinert.core import read_yaml
+from verfeinert.workflow import WorkflowConfig
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -45,6 +45,10 @@ class CX01ReproductionTests(unittest.TestCase):
         self.assertEqual(campaign["mutation"]["gate"], "cx")
         self.assertEqual(campaign["candidate_policy"]["edges"], "all_valid")
         self.assertEqual(campaign["analysis_reference"]["cost_thresholds"], [1.0, 0.2, 0.1])
+        workflow = WorkflowConfig.from_mapping(config)
+        self.assertEqual(workflow.campaign_type, "individual")
+        self.assertEqual(workflow.scientific_execution, ("generate", "analyze"))
+        self.assertEqual(workflow.postprocessing, ("ranking",))
 
     def test_smoke_reproduction_uses_public_workflow_and_valid_schemas(self) -> None:
         module = _load_script()
@@ -58,6 +62,19 @@ class CX01ReproductionTests(unittest.TestCase):
 
             self.assertEqual(summary["generated_candidate_count"], 4)
             self.assertEqual(len(summary["workflow_result"]["candidate_ids"]), 4)
+            self.assertEqual(
+                summary["workflow_result"]["candidate_ids"],
+                [
+                    "cx01repro-a02-l1_cx-v001",
+                    "cx01repro-a02-l1_cx-v002",
+                    "cx01repro-a09-l1_cx-v001",
+                    "cx01repro-a09-l1_cx-v002",
+                ],
+            )
+            self.assertEqual(summary["workflow_result"]["executed_operations"], ["generate", "analyze", "ranking"])
+            self.assertIsNone(summary["workflow_result"]["evolution_run_path"])
+            self.assertEqual(summary["workflow_result"]["provenance"]["execution"]["campaign_type"], "individual")
+            self.assertFalse(summary["workflow_result"]["provenance"]["execution"]["evolution_exported"])
             self.assertTrue(Path(summary["comparison_report_path"]).is_file())
 
             for path in summary["workflow_result"]["candidate_paths"]:
@@ -68,14 +85,26 @@ class CX01ReproductionTests(unittest.TestCase):
             for path in summary["workflow_result"]["analysis_result_paths"]:
                 validate_analysis_result_document(json.loads(Path(path).read_text(encoding="utf-8")))
 
-            evolution = validate_evolution_run_document(
-                json.loads(Path(summary["workflow_result"]["evolution_run_path"]).read_text(encoding="utf-8")),
+    def test_materialized_smoke_uses_analyzer_owned_qnode_bridge(self) -> None:
+        module = _load_script()
+        with TemporaryDirectory() as temp_dir:
+            result = module.run_reproduction(
+                CONFIG_PATH,
+                output_root_override=Path(temp_dir) / "outputs",
+                profile="materialized_smoke",
             )
-            analysis_refs = evolution["generations"][0]["analysis_result_refs"]
-            self.assertEqual(
-                [ref["candidate_id"] for ref in analysis_refs],
-                summary["workflow_result"]["candidate_ids"],
+            summary = result.to_dict()
+
+            self.assertEqual(summary["generated_candidate_count"], 1)
+            self.assertIsNone(summary["workflow_result"]["evolution_run_path"])
+            payload = validate_analysis_result_document(
+                json.loads(Path(summary["workflow_result"]["analysis_result_paths"][0]).read_text(encoding="utf-8")),
             )
+            metrics = {metric["name"]: metric for metric in payload["metrics"]}
+            self.assertEqual(metrics["expressibility"]["status"], "computed")
+            self.assertEqual(metrics["trainability"]["status"], "computed")
+            self.assertTrue(metrics["expressibility"]["metadata"]["qnodes_executed"])
+            self.assertTrue(metrics["trainability"]["metadata"]["qnodes_executed"])
 
     def test_example_has_no_local_or_legacy_coupling(self) -> None:
         forbidden = (

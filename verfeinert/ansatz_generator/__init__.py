@@ -45,6 +45,11 @@ from .exporters import (
     write_candidate_json,
     write_staged_package_json,
 )
+from .factories import (
+    EDGE_SELECTION_MODES,
+    INSERTION_STRATEGIES,
+    InsertGateMutationFactory,
+)
 from .lineage import LineageRecord
 from .mutations import (
     detect_no_op,
@@ -94,9 +99,12 @@ __all__ = [
     "CompiledCandidateRecord",
     "Connectivity",
     "ConstraintSet",
+    "EDGE_SELECTION_MODES",
     "GateDef",
     "GateRegistry",
     "GeneratorValidationError",
+    "INSERTION_STRATEGIES",
+    "InsertGateMutationFactory",
     "LineageRecord",
     "Operation",
     "Parameter",

@@ -77,6 +77,12 @@ python examples/MIXT5G_reproduction/scripts/run_mixt5g_reproduction.py \
 Generated artifacts must be written under caller-provided output roots and
 should not be committed.
 
+CX-01 is an `individual` campaign: it generates and analyzes configured
+candidates, then runs ranking postprocessing without evolution. MIXT-5G is an
+`evolutionary` campaign: it initializes a population, uses a generic insert-gate
+candidate factory and configured mutation schedule, and writes a
+resume-compatible EvolutionRun.
+
 ## Analyzer Scientific Execution
 
 Expressibility and trainability can be computed from canonical Candidate or
@@ -145,6 +151,24 @@ result = WorkflowRunner(config).run()
 Legacy `stages` declarations are normalized into the same internal plan. If
 both legacy and structured workflow declarations are supplied, conflicting
 requests fail during configuration validation.
+
+Evolutionary campaigns can use the public factory boundary:
+
+```python
+from verfeinert.ansatz_generator import InsertGateMutationFactory
+from verfeinert.workflow import WorkflowConfig, WorkflowRunner
+
+result = WorkflowRunner(WorkflowConfig.from_mapping(config)).run(
+    candidate_records=initial_records,
+    candidate_factory=InsertGateMutationFactory(),
+)
+```
+
+The optional CLI is a thin wrapper around the same API:
+
+```bash
+verfeinert run workflow.yaml --output-root /tmp/verfeinert-run
+```
 
 ## External Validation
 
