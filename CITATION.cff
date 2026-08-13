@@ -2,6 +2,7 @@ cff-version: 1.2.0
 message: "If you use this software, please cite it using the metadata provided in this file."
 title: "Verfeinert"
 version: "0.2.0"
+date-released: 2026-08-13
 repository-code: "https://github.com/VMartinK/verfeinert"
 license: "Apache-2.0"
 authors:

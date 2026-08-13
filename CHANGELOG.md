@@ -2,7 +2,7 @@
 
 All notable changes to Verfeinert will be documented in this file.
 
-## 0.2.0 - Pending release
+## 0.2.0 - 2026-08-13
 
 ### Scientific execution
 
