@@ -10,6 +10,7 @@ from typing import Any
 from verfeinert.ansatz_analyzer import (
     AnalyzerExecutionPermissions,
     CircuitMaterializationConfig,
+    ComparisonConfig,
     ParetoConfig,
     RankingConfig,
     StructuralCostConfig,
@@ -34,7 +35,13 @@ SUPPORTED_GENERATION_FAMILIES = ("sanz19", "provided")
 SUPPORTED_EVOLUTION_SELECTION_MODES = ("fitness", "pareto", "strict_pareto", "thresholds")
 SUPPORTED_CAMPAIGN_TYPES = ("individual", "evolutionary")
 SUPPORTED_SCIENTIFIC_OPERATIONS = ("generate", "analyze", "evolve")
-SUPPORTED_POSTPROCESSING_OPERATIONS = ("ranking", "pareto", "export_csv")
+SUPPORTED_POSTPROCESSING_OPERATIONS = (
+    "ranking",
+    "pareto",
+    "comparison",
+    "export_csv",
+    "visualization",
+)
 SUPPORTED_WORKFLOW_STAGES = (
     "generate",
     "analyze",
@@ -42,9 +49,15 @@ SUPPORTED_WORKFLOW_STAGES = (
     "rank",
     "ranking",
     "pareto",
+    "compare",
+    "comparison",
+    "global_analysis",
     "csv",
     "export",
     "export_csv",
+    "visualize",
+    "visualization",
+    "plot",
 )
 DEFAULT_LEGACY_STAGES = ("generate", "analyze", "evolve", "rank")
 DEFAULT_SCIENTIFIC_EXECUTION = ("generate", "analyze", "evolve")
@@ -53,9 +66,15 @@ POSTPROCESSING_ALIASES = {
     "rank": "ranking",
     "ranking": "ranking",
     "pareto": "pareto",
+    "compare": "comparison",
+    "comparison": "comparison",
+    "global_analysis": "comparison",
     "csv": "export_csv",
     "export": "export_csv",
     "export_csv": "export_csv",
+    "visualize": "visualization",
+    "visualization": "visualization",
+    "plot": "visualization",
 }
 
 
@@ -311,6 +330,7 @@ class WorkflowArtifactInputs:
     candidates: tuple[Any, ...] = ()
     staged_packages: tuple[Any, ...] = ()
     analysis_results: tuple[Any, ...] = ()
+    comparison_results: tuple[Any, ...] = ()
     evolution_run: Any | None = None
 
     def __post_init__(self) -> None:
@@ -325,6 +345,11 @@ class WorkflowArtifactInputs:
             "analysis_results",
             _source_tuple(self.analysis_results, "artifacts.analysis_results"),
         )
+        object.__setattr__(
+            self,
+            "comparison_results",
+            _source_tuple(self.comparison_results, "artifacts.comparison_results"),
+        )
 
     @classmethod
     def from_mapping(cls, mapping: Mapping[str, Any]) -> "WorkflowArtifactInputs":
@@ -334,6 +359,7 @@ class WorkflowArtifactInputs:
             candidates=_first_non_none(data.get("candidates"), data.get("candidate"), ()),
             staged_packages=_first_non_none(data.get("staged_packages"), data.get("staged_package"), ()),
             analysis_results=_first_non_none(data.get("analysis_results"), data.get("analysis_result"), ()),
+            comparison_results=_first_non_none(data.get("comparison_results"), data.get("comparison_result"), ()),
             evolution_run=data.get("evolution_run"),
         )
 
@@ -343,8 +369,148 @@ class WorkflowArtifactInputs:
             "candidates": to_json_safe(list(self.candidates)),
             "staged_packages": to_json_safe(list(self.staged_packages)),
             "analysis_results": to_json_safe(list(self.analysis_results)),
+            "comparison_results": to_json_safe(list(self.comparison_results)),
             "evolution_run": to_json_safe(self.evolution_run),
         }
+
+
+@dataclass(frozen=True)
+class WorkflowComparisonSourceConfig:
+    """Explicit source selection for one workflow comparison."""
+
+    source_id: str
+    analysis_results: tuple[Any, ...]
+    role: str = "source"
+    label: str | None = None
+    metadata: dict[str, Any] = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "source_id", require_identifier(self.source_id, "comparison.source_id"))
+        object.__setattr__(
+            self,
+            "analysis_results",
+            _source_tuple(self.analysis_results, "comparison.source.analysis_results"),
+        )
+        if not self.analysis_results:
+            raise WorkflowConfigError("comparison source analysis_results must not be empty.")
+        object.__setattr__(self, "role", _non_empty_text(self.role, "comparison.source.role"))
+        if self.label is not None:
+            object.__setattr__(self, "label", _non_empty_text(self.label, "comparison.source.label"))
+        object.__setattr__(self, "metadata", to_json_safe(dict(self.metadata)))
+
+    @classmethod
+    def from_mapping(cls, mapping: Mapping[str, Any]) -> "WorkflowComparisonSourceConfig":
+        """Build a comparison source config from parsed data."""
+        data = dict(mapping)
+        return cls(
+            source_id=data.get("source_id", data.get("id")),
+            role=data.get("role", "source"),
+            label=data.get("label"),
+            analysis_results=_first_non_none(
+                data.get("analysis_results"),
+                data.get("analysis_result"),
+                (),
+            ),
+            metadata=dict(data.get("metadata", {})),
+        )
+
+    def to_dict(self) -> dict[str, Any]:
+        """Return JSON-safe source selection config."""
+        return {
+            "source_id": self.source_id,
+            "role": self.role,
+            "label": self.label,
+            "analysis_results": to_json_safe(list(self.analysis_results)),
+            "metadata": dict(self.metadata),
+        }
+
+
+@dataclass(frozen=True)
+class WorkflowComparisonConfig:
+    """One explicitly configured workflow comparison."""
+
+    comparison_id: str
+    sources: tuple[WorkflowComparisonSourceConfig, ...]
+    config: ComparisonConfig = field(default_factory=ComparisonConfig)
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "comparison_id", require_identifier(self.comparison_id, "comparison_id"))
+        sources = tuple(
+            item
+            if isinstance(item, WorkflowComparisonSourceConfig)
+            else WorkflowComparisonSourceConfig.from_mapping(item)  # type: ignore[arg-type]
+            for item in self.sources
+        )
+        if not sources:
+            raise WorkflowConfigError("comparison requires explicit sources.")
+        if len({item.source_id for item in sources}) != len(sources):
+            raise WorkflowConfigError("comparison source IDs must be unique.")
+        config = self.config
+        if not isinstance(config, ComparisonConfig):
+            config = ComparisonConfig(**dict(config))  # type: ignore[arg-type]
+        if config.comparison_id != self.comparison_id:
+            config = ComparisonConfig(
+                comparison_id=self.comparison_id,
+                objectives=config.objectives,
+                ranking=config.ranking,
+                include_ranking=config.include_ranking,
+                cost_field=config.cost_field,
+                cost_thresholds=config.cost_thresholds,
+                validate_cost=config.validate_cost,
+                display_aliases=config.display_aliases,
+                metadata=config.metadata,
+            )
+        object.__setattr__(self, "sources", sources)
+        object.__setattr__(self, "config", config)
+
+    @classmethod
+    def from_mapping(cls, mapping: Mapping[str, Any]) -> "WorkflowComparisonConfig":
+        """Build a comparison config from parsed workflow data."""
+        data = dict(mapping)
+        comparison_id = data.get("comparison_id", data.get("id", "comparison"))
+        config_data = dict(data.get("config", {}))
+        for key in (
+            "objectives",
+            "ranking",
+            "include_ranking",
+            "cost_field",
+            "cost_thresholds",
+            "validate_cost",
+            "display_aliases",
+            "metadata",
+        ):
+            if key in data and key not in config_data:
+                config_data[key] = data[key]
+        config_data["comparison_id"] = comparison_id
+        return cls(
+            comparison_id=comparison_id,
+            sources=tuple(
+                WorkflowComparisonSourceConfig.from_mapping(item)
+                for item in data.get("sources", ())
+            ),
+            config=ComparisonConfig(**config_data),
+        )
+
+    def to_dict(self) -> dict[str, Any]:
+        """Return JSON-safe workflow comparison config."""
+        return {
+            "comparison_id": self.comparison_id,
+            "sources": [item.to_dict() for item in self.sources],
+            "config": self.config.to_dict(),
+        }
+
+
+def _comparison_configs_from_data(data: Mapping[str, Any]) -> tuple[WorkflowComparisonConfig, ...]:
+    value = data.get("comparisons")
+    if value is None:
+        value = data.get("comparison", ())
+    if not value:
+        return ()
+    if isinstance(value, Mapping):
+        return (WorkflowComparisonConfig.from_mapping(value),)
+    if isinstance(value, Sequence) and not isinstance(value, (str, bytes, bytearray)):
+        return tuple(WorkflowComparisonConfig.from_mapping(item) for item in value)
+    raise WorkflowConfigError("comparisons must be a mapping or sequence of mappings.")
 
 
 @dataclass(frozen=True)
@@ -385,6 +551,7 @@ class WorkflowConfig:
     analyzer: AnalyzerStageConfig = field(default_factory=AnalyzerStageConfig)
     evolver: EvolutionStageConfig = field(default_factory=EvolutionStageConfig)
     artifacts: WorkflowArtifactInputs = field(default_factory=WorkflowArtifactInputs)
+    comparisons: tuple[WorkflowComparisonConfig, ...] = ()
     resume: WorkflowResumeConfig = field(default_factory=WorkflowResumeConfig)
     execution: ExecutionConfig = field(default_factory=ExecutionConfig)
     random_seed: int | None = None
@@ -440,6 +607,15 @@ class WorkflowConfig:
             raise WorkflowConfigError("evolver must be EvolutionStageConfig.")
         if not isinstance(self.artifacts, WorkflowArtifactInputs):
             raise WorkflowConfigError("artifacts must be WorkflowArtifactInputs.")
+        comparisons = tuple(
+            item
+            if isinstance(item, WorkflowComparisonConfig)
+            else WorkflowComparisonConfig.from_mapping(item)  # type: ignore[arg-type]
+            for item in self.comparisons
+        )
+        if len({item.comparison_id for item in comparisons}) != len(comparisons):
+            raise WorkflowConfigError("comparison IDs must be unique.")
+        object.__setattr__(self, "comparisons", comparisons)
         if not isinstance(self.resume, WorkflowResumeConfig):
             raise WorkflowConfigError("resume must be WorkflowResumeConfig.")
         if not isinstance(self.execution, ExecutionConfig):
@@ -463,6 +639,10 @@ class WorkflowConfig:
         scientific_execution, postprocessing, stages = _operations_from_mapping(data, campaign_type=campaign_type)
         artifacts = data.get("artifacts", workflow.get("artifacts", {}))
         resume = data.get("resume", workflow.get("resume", {}))
+        comparison_data = {
+            "comparison": _first_non_none(data.get("comparison"), workflow.get("comparison")),
+            "comparisons": _first_non_none(data.get("comparisons"), workflow.get("comparisons")),
+        }
         return cls(
             run_id=run.get("run_id", data.get("run_id")),
             output_root=paths.get("output_root", data.get("output_root")),
@@ -479,6 +659,7 @@ class WorkflowConfig:
                 if isinstance(artifacts, WorkflowArtifactInputs)
                 else WorkflowArtifactInputs.from_mapping(dict(artifacts))
             ),
+            comparisons=_comparison_configs_from_data(comparison_data),
             resume=(
                 resume
                 if isinstance(resume, WorkflowResumeConfig)
@@ -518,6 +699,7 @@ class WorkflowConfig:
             "analyzer": self.analyzer.to_dict(),
             "evolver": self.evolver.to_dict(),
             "artifacts": self.artifacts.to_dict(),
+            "comparisons": [item.to_dict() for item in self.comparisons],
             "execution": self.execution.to_dict(),
             "metadata": dict(self.metadata),
         }
@@ -701,6 +883,8 @@ __all__ = [
     "SUPPORTED_SCIENTIFIC_OPERATIONS",
     "SUPPORTED_WORKFLOW_STAGES",
     "WorkflowArtifactInputs",
+    "WorkflowComparisonConfig",
+    "WorkflowComparisonSourceConfig",
     "WorkflowConfig",
     "WorkflowConfigError",
     "WorkflowResumeConfig",

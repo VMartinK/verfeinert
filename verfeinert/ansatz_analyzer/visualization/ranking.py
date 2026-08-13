@@ -6,7 +6,7 @@ from typing import Any
 
 from ..ranking import RankingResult
 from .export import require_pyplot
-from .styles import THESIS_STYLE, VisualizationStyle
+from .styles import DEFAULT_STYLE, VisualizationStyle
 
 
 def ranking_plot_data(result: RankingResult) -> list[dict[str, Any]]:
@@ -28,7 +28,7 @@ def ranking_plot_data(result: RankingResult) -> list[dict[str, Any]]:
 def plot_ranking_scores(
     result: RankingResult,
     *,
-    style: VisualizationStyle = THESIS_STYLE,
+    style: VisualizationStyle = DEFAULT_STYLE,
 ):
     """Plot ranking score by rank from derived analyzer output."""
     pyplot = require_pyplot()

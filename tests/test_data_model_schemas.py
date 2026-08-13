@@ -19,6 +19,7 @@ SCHEMA_FILES = {
     "experiment": SCHEMAS_ROOT / "experiment.schema.json",
     "staged_package": SCHEMAS_ROOT / "staged_package.schema.json",
     "analysis_result": SCHEMAS_ROOT / "analysis_result.schema.json",
+    "comparison_result": SCHEMAS_ROOT / "comparison_result.schema.json",
     "evolution_run": SCHEMAS_ROOT / "evolution_run.schema.json",
 }
 
@@ -287,6 +288,183 @@ class DataModelSchemaTests(unittest.TestCase):
             }
         }
         _validator("evolution_run").validate(document)
+
+    def test_comparison_result_minimal_document_validates(self) -> None:
+        document = {
+            "schema_version": "verfeinert.comparison_result.v1",
+            "transform": "comparison",
+            "transform_version": "1",
+            "comparison_id": "comparison-schema-test",
+            "created_at": "2026-08-04T00:00:00Z",
+            "source_analysis_result_ids": [
+                "analysis-result-a",
+                "analysis-result-b"
+            ],
+            "global_frontier_candidate_ids": [
+                "candidate-b"
+            ],
+            "config": {
+                "comparison_id": "comparison-schema-test",
+                "objectives": [
+                    {
+                        "metric_name": "trainability",
+                        "direction": "maximize",
+                        "value_key": None
+                    },
+                    {
+                        "metric_name": "expressibility",
+                        "direction": "maximize",
+                        "value_key": None
+                    }
+                ],
+                "ranking": {
+                    "score_components": {
+                        "expressibility": 1.0,
+                        "trainability": 1.0
+                    },
+                    "combination": "product",
+                    "ascending": False,
+                    "top_n": None,
+                    "cost_threshold": None,
+                    "cost_field": "structural_cost",
+                    "include_unrankable": False
+                },
+                "include_ranking": True,
+                "cost_field": "structural_cost",
+                "cost_thresholds": [
+                    1.0
+                ],
+                "validate_cost": True,
+                "display_aliases": {},
+                "metadata": {}
+            },
+            "sources": [
+                {
+                    "source_id": "source-a",
+                    "role": "reference",
+                    "label": None,
+                    "collection_id": "source-a:analysis",
+                    "analysis_result_count": 1,
+                    "analysis_result_ids": [
+                        "analysis-result-a"
+                    ],
+                    "candidate_ids": [
+                        "candidate-a"
+                    ],
+                    "metadata": {}
+                },
+                {
+                    "source_id": "source-b",
+                    "role": "source",
+                    "label": "Source B",
+                    "collection_id": "source-b:analysis",
+                    "analysis_result_count": 1,
+                    "analysis_result_ids": [
+                        "analysis-result-b"
+                    ],
+                    "candidate_ids": [
+                        "candidate-b"
+                    ],
+                    "metadata": {
+                        "run": "selected"
+                    }
+                }
+            ],
+            "compatibility": {
+                "compatible": True,
+                "fingerprints": {
+                    "objectives": [
+                        {
+                            "metric_name": "trainability",
+                            "direction": "maximize",
+                            "value_key": None
+                        },
+                        {
+                            "metric_name": "expressibility",
+                            "direction": "maximize",
+                            "value_key": None
+                        }
+                    ],
+                    "sources": {}
+                },
+                "issues": [],
+                "ignored_differences": [
+                    "output_paths",
+                    "display_labels"
+                ]
+            },
+            "rows": [
+                {
+                    "source_id": "source-a",
+                    "source_role": "reference",
+                    "source_label": "source-a",
+                    "candidate_id": "candidate-a",
+                    "analysis_result_id": "analysis-result-a",
+                    "display_label": "candidate-a",
+                    "objective_values": {
+                        "trainability": 0.4,
+                        "expressibility": 0.8
+                    },
+                    "cost_value": 0.2,
+                    "is_global_pareto": False,
+                    "pareto_rank": 2,
+                    "rank": 2,
+                    "score": 0.32,
+                    "score_status": "ranked",
+                    "cost_eligibility": {
+                        "1p0": True
+                    },
+                    "lineage": {
+                        "generation": 0,
+                        "root_candidate_id": "candidate-a"
+                    },
+                    "source_context": {
+                        "workflow_run_id": "source-a"
+                    },
+                    "warnings": []
+                },
+                {
+                    "source_id": "source-b",
+                    "source_role": "source",
+                    "source_label": "Source B",
+                    "candidate_id": "candidate-b",
+                    "analysis_result_id": "analysis-result-b",
+                    "display_label": "candidate-b",
+                    "objective_values": {
+                        "trainability": 0.9,
+                        "expressibility": 0.7
+                    },
+                    "cost_value": 0.4,
+                    "is_global_pareto": True,
+                    "pareto_rank": 1,
+                    "rank": 1,
+                    "score": 0.63,
+                    "score_status": "ranked",
+                    "cost_eligibility": {
+                        "1p0": True
+                    },
+                    "lineage": {
+                        "generation": 0,
+                        "root_candidate_id": "candidate-b"
+                    },
+                    "source_context": {
+                        "workflow_run_id": "source-b"
+                    },
+                    "warnings": []
+                }
+            ],
+            "table_views": {
+                "candidate_summary": {
+                    "row_count": 2,
+                    "columns": [
+                        "candidate_id",
+                        "source_id"
+                    ]
+                }
+            },
+            "warnings": []
+        }
+        _validator("comparison_result").validate(document)
 
     def test_evolution_run_events_require_event_type(self) -> None:
         candidate_ref = _candidate_ref()

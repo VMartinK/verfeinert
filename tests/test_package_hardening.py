@@ -67,7 +67,7 @@ print(json.dumps({
                 capture_output=True,
             )
         payload = json.loads(completed.stdout)
-        self.assertEqual(payload["schema_count"], 5)
+        self.assertEqual(payload["schema_count"], 6)
         self.assertEqual(payload["candidate_id"], "external-style-candidate")
         self.assertTrue(payload["candidate_schema"].endswith("/candidate.schema.json"))
 

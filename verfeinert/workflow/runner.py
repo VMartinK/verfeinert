@@ -12,16 +12,23 @@ from verfeinert.ansatz_analyzer import (
     AnalysisPipeline,
     AnalysisResultCollection,
     AnalyzerConfig,
+    ComparisonResult,
+    ComparisonSource,
     ParetoConfig,
     RankingConfig,
+    compare_analysis_collections,
     compute_pareto_classifications,
     rank_analysis_results,
+    read_comparison_result_json,
     validate_analysis_result_document,
     validate_candidate_document,
+    validate_comparison_result_document,
     validate_staged_package_document,
 )
 from verfeinert.ansatz_analyzer.tables import (
     write_analysis_results_csv,
+    write_comparison_csv,
+    write_comparison_json,
     write_pareto_csv,
     write_pareto_json,
     write_ranking_csv,
@@ -85,6 +92,9 @@ class WorkflowResult:
     pareto_json_path: Path | None = None
     pareto_csv_path: Path | None = None
     analysis_csv_path: Path | None = None
+    comparison_json_paths: tuple[Path, ...] = ()
+    comparison_csv_paths: tuple[Path, ...] = ()
+    visualization_paths: tuple[Path, ...] = ()
     candidate_ids: tuple[str, ...] = ()
     analysis_result_ids: tuple[str, ...] = ()
     survivor_candidate_ids: tuple[str, ...] = ()
@@ -123,6 +133,9 @@ class WorkflowResult:
                 "pareto_json_path": str(self.pareto_json_path) if self.pareto_json_path else None,
                 "pareto_csv_path": str(self.pareto_csv_path) if self.pareto_csv_path else None,
                 "analysis_csv_path": str(self.analysis_csv_path) if self.analysis_csv_path else None,
+                "comparison_json_paths": [str(path) for path in self.comparison_json_paths],
+                "comparison_csv_paths": [str(path) for path in self.comparison_csv_paths],
+                "visualization_paths": [str(path) for path in self.visualization_paths],
                 "candidate_ids": list(self.candidate_ids),
                 "analysis_result_ids": list(self.analysis_result_ids),
                 "survivor_candidate_ids": list(self.survivor_candidate_ids),
@@ -194,6 +207,7 @@ class WorkflowRunner:
         all_candidate_sources = (*configured.candidates, *tuple(candidate_sources))
         all_staged_sources = (*configured.staged_packages, *tuple(staged_package_sources))
         all_analysis_sources = (*configured.analysis_results, *tuple(analysis_result_sources))
+        all_comparison_result_sources = configured.comparison_results
         resolved_evolution_source = (
             evolution_run_source
             if evolution_run_source is not None
@@ -207,6 +221,19 @@ class WorkflowRunner:
             consumed_artifacts.append(_artifact_record("candidate", artifact.uri))
         for package in staged_artifacts:
             consumed_artifacts.append(_artifact_record("staged_package", package["uri"]))
+        loaded_comparison_results = _load_comparison_results(all_comparison_result_sources)
+        for source, result in zip(
+            all_comparison_result_sources,
+            loaded_comparison_results,
+            strict=True,
+        ):
+            record = _artifact_record(
+                "comparison_result",
+                _source_uri(source),
+                document_id=result.comparison_id,
+            )
+            consumed_artifacts.append(record)
+            reused_artifacts.append(record)
 
         generated_package = None
         if "generate" in requested_scientific:
@@ -340,6 +367,12 @@ class WorkflowRunner:
         pareto_json_path: Path | None = None
         pareto_csv_path: Path | None = None
         analysis_csv_path: Path | None = None
+        comparison_json_paths: list[Path] = []
+        comparison_csv_paths: list[Path] = []
+        visualization_paths: list[Path] = []
+        ranking_result = None
+        pareto_result = None
+        computed_comparison_results: list[ComparisonResult] = []
         if "ranking" in requested_postprocessing:
             collection = _require_collection(analysis_collection)
             ranking_config = config.analyzer.ranking or RankingConfig(
@@ -347,59 +380,110 @@ class WorkflowRunner:
                 combination="weighted_sum",
                 ascending=True,
             )
-            ranking = rank_analysis_results(collection, config=ranking_config)
-            if not ranking.ranked_candidate_ids and len(collection):
+            ranking_result = rank_analysis_results(collection, config=ranking_config)
+            if not ranking_result.ranked_candidate_ids and len(collection):
                 raise WorkflowConfigError(
                     "requested ranking metric is missing or unavailable: "
-                    + "; ".join(ranking.warnings),
+                    + "; ".join(ranking_result.warnings),
                 )
             ranking_json = write_ranking_json(
-                ranking,
+                ranking_result,
                 output_root=derived_root,
                 run_id=config.run_id,
                 input_roots=_postprocessing_input_roots(config, analysis_result_paths, all_analysis_sources),
             )
             ranking_csv = write_ranking_csv(
-                ranking,
+                ranking_result,
                 output_root=derived_root,
                 run_id=config.run_id,
                 input_roots=_postprocessing_input_roots(config, analysis_result_paths, all_analysis_sources),
             )
             ranking_json_path = ranking_json.path
             ranking_csv_path = ranking_csv.path
-            warnings.extend(ranking.warnings)
+            warnings.extend(ranking_result.warnings)
             executed.append("ranking")
             produced_artifacts.extend([ranking_json.to_dict(), ranking_csv.to_dict()])
         if "pareto" in requested_postprocessing:
             collection = _require_collection(analysis_collection)
             pareto_config = config.analyzer.pareto or ParetoConfig()
-            pareto = compute_pareto_classifications(collection, config=pareto_config)
-            if not pareto.frontier_candidate_ids and len(collection) and pareto.warnings:
+            pareto_result = compute_pareto_classifications(collection, config=pareto_config)
+            if not pareto_result.frontier_candidate_ids and len(collection) and pareto_result.warnings:
                 raise WorkflowConfigError(
                     "requested Pareto objective is missing or unavailable: "
-                    + "; ".join(pareto.warnings),
+                    + "; ".join(pareto_result.warnings),
                 )
             pareto_json = write_pareto_json(
-                pareto,
+                pareto_result,
                 output_root=derived_root,
                 run_id=config.run_id,
                 input_roots=_postprocessing_input_roots(config, analysis_result_paths, all_analysis_sources),
             )
             pareto_json_path = pareto_json.path
             produced_artifacts.append(pareto_json.to_dict())
-            warnings.extend(pareto.warnings)
+            warnings.extend(pareto_result.warnings)
             executed.append("pareto")
             if "export_csv" in requested_postprocessing:
                 pareto_csv = write_pareto_csv(
-                    pareto,
+                    pareto_result,
                     output_root=derived_root,
                     run_id=config.run_id,
                     input_roots=_postprocessing_input_roots(config, analysis_result_paths, all_analysis_sources),
                 )
                 pareto_csv_path = pareto_csv.path
                 produced_artifacts.append(pareto_csv.to_dict())
+        if "comparison" in requested_postprocessing:
+            if not config.comparisons:
+                raise WorkflowConfigError("requested comparison requires explicit comparison sources.")
+            for comparison_config in config.comparisons:
+                sources = tuple(
+                    ComparisonSource.from_sources(
+                        source.source_id,
+                        source.analysis_results,
+                        role=source.role,
+                        label=source.label,
+                        metadata=source.metadata,
+                    )
+                    for source in comparison_config.sources
+                )
+                comparison = compare_analysis_collections(
+                    sources,
+                    config=comparison_config.config,
+                )
+                computed_comparison_results.append(comparison)
+                comparison_json = write_comparison_json(
+                    comparison,
+                    output_root=derived_root,
+                    run_id=config.run_id,
+                    input_roots=_comparison_input_roots(config, comparison_config),
+                )
+                comparison_json_paths.append(comparison_json.path)
+                produced_artifacts.append(comparison_json.to_dict())
+                if "export_csv" in requested_postprocessing:
+                    comparison_csv = write_comparison_csv(
+                        comparison,
+                        output_root=derived_root,
+                        run_id=config.run_id,
+                        input_roots=_comparison_input_roots(config, comparison_config),
+                    )
+                    comparison_csv_paths.append(comparison_csv.path)
+                    produced_artifacts.append(comparison_csv.to_dict())
+            executed.append("comparison")
         if "export_csv" in requested_postprocessing:
-            if "ranking" not in requested_postprocessing and "pareto" not in requested_postprocessing:
+            if loaded_comparison_results and "comparison" not in requested_postprocessing:
+                for comparison in loaded_comparison_results:
+                    comparison_csv = write_comparison_csv(
+                        comparison,
+                        output_root=derived_root,
+                        run_id=config.run_id,
+                        input_roots=_comparison_result_input_roots(config, all_comparison_result_sources),
+                    )
+                    comparison_csv_paths.append(comparison_csv.path)
+                    produced_artifacts.append(comparison_csv.to_dict())
+            elif (
+                "ranking" not in requested_postprocessing
+                and "pareto" not in requested_postprocessing
+                and "comparison" not in requested_postprocessing
+            ):
                 collection = _require_collection(analysis_collection)
                 analysis_csv = write_analysis_results_csv(
                     collection,
@@ -410,6 +494,24 @@ class WorkflowRunner:
                 analysis_csv_path = analysis_csv.path
                 produced_artifacts.append(analysis_csv.to_dict())
             executed.append("export_csv")
+        if "visualization" in requested_postprocessing:
+            visualization_paths.extend(
+                _write_requested_visualizations(
+                    config=config,
+                    derived_root=derived_root,
+                    analysis_collection=analysis_collection,
+                    ranking_result=ranking_result,
+                    pareto_result=pareto_result,
+                    comparison_results=(
+                        tuple(computed_comparison_results)
+                        or tuple(loaded_comparison_results)
+                    ),
+                    evolution_source=evolution_path or resolved_evolution_source,
+                    input_roots=_postprocessing_input_roots(config, analysis_result_paths, all_analysis_sources),
+                ),
+            )
+            produced_artifacts.extend(_path_records("figure", visualization_paths))
+            executed.append("visualization")
 
         candidate_ids = tuple(
             dict.fromkeys(
@@ -435,6 +537,7 @@ class WorkflowRunner:
                     candidates=bool(all_candidate_sources),
                     staged_packages=bool(all_staged_sources),
                     analysis_results=bool(all_analysis_sources),
+                    comparison_results=bool(all_comparison_result_sources),
                     evolution_run=resolved_evolution_source is not None,
                 ),
                 "campaign_type": config.campaign_type,
@@ -447,10 +550,13 @@ class WorkflowRunner:
                 "evolution_exported": evolution_path is not None,
                 "ranking_executed": ranking_json_path is not None,
                 "pareto_executed": pareto_json_path is not None,
+                "comparison_executed": bool(comparison_json_paths),
+                "visualization_executed": bool(visualization_paths),
                 "csv_exported": any(
                     path is not None
                     for path in (ranking_csv_path, pareto_csv_path, analysis_csv_path)
-                ),
+                ) or bool(comparison_csv_paths),
+                "figure_exported": bool(visualization_paths),
                 "qnodes_executed_by_runner": False,
             },
         )
@@ -480,6 +586,9 @@ class WorkflowRunner:
             pareto_json_path=pareto_json_path,
             pareto_csv_path=pareto_csv_path,
             analysis_csv_path=analysis_csv_path,
+            comparison_json_paths=tuple(comparison_json_paths),
+            comparison_csv_paths=tuple(comparison_csv_paths),
+            visualization_paths=tuple(visualization_paths),
             candidate_ids=candidate_ids,
             analysis_result_ids=analysis_result_ids,
             survivor_candidate_ids=survivor_candidate_ids,
@@ -923,6 +1032,42 @@ def _analysis_source_records(
     return records
 
 
+def _load_comparison_results(
+    sources: Sequence[str | Path | Mapping[str, Any]],
+) -> tuple[ComparisonResult, ...]:
+    results: list[ComparisonResult] = []
+    for source in sources:
+        if isinstance(source, Mapping):
+            results.append(ComparisonResult.from_dict(source))
+        else:
+            results.append(read_comparison_result_json(source))
+    return tuple(results)
+
+
+def _comparison_input_roots(
+    config: WorkflowConfig,
+    comparison,
+) -> tuple[Path, ...]:
+    roots: list[Path] = [Path(root).expanduser() for root in config.input_roots]
+    for source in comparison.sources:
+        roots.extend(
+            _input_roots_for_sources(
+                source.analysis_results,
+                fallback=(),
+            ),
+        )
+    if not roots:
+        roots.append(Path.cwd())
+    return tuple(dict.fromkeys(roots))
+
+
+def _comparison_result_input_roots(
+    config: WorkflowConfig,
+    sources: Sequence[str | Path | Mapping[str, Any]],
+) -> tuple[Path, ...]:
+    return _input_roots_for_sources(sources, fallback=config.input_roots)
+
+
 def _analysis_uri_map(paths: Sequence[Path]) -> dict[str, str]:
     uris: dict[str, str] = {}
     for path in paths:
@@ -973,8 +1118,100 @@ def _artifact_record(
     return record
 
 
+def _write_requested_visualizations(
+    *,
+    config: WorkflowConfig,
+    derived_root: Path,
+    analysis_collection: AnalysisResultCollection | None,
+    ranking_result,
+    pareto_result,
+    comparison_results: Sequence[ComparisonResult],
+    evolution_source: str | Path | Mapping[str, Any] | None,
+    input_roots: Sequence[str | Path],
+) -> tuple[Path, ...]:
+    from verfeinert.ansatz_analyzer.visualization import (
+        DEFAULT_STYLE,
+        plot_comparison_objective_space,
+        plot_lineage_summary,
+        plot_pareto_front,
+        plot_ranking_scores,
+        save_figure,
+    )
+
+    paths: list[Path] = []
+    for comparison in comparison_results:
+        figure = plot_comparison_objective_space(comparison, style=DEFAULT_STYLE)
+        paths.append(
+            save_figure(
+                figure,
+                _figure_path(derived_root, config.run_id, f"{comparison.comparison_id}.comparison.png"),
+                input_roots=input_roots,
+            ),
+        )
+    if pareto_result is not None:
+        figure = plot_pareto_front(pareto_result, style=DEFAULT_STYLE)
+        paths.append(
+            save_figure(
+                figure,
+                _figure_path(derived_root, config.run_id, "pareto.png"),
+                input_roots=input_roots,
+            ),
+        )
+    elif analysis_collection is not None:
+        figure = plot_pareto_front(analysis_collection, style=DEFAULT_STYLE)
+        paths.append(
+            save_figure(
+                figure,
+                _figure_path(derived_root, config.run_id, "analysis_objective_space.png"),
+                input_roots=input_roots,
+            ),
+        )
+    if ranking_result is not None:
+        figure = plot_ranking_scores(ranking_result, style=DEFAULT_STYLE)
+        paths.append(
+            save_figure(
+                figure,
+                _figure_path(derived_root, config.run_id, "ranking.png"),
+                input_roots=input_roots,
+            ),
+        )
+    evolution_document = _evolution_document_for_visualization(evolution_source)
+    if evolution_document is not None:
+        figure = plot_lineage_summary(evolution_document, style=DEFAULT_STYLE)
+        paths.append(
+            save_figure(
+                figure,
+                _figure_path(derived_root, config.run_id, "evolution_lineage.png"),
+                input_roots=input_roots,
+            ),
+        )
+    if not paths:
+        raise WorkflowConfigError("requested visualization has no supported input artifact.")
+    return tuple(paths)
+
+
+def _figure_path(derived_root: Path, run_id: str, filename: str) -> Path:
+    target = derived_root / run_id / "figures" / filename
+    target.parent.mkdir(parents=True, exist_ok=True)
+    return target
+
+
+def _evolution_document_for_visualization(
+    source: str | Path | Mapping[str, Any] | None,
+) -> dict[str, Any] | None:
+    if source is None:
+        return None
+    if isinstance(source, Mapping):
+        document = dict(source)
+    else:
+        document = read_evolution_run_json(source)
+    if document.get("schema_version") != "verfeinert.evolution_run.v1":
+        raise WorkflowConfigError("visualization evolution input is not an EvolutionRun artifact.")
+    return document
+
+
 def _needs_analysis_collection(postprocessing: Sequence[str]) -> bool:
-    return any(operation in {"ranking", "pareto", "export_csv"} for operation in postprocessing)
+    return any(operation in {"ranking", "pareto"} for operation in postprocessing)
 
 
 def _require_collection(collection: AnalysisResultCollection | None) -> AnalysisResultCollection:
@@ -1418,10 +1655,13 @@ def _entry_point(
     candidates: bool,
     staged_packages: bool,
     analysis_results: bool,
+    comparison_results: bool,
     evolution_run: bool,
 ) -> str:
     if generated:
         return "generation"
+    if comparison_results:
+        return "comparison_result"
     if evolution_run:
         return "evolution_run"
     if analysis_results:

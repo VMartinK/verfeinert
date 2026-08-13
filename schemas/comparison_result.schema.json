@@ -1,0 +1,570 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://verfeinert.org/schemas/v1/comparison_result.schema.json",
+  "title": "Verfeinert Comparison Result",
+  "description": "Canonical persisted artifact for explicitly selected, provenance-compatible AnalysisResult comparisons.",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "transform",
+    "transform_version",
+    "comparison_id",
+    "created_at",
+    "source_analysis_result_ids",
+    "global_frontier_candidate_ids",
+    "config",
+    "sources",
+    "compatibility",
+    "rows",
+    "table_views",
+    "warnings"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": {
+      "const": "verfeinert.comparison_result.v1"
+    },
+    "transform": {
+      "const": "comparison"
+    },
+    "transform_version": {
+      "const": "1"
+    },
+    "comparison_id": {
+      "$ref": "#/$defs/identifier"
+    },
+    "created_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "source_analysis_result_ids": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/identifier"
+      },
+      "uniqueItems": true
+    },
+    "global_frontier_candidate_ids": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/identifier"
+      },
+      "uniqueItems": true
+    },
+    "config": {
+      "$ref": "#/$defs/comparison_config"
+    },
+    "sources": {
+      "type": "array",
+      "minItems": 2,
+      "items": {
+        "$ref": "#/$defs/source_ref"
+      }
+    },
+    "compatibility": {
+      "$ref": "#/$defs/compatibility"
+    },
+    "rows": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/comparison_row"
+      }
+    },
+    "table_views": {
+      "type": "object",
+      "required": [
+        "candidate_summary"
+      ],
+      "additionalProperties": {
+        "$ref": "#/$defs/table_view"
+      },
+      "properties": {
+        "candidate_summary": {
+          "$ref": "#/$defs/table_view"
+        }
+      }
+    },
+    "warnings": {
+      "$ref": "#/$defs/string_array"
+    }
+  },
+  "$defs": {
+    "identifier": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]*$"
+    },
+    "json_value": {
+      "oneOf": [
+        {
+          "type": "null"
+        },
+        {
+          "type": "boolean"
+        },
+        {
+          "type": "number"
+        },
+        {
+          "type": "string"
+        },
+        {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/json_value"
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": {
+            "$ref": "#/$defs/json_value"
+          }
+        }
+      ]
+    },
+    "string_array": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "comparison_config": {
+      "type": "object",
+      "required": [
+        "comparison_id",
+        "objectives",
+        "ranking",
+        "include_ranking",
+        "cost_field",
+        "cost_thresholds",
+        "validate_cost",
+        "display_aliases",
+        "metadata"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "comparison_id": {
+          "$ref": "#/$defs/identifier"
+        },
+        "objectives": {
+          "type": "array",
+          "minItems": 2,
+          "items": {
+            "$ref": "#/$defs/objective"
+          }
+        },
+        "ranking": {
+          "oneOf": [
+            {
+              "type": "null"
+            },
+            {
+              "$ref": "#/$defs/ranking_config"
+            }
+          ]
+        },
+        "include_ranking": {
+          "type": "boolean"
+        },
+        "cost_field": {
+          "type": "string",
+          "minLength": 1
+        },
+        "cost_thresholds": {
+          "type": "array",
+          "items": {
+            "type": "number"
+          }
+        },
+        "validate_cost": {
+          "type": "boolean"
+        },
+        "display_aliases": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "metadata": {
+          "type": "object",
+          "additionalProperties": {
+            "$ref": "#/$defs/json_value"
+          }
+        }
+      }
+    },
+    "objective": {
+      "type": "object",
+      "required": [
+        "metric_name",
+        "direction",
+        "value_key"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "metric_name": {
+          "type": "string",
+          "minLength": 1
+        },
+        "direction": {
+          "enum": [
+            "maximize",
+            "minimize"
+          ]
+        },
+        "value_key": {
+          "oneOf": [
+            {
+              "type": "string",
+              "minLength": 1
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      }
+    },
+    "ranking_config": {
+      "type": "object",
+      "required": [
+        "score_components",
+        "combination",
+        "ascending",
+        "top_n",
+        "cost_threshold",
+        "cost_field",
+        "include_unrankable"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "score_components": {
+          "type": "object",
+          "minProperties": 1,
+          "additionalProperties": {
+            "type": "number"
+          }
+        },
+        "combination": {
+          "enum": [
+            "product",
+            "weighted_sum"
+          ]
+        },
+        "ascending": {
+          "type": "boolean"
+        },
+        "top_n": {
+          "oneOf": [
+            {
+              "type": "integer",
+              "minimum": 1
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "cost_threshold": {
+          "oneOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "cost_field": {
+          "type": "string",
+          "minLength": 1
+        },
+        "include_unrankable": {
+          "type": "boolean"
+        }
+      }
+    },
+    "source_ref": {
+      "type": "object",
+      "required": [
+        "source_id",
+        "role",
+        "label",
+        "collection_id",
+        "analysis_result_count",
+        "analysis_result_ids",
+        "candidate_ids",
+        "metadata"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "source_id": {
+          "$ref": "#/$defs/identifier"
+        },
+        "role": {
+          "enum": [
+            "source",
+            "reference",
+            "candidate",
+            "baseline"
+          ]
+        },
+        "label": {
+          "oneOf": [
+            {
+              "type": "string",
+              "minLength": 1
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "collection_id": {
+          "$ref": "#/$defs/identifier"
+        },
+        "analysis_result_count": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "analysis_result_ids": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/identifier"
+          },
+          "uniqueItems": true
+        },
+        "candidate_ids": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/identifier"
+          },
+          "uniqueItems": true
+        },
+        "metadata": {
+          "type": "object",
+          "additionalProperties": {
+            "$ref": "#/$defs/json_value"
+          }
+        }
+      }
+    },
+    "compatibility": {
+      "type": "object",
+      "required": [
+        "compatible",
+        "fingerprints",
+        "issues",
+        "ignored_differences"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "compatible": {
+          "type": "boolean"
+        },
+        "fingerprints": {
+          "type": "object",
+          "additionalProperties": {
+            "$ref": "#/$defs/json_value"
+          }
+        },
+        "issues": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/compatibility_issue"
+          }
+        },
+        "ignored_differences": {
+          "$ref": "#/$defs/string_array"
+        }
+      }
+    },
+    "compatibility_issue": {
+      "type": "object",
+      "required": [
+        "code",
+        "severity",
+        "message",
+        "details"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "code": {
+          "$ref": "#/$defs/identifier"
+        },
+        "severity": {
+          "type": "string",
+          "minLength": 1
+        },
+        "message": {
+          "type": "string",
+          "minLength": 1
+        },
+        "details": {
+          "type": "object",
+          "additionalProperties": {
+            "$ref": "#/$defs/json_value"
+          }
+        }
+      }
+    },
+    "comparison_row": {
+      "type": "object",
+      "required": [
+        "source_id",
+        "source_role",
+        "source_label",
+        "candidate_id",
+        "analysis_result_id",
+        "display_label",
+        "objective_values",
+        "cost_value",
+        "is_global_pareto",
+        "pareto_rank",
+        "rank",
+        "score",
+        "score_status",
+        "cost_eligibility",
+        "lineage",
+        "source_context",
+        "warnings"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "source_id": {
+          "$ref": "#/$defs/identifier"
+        },
+        "source_role": {
+          "enum": [
+            "source",
+            "reference",
+            "candidate",
+            "baseline"
+          ]
+        },
+        "source_label": {
+          "type": "string",
+          "minLength": 1
+        },
+        "candidate_id": {
+          "$ref": "#/$defs/identifier"
+        },
+        "analysis_result_id": {
+          "$ref": "#/$defs/identifier"
+        },
+        "display_label": {
+          "type": "string",
+          "minLength": 1
+        },
+        "objective_values": {
+          "type": "object",
+          "minProperties": 2,
+          "additionalProperties": {
+            "type": "number"
+          }
+        },
+        "cost_value": {
+          "oneOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "is_global_pareto": {
+          "type": "boolean"
+        },
+        "pareto_rank": {
+          "oneOf": [
+            {
+              "type": "integer",
+              "minimum": 1
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "rank": {
+          "oneOf": [
+            {
+              "type": "integer",
+              "minimum": 1
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "score": {
+          "oneOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "score_status": {
+          "oneOf": [
+            {
+              "type": "string",
+              "minLength": 1
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "cost_eligibility": {
+          "type": "object",
+          "additionalProperties": {
+            "oneOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "lineage": {
+          "type": "object",
+          "additionalProperties": {
+            "$ref": "#/$defs/json_value"
+          }
+        },
+        "source_context": {
+          "type": "object",
+          "additionalProperties": {
+            "$ref": "#/$defs/json_value"
+          }
+        },
+        "warnings": {
+          "$ref": "#/$defs/string_array"
+        }
+      }
+    },
+    "table_view": {
+      "type": "object",
+      "required": [
+        "row_count",
+        "columns"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "row_count": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "columns": {
+          "$ref": "#/$defs/string_array"
+        }
+      }
+    }
+  }
+}

@@ -14,6 +14,7 @@ SCHEMA_RESOURCE_PACKAGE = "verfeinert.schemas"
 SCHEMA_FILENAMES = {
     "analysis_result": "analysis_result.schema.json",
     "candidate": "candidate.schema.json",
+    "comparison_result": "comparison_result.schema.json",
     "evolution_run": "evolution_run.schema.json",
     "experiment": "experiment.schema.json",
     "staged_package": "staged_package.schema.json",

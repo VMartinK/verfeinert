@@ -13,6 +13,7 @@ from verfeinert.core.io import ensure_output_root, write_json
 from verfeinert.core.io.serialization import to_json_safe
 
 from ..collections import AnalysisResultCollection
+from ..comparison import ComparisonResult
 from ..pareto import ParetoResult
 from ..ranking import RankingResult
 
@@ -161,6 +162,53 @@ def write_analysis_results_csv(
     )
 
 
+def write_comparison_json(
+    result: ComparisonResult,
+    *,
+    output_root: str | Path,
+    run_id: str,
+    input_roots=(),
+    filename: str | None = None,
+) -> DerivedArtifact:
+    """Write a ComparisonResult JSON artifact under a guarded output root."""
+    if not isinstance(result, ComparisonResult):
+        raise TypeError("result must be a ComparisonResult.")
+    resolved_filename = filename or f"{result.comparison_id}.comparison.json"
+    path = _artifact_path(output_root, run_id, resolved_filename, input_roots=input_roots)
+    payload = result.to_dict()
+    write_json(path, payload)
+    return _artifact(
+        path,
+        kind="comparison_result",
+        file_format="json",
+        transform=payload["transform"],
+        transform_version=payload["transform_version"],
+    )
+
+
+def write_comparison_csv(
+    result: ComparisonResult,
+    *,
+    output_root: str | Path,
+    run_id: str,
+    input_roots=(),
+    filename: str | None = None,
+) -> DerivedArtifact:
+    """Write a flat ComparisonResult CSV artifact under a guarded output root."""
+    if not isinstance(result, ComparisonResult):
+        raise TypeError("result must be a ComparisonResult.")
+    resolved_filename = filename or f"{result.comparison_id}.comparison.csv"
+    path = _artifact_path(output_root, run_id, resolved_filename, input_roots=input_roots)
+    _write_rows(path, result.to_rows())
+    return _artifact(
+        path,
+        kind="derived_table",
+        file_format="csv",
+        transform="comparison",
+        transform_version=result.to_dict()["transform_version"],
+    )
+
+
 def _artifact_path(
     output_root: str | Path,
     run_id: str,
@@ -256,6 +304,8 @@ def _safe_filename(value: str) -> str:
 __all__ = [
     "DerivedArtifact",
     "write_analysis_results_csv",
+    "write_comparison_csv",
+    "write_comparison_json",
     "write_pareto_csv",
     "write_pareto_json",
     "write_ranking_csv",

@@ -20,8 +20,8 @@ derived interfaces over those records.
   export.
 - `ansatz_analyzer_design.md`: analyzer architecture.
 - `analyzer_foundation.md`: structural-cost analysis foundation.
-- `analyzer_collections.md`, `pareto.md`, and `ranking.md`: derived analytical
-  collections and policies.
+- `analyzer_collections.md`, `pareto.md`, `ranking.md`, and `comparison.md`:
+  derived analytical collections, policies, and global comparison contracts.
 - `ansatz_evolver_design.md`, `evolver_foundation.md`, and
   `evolution_data_model.md`: reference-based evolution design.
 

@@ -1,8 +1,8 @@
 """Centralized visualization styles."""
 
-from .thesis import THESIS_STYLE, VisualizationStyle
+from .default import DEFAULT_STYLE, VisualizationStyle
 
 __all__ = [
-    "THESIS_STYLE",
+    "DEFAULT_STYLE",
     "VisualizationStyle",
 ]

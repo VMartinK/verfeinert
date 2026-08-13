@@ -31,6 +31,8 @@ verfeinert
 - standardized ansatz generation and canonical Candidate/StagedPackage export;
 - analyzer structural cost, Pareto/ranking foundations, and v1-aligned
   expressibility/trainability metric implementations;
+- artifact-first postprocessing: Pareto, ranking, explicit comparison/global
+  analysis, deterministic JSON/CSV exports, and optional visualization;
 - reference-based evolver population, mutation, selection, and EvolutionRun
   export foundations;
 - workflow runner and researcher-facing CX-01 and MIXT-5G reproducibility
@@ -147,6 +149,41 @@ config = WorkflowConfig.from_mapping({
 
 result = WorkflowRunner(config).run()
 ```
+
+Postprocessing is independently selectable. For example, comparison/global
+analysis uses only explicitly selected compatible AnalysisResult sources:
+
+```python
+config = WorkflowConfig.from_mapping({
+    "run": {"run_id": "compare-existing-results"},
+    "paths": {"output_root": "outputs"},
+    "workflow": {
+        "campaign_type": "individual",
+        "scientific_execution": [],
+        "postprocessing": ["comparison", "csv"],
+    },
+    "comparisons": [{
+        "comparison_id": "selected-runs",
+        "sources": [
+            {"source_id": "run-a", "analysis_results": ["run-a/analysis"]},
+            {"source_id": "run-b", "analysis_results": ["run-b/analysis"]},
+        ],
+        "objectives": [
+            {"metric_name": "trainability", "direction": "maximize"},
+            {"metric_name": "expressibility", "direction": "maximize"},
+        ],
+        "cost_thresholds": [1.0],
+    }],
+})
+```
+
+Comparison compatibility is based on structured metric and cost provenance, not
+campaign names. Pareto membership, scalar score, and cost eligibility remain
+separate fields in the resulting `ComparisonResult`.
+
+Visualization is optional and consumes persisted or derived artifacts. It uses
+neutral `DEFAULT_STYLE`; display aliases are explicit presentation metadata and
+never change canonical candidate IDs.
 
 Legacy `stages` declarations are normalized into the same internal plan. If
 both legacy and structured workflow declarations are supplied, conflicting

@@ -14,7 +14,9 @@ def evolution_plot_data(collection: AnalysisResultCollection) -> list[dict[str, 
     rows = []
     for document in collection:
         metadata = document.get("metadata", {})
-        generation = metadata.get("generation") if isinstance(metadata, dict) else None
+        semantics = metadata.get("candidate_semantics", {}) if isinstance(metadata, dict) else {}
+        lineage = semantics.get("lineage", {}) if isinstance(semantics, dict) else {}
+        generation = lineage.get("generation")
         rows.append(
             {
                 "candidate_id": document["candidate_ref"]["candidate_id"],
