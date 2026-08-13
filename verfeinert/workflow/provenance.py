@@ -15,7 +15,7 @@ def workflow_provenance(
     config_snapshot: Mapping[str, Any],
     created_at: str | None = None,
     git_commit: str | None = None,
-    execution_flags: Mapping[str, bool] | None = None,
+    execution_flags: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Build a JSON-safe workflow provenance record."""
     timestamp = created_at or datetime.now(timezone.utc).isoformat()

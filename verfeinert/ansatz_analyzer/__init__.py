@@ -4,6 +4,7 @@ from .config import (
     AnalyzerConfig,
     AnalyzerConfigError,
     AnalyzerExecutionPermissions,
+    CircuitMaterializationConfig,
     StructuralCostConfig,
 )
 from .collections import (
@@ -23,6 +24,13 @@ from .models import (
     CostRecord,
     MetricRecord,
     OperationView,
+)
+from .materialization import (
+    CircuitMaterializationError,
+    MaterializedCircuit,
+    StateCallableProvider,
+    make_state_callable,
+    materialize_candidate,
 )
 from .pareto import (
     ObjectiveSpec,
@@ -60,8 +68,11 @@ __all__ = [
     "AnalyzerExecutionPermissions",
     "AnalyzerValidationError",
     "CandidateView",
+    "CircuitMaterializationConfig",
+    "CircuitMaterializationError",
     "ClassificationRecord",
     "CostRecord",
+    "MaterializedCircuit",
     "MetricRecord",
     "ObjectiveSpec",
     "OperationView",
@@ -71,6 +82,7 @@ __all__ = [
     "RankingConfig",
     "RankingError",
     "RankingResult",
+    "StateCallableProvider",
     "StructuralCostConfig",
     "analyze_and_write",
     "analyze_candidates",
@@ -80,6 +92,8 @@ __all__ = [
     "dominates",
     "load_candidate_document",
     "load_candidate_views",
+    "make_state_callable",
+    "materialize_candidate",
     "rank_analysis_results",
     "validate_analysis_result_document",
     "validate_analyzer_input_document",

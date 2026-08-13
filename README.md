@@ -77,6 +77,75 @@ python examples/MIXT5G_reproduction/scripts/run_mixt5g_reproduction.py \
 Generated artifacts must be written under caller-provided output roots and
 should not be committed.
 
+## Analyzer Scientific Execution
+
+Expressibility and trainability can be computed from canonical Candidate or
+StagedPackage JSON when analyzer materialization is explicitly enabled and both
+expensive-metric and QNode permissions are granted:
+
+```python
+from verfeinert.ansatz_analyzer import (
+    AnalyzerConfig,
+    AnalyzerExecutionPermissions,
+    CircuitMaterializationConfig,
+)
+
+config = AnalyzerConfig.from_mapping({
+    "run_id": "scientific-analysis",
+    "input_roots": ["inputs"],
+    "output_root": "outputs",
+    "selected_metrics": ["expressibility", "trainability"],
+    "permissions": {
+        "allow_expensive_metrics": True,
+        "allow_qnode_execution": True,
+    },
+    "materialization": {
+        "enabled": True,
+        "backend": "pennylane",
+        "device": "default.qubit",
+        "interface": "autograd",
+        "diff_method": "best",
+    },
+    "metric_configs": {
+        "expressibility": {"n_pairs": 100, "n_bins": 20},
+        "trainability": {"n_repeats": 100},
+    },
+})
+```
+
+Automatic materialization is disabled by default. Explicit user-provided state
+callables still take precedence over automatic materialization.
+
+## Artifact-Oriented Workflows
+
+Workflow configuration distinguishes scientific execution from downstream
+postprocessing. A workflow may request only the operations it needs, for
+example `generate -> analyze`, `Candidate JSON -> analyze`, or
+`AnalysisResult -> ranking`, without recomputing unrelated upstream artifacts.
+
+```python
+from verfeinert.workflow import WorkflowConfig, WorkflowRunner
+
+config = WorkflowConfig.from_mapping({
+    "run": {"run_id": "rank-existing-results"},
+    "paths": {"output_root": "outputs"},
+    "workflow": {
+        "campaign_type": "individual",
+        "scientific_execution": [],
+        "postprocessing": ["ranking"],
+    },
+    "artifacts": {
+        "analysis_results": ["analysis/analysis-result.json"],
+    },
+})
+
+result = WorkflowRunner(config).run()
+```
+
+Legacy `stages` declarations are normalized into the same internal plan. If
+both legacy and structured workflow declarations are supplied, conflicting
+requests fail during configuration validation.
+
 ## External Validation
 
 ```bash

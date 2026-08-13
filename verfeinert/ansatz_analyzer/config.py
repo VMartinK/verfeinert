@@ -30,6 +30,7 @@ STRUCTURAL_COST_COMPONENTS = (
     "depth",
     "two_qubit_operation_count",
 )
+SUPPORTED_MATERIALIZATION_BACKENDS = ("pennylane",)
 
 
 class AnalyzerConfigError(CoreValidationError):
@@ -142,6 +143,71 @@ class StructuralCostConfig:
 
 
 @dataclass(frozen=True)
+class CircuitMaterializationConfig:
+    """Configuration for analyzer-owned executable circuit materialization."""
+
+    enabled: bool = False
+    backend: str = "pennylane"
+    device: str = "default.qubit"
+    interface: str = "autograd"
+    diff_method: str = "best"
+
+    def __post_init__(self) -> None:
+        object.__setattr__(
+            self,
+            "enabled",
+            require_bool(self.enabled, "materialization.enabled"),
+        )
+        backend = require_non_empty_text(self.backend, "materialization.backend").lower()
+        if backend not in SUPPORTED_MATERIALIZATION_BACKENDS:
+            raise AnalyzerConfigError(
+                "materialization.backend must be one of "
+                f"{SUPPORTED_MATERIALIZATION_BACKENDS}.",
+            )
+        object.__setattr__(self, "backend", backend)
+        object.__setattr__(
+            self,
+            "device",
+            require_non_empty_text(self.device, "materialization.device"),
+        )
+        object.__setattr__(
+            self,
+            "interface",
+            require_non_empty_text(self.interface, "materialization.interface"),
+        )
+        object.__setattr__(
+            self,
+            "diff_method",
+            require_non_empty_text(self.diff_method, "materialization.diff_method"),
+        )
+
+    @classmethod
+    def from_mapping(
+        cls,
+        mapping: Mapping[str, object],
+    ) -> "CircuitMaterializationConfig":
+        """Build materialization config from a parsed mapping."""
+        data = dict(mapping)
+        return cls(
+            enabled=data.get("enabled", False),  # type: ignore[arg-type]
+            backend=data.get("backend", "pennylane"),  # type: ignore[arg-type]
+            device=data.get("device", "default.qubit"),  # type: ignore[arg-type]
+            interface=data.get("interface", "autograd"),  # type: ignore[arg-type]
+            diff_method=data.get("diff_method", "best"),  # type: ignore[arg-type]
+        )
+
+    def to_dict(self) -> dict[str, Any]:
+        """Return JSON-safe materialization configuration."""
+        return {
+            "enabled": self.enabled,
+            "backend": self.backend,
+            "device": self.device,
+            "interface": self.interface,
+            "diff_method": self.diff_method,
+        }
+
+
+@dataclass(frozen=True)
 class AnalyzerConfig:
     """Validated configuration for analyzer foundation runs."""
 
@@ -156,6 +222,9 @@ class AnalyzerConfig:
     random_seed: int | None = None
     structural_cost: StructuralCostConfig = field(default_factory=StructuralCostConfig)
     metric_configs: Mapping[str, object] = field(default_factory=dict)
+    materialization: CircuitMaterializationConfig = field(
+        default_factory=CircuitMaterializationConfig,
+    )
 
     def __post_init__(self) -> None:
         run_id = require_identifier(self.run_id, "run_id")
@@ -172,6 +241,10 @@ class AnalyzerConfig:
             )
         if not isinstance(self.structural_cost, StructuralCostConfig):
             raise AnalyzerConfigError("structural_cost must be a StructuralCostConfig.")
+        if not isinstance(self.materialization, CircuitMaterializationConfig):
+            raise AnalyzerConfigError(
+                "materialization must be a CircuitMaterializationConfig.",
+            )
         selected_metrics = _normalize_selected_metrics(self.selected_metrics)
         expensive = [metric for metric in selected_metrics if metric in EXPENSIVE_METRICS]
         if expensive and not self.permissions.allow_expensive_metrics:
@@ -203,6 +276,7 @@ class AnalyzerConfig:
         execution = data.get("execution", ExecutionConfig())
         permissions = data.get("permissions", AnalyzerExecutionPermissions())
         structural_cost = data.get("structural_cost", StructuralCostConfig())
+        materialization = data.get("materialization", CircuitMaterializationConfig())
         return cls(
             run_id=data["run_id"],  # type: ignore[arg-type]
             input_roots=data["input_roots"],  # type: ignore[arg-type]
@@ -225,6 +299,11 @@ class AnalyzerConfig:
                 else StructuralCostConfig.from_mapping(structural_cost)  # type: ignore[arg-type]
             ),
             metric_configs=data.get("metric_configs", {}),  # type: ignore[arg-type]
+            materialization=(
+                materialization
+                if isinstance(materialization, CircuitMaterializationConfig)
+                else CircuitMaterializationConfig.from_mapping(materialization)  # type: ignore[arg-type]
+            ),
         )
 
     def to_dict(self) -> dict[str, Any]:
@@ -239,6 +318,7 @@ class AnalyzerConfig:
             "random_seed": self.random_seed,
             "structural_cost": self.structural_cost.to_dict(),
             "metric_configs": to_json_safe(self.metric_configs),
+            "materialization": self.materialization.to_dict(),
         }
 
 
@@ -366,6 +446,7 @@ __all__ = [
     "AnalyzerConfig",
     "AnalyzerConfigError",
     "AnalyzerExecutionPermissions",
+    "CircuitMaterializationConfig",
     "DEFERRED_METRICS",
     "DERIVED_ANALYSES",
     "EXPENSIVE_METRICS",
@@ -373,4 +454,5 @@ __all__ = [
     "STRUCTURAL_COST_COMPONENTS",
     "StructuralCostConfig",
     "SUPPORTED_METRICS",
+    "SUPPORTED_MATERIALIZATION_BACKENDS",
 ]

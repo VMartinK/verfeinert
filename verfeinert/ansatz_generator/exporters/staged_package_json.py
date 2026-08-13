@@ -165,6 +165,81 @@ def write_staged_package_json(
     )
 
 
+def export_canonical_staged_package_json(
+    candidates: Sequence[Mapping[str, Any]],
+    *,
+    config: StagedPackageJsonExportConfig,
+) -> dict[str, Any]:
+    """Return a StagedPackage JSON document from existing canonical Candidates."""
+    validated_candidates = tuple(validate_candidate_json(candidate) for candidate in candidates)
+    candidate_ids = [candidate["candidate_id"] for candidate in validated_candidates]
+    duplicates = sorted({candidate_id for candidate_id in candidate_ids if candidate_ids.count(candidate_id) > 1})
+    if duplicates:
+        raise GeneratorValidationError(f"duplicate canonical candidate_id values: {', '.join(duplicates)}")
+    return validate_staged_package_json(
+        _package_document(
+            config,
+            candidates=validated_candidates,
+            artifacts=[],
+            created_at=_created_at(config),
+        ),
+    )
+
+
+def write_canonical_staged_package_json(
+    candidates: Sequence[Mapping[str, Any]],
+    *,
+    config: StagedPackageJsonExportConfig,
+) -> StagedPackageJsonExportResult:
+    """Persist existing canonical Candidates without rewriting their identities."""
+    if config.output_root is None:
+        raise GeneratorValidationError("output_root is required when writing a staged package.")
+    output_root = ensure_output_root(
+        config.output_root,
+        input_roots=config.input_roots,
+        source_root=_package_source_root(),
+    )
+    package_root = output_root / config.package_id
+    package_root.mkdir(parents=True, exist_ok=True)
+
+    base_package = export_canonical_staged_package_json(candidates, config=config)
+    validated_candidates = tuple(validate_candidate_json(candidate) for candidate in base_package["candidates"])
+    candidate_paths: list[Path] = []
+    artifacts: list[dict[str, Any]] = []
+    if config.write_individual_candidates:
+        candidate_root = package_root / "candidates"
+        candidate_root.mkdir(parents=True, exist_ok=True)
+        for candidate in validated_candidates:
+            path = write_json(candidate_root / f"{candidate['candidate_id']}.json", candidate)
+            candidate_paths.append(path)
+            artifacts.append(
+                {
+                    "artifact_id": _require_identifier(f"candidate-{candidate['candidate_id']}", "artifact_id"),
+                    "kind": "metadata",
+                    "uri": path.relative_to(package_root).as_posix(),
+                    "format": "json",
+                    "hash": hash_file(path),
+                }
+            )
+
+    package = _package_document(
+        config,
+        candidates=validated_candidates,
+        artifacts=artifacts,
+        created_at=base_package["manifest"]["created_at"],
+    )
+    staged_package = validate_staged_package_json(package)
+    staged_package_path = write_json(package_root / "staged_package.json", staged_package)
+    return StagedPackageJsonExportResult(
+        package=staged_package,
+        candidates=validated_candidates,
+        output_root=output_root,
+        package_root=package_root,
+        staged_package_path=staged_package_path,
+        candidate_paths=tuple(candidate_paths),
+    )
+
+
 def validate_staged_package_json(package: Mapping[str, Any]) -> dict[str, Any]:
     """Validate a canonical StagedPackage JSON mapping."""
     payload = to_json_safe(dict(package))
@@ -295,7 +370,9 @@ __all__ = [
     "STAGED_PACKAGE_SCHEMA_VERSION",
     "StagedPackageJsonExportConfig",
     "StagedPackageJsonExportResult",
+    "export_canonical_staged_package_json",
     "export_staged_package_json",
     "validate_staged_package_json",
+    "write_canonical_staged_package_json",
     "write_staged_package_json",
 ]

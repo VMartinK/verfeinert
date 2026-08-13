@@ -11,7 +11,9 @@ from .staged_package_json import (
     STAGED_PACKAGE_SCHEMA_VERSION,
     StagedPackageJsonExportConfig,
     StagedPackageJsonExportResult,
+    export_canonical_staged_package_json,
     export_staged_package_json,
+    write_canonical_staged_package_json,
     write_staged_package_json,
 )
 
@@ -22,8 +24,10 @@ __all__ = [
     "CandidateJsonExportConfig",
     "StagedPackageJsonExportConfig",
     "StagedPackageJsonExportResult",
+    "export_canonical_staged_package_json",
     "export_candidate_json",
     "export_staged_package_json",
+    "write_canonical_staged_package_json",
     "write_candidate_json",
     "write_staged_package_json",
 ]

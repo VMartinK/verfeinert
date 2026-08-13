@@ -49,6 +49,8 @@ def build_analysis_result_record(
         "notebooks_executed": False,
         "expensive_metrics_executed": False,
         "plots_generated": False,
+        "automatic_materialization_used": False,
+        "materialized_callables_executed": False,
     }
     flags.update(execution_flags or {})
     provenance = {
