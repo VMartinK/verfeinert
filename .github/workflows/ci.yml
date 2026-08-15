@@ -46,7 +46,14 @@ jobs:
           from verfeinert.workflow import WorkflowConfig
 
           assert load_schema("candidate")["$id"].endswith("/candidate.schema.json")
-          assert len(schema_names()) == 5
+          assert set(schema_names()) == {
+              "analysis_result",
+              "candidate",
+              "comparison_result",
+              "evolution_run",
+              "experiment",
+              "staged_package",
+          }
           record = build_sanz19_candidate_record("A02", 1, n_qubits=2)
           assert record["operations"]
           assert AnalysisPipeline
