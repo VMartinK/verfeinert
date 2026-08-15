@@ -13,6 +13,7 @@ from .mutation import (
     MutationRecipe,
     MutationRequest,
     build_mutation_requests,
+    expand_mutation_requests,
 )
 from .models import (
     AnalysisResultRef,
@@ -46,6 +47,7 @@ __all__ = [
     "MutationRecipe",
     "MutationRequest",
     "build_mutation_requests",
+    "expand_mutation_requests",
     "export_evolution_run_json",
     "produce_candidate_from_request",
     "read_analysis_result_json",

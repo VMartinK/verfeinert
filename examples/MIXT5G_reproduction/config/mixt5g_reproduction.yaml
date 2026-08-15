@@ -10,6 +10,8 @@ workflow:
   campaign_type: evolutionary
   scientific_execution: [generate, analyze, evolve]
   postprocessing: [ranking]
+  analysis_result_reuse:
+    enabled: false
   resume:
     mode: continue
 
@@ -187,5 +189,6 @@ profiles:
     layers: [1, 2, 3]
     generations: 5
     parents_per_generation: null
-    edges: all_valid
+    edges:
+      - [0, 1]
     max_initial_parents: 30

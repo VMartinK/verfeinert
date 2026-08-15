@@ -32,7 +32,13 @@ class WorkflowConfigError(CoreValidationError):
 
 
 SUPPORTED_GENERATION_FAMILIES = ("sanz19", "provided")
-SUPPORTED_EVOLUTION_SELECTION_MODES = ("fitness", "pareto", "strict_pareto", "thresholds")
+SUPPORTED_EVOLUTION_SELECTION_MODES = (
+    "fitness",
+    "pareto",
+    "strict_pareto",
+    "strict_pareto_feedback",
+    "thresholds",
+)
 SUPPORTED_CAMPAIGN_TYPES = ("individual", "evolutionary")
 SUPPORTED_SCIENTIFIC_OPERATIONS = ("generate", "analyze", "evolve")
 SUPPORTED_POSTPROCESSING_OPERATIONS = (
@@ -258,6 +264,9 @@ class EvolutionStageConfig:
     threshold_direction: str = "at_most"
     max_generations: int = 1
     mutation_policy: dict[str, Any] = field(default_factory=dict)
+    offspring_deduplication: dict[str, Any] = field(default_factory=dict)
+    initial_parent_policy: str = "default"
+    strict_ties: bool = True
     metadata: dict[str, Any] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
@@ -273,7 +282,7 @@ class EvolutionStageConfig:
         if self.direction not in {"minimize", "maximize"}:
             raise WorkflowConfigError("evolver.direction must be minimize or maximize.")
         objectives = tuple(_objective_mapping(item) for item in self.objectives)
-        if mode in {"pareto", "strict_pareto"} and not objectives:
+        if mode in {"pareto", "strict_pareto", "strict_pareto_feedback"} and not objectives:
             raise WorkflowConfigError("Pareto selection requires objectives.")
         object.__setattr__(self, "objectives", objectives)
         thresholds = {str(name): float(value) for name, value in self.thresholds.items()}
@@ -286,6 +295,18 @@ class EvolutionStageConfig:
             require_positive_int(self.max_generations, "evolver.max_generations"),
         )
         object.__setattr__(self, "mutation_policy", to_json_safe(dict(self.mutation_policy)))
+        object.__setattr__(
+            self,
+            "offspring_deduplication",
+            _json_mapping(self.offspring_deduplication, "evolver.offspring_deduplication"),
+        )
+        parent_policy = _non_empty_text(self.initial_parent_policy, "evolver.initial_parent_policy").lower()
+        if parent_policy not in {"default", "all_generation_zero_candidates"}:
+            raise WorkflowConfigError(
+                "evolver.initial_parent_policy must be default or all_generation_zero_candidates.",
+            )
+        object.__setattr__(self, "initial_parent_policy", parent_policy)
+        object.__setattr__(self, "strict_ties", require_bool(self.strict_ties, "evolver.strict_ties"))
         object.__setattr__(self, "metadata", to_json_safe(dict(self.metadata)))
 
     @classmethod
@@ -303,6 +324,9 @@ class EvolutionStageConfig:
             threshold_direction=data.get("threshold_direction", "at_most"),
             max_generations=data.get("max_generations", 1),
             mutation_policy=dict(data.get("mutation_policy", {})),
+            offspring_deduplication=dict(data.get("offspring_deduplication", {})),
+            initial_parent_policy=data.get("initial_parent_policy", "default"),
+            strict_ties=data.get("strict_ties", True),
             metadata=dict(data.get("metadata", {})),
         )
 
@@ -319,6 +343,9 @@ class EvolutionStageConfig:
             "threshold_direction": self.threshold_direction,
             "max_generations": self.max_generations,
             "mutation_policy": dict(self.mutation_policy),
+            "offspring_deduplication": dict(self.offspring_deduplication),
+            "initial_parent_policy": self.initial_parent_policy,
+            "strict_ties": self.strict_ties,
             "metadata": dict(self.metadata),
         }
 
@@ -553,6 +580,7 @@ class WorkflowConfig:
     artifacts: WorkflowArtifactInputs = field(default_factory=WorkflowArtifactInputs)
     comparisons: tuple[WorkflowComparisonConfig, ...] = ()
     resume: WorkflowResumeConfig = field(default_factory=WorkflowResumeConfig)
+    analysis_result_reuse: dict[str, Any] = field(default_factory=dict)
     execution: ExecutionConfig = field(default_factory=ExecutionConfig)
     random_seed: int | None = None
     created_at: str | None = None
@@ -618,6 +646,11 @@ class WorkflowConfig:
         object.__setattr__(self, "comparisons", comparisons)
         if not isinstance(self.resume, WorkflowResumeConfig):
             raise WorkflowConfigError("resume must be WorkflowResumeConfig.")
+        object.__setattr__(
+            self,
+            "analysis_result_reuse",
+            _json_mapping(self.analysis_result_reuse, "workflow.analysis_result_reuse"),
+        )
         if not isinstance(self.execution, ExecutionConfig):
             raise WorkflowConfigError("execution must be ExecutionConfig.")
         object.__setattr__(
@@ -639,6 +672,11 @@ class WorkflowConfig:
         scientific_execution, postprocessing, stages = _operations_from_mapping(data, campaign_type=campaign_type)
         artifacts = data.get("artifacts", workflow.get("artifacts", {}))
         resume = data.get("resume", workflow.get("resume", {}))
+        analysis_result_reuse = _first_non_none(
+            data.get("analysis_result_reuse"),
+            workflow.get("analysis_result_reuse"),
+            {},
+        )
         comparison_data = {
             "comparison": _first_non_none(data.get("comparison"), workflow.get("comparison")),
             "comparisons": _first_non_none(data.get("comparisons"), workflow.get("comparisons")),
@@ -665,6 +703,7 @@ class WorkflowConfig:
                 if isinstance(resume, WorkflowResumeConfig)
                 else WorkflowResumeConfig.from_mapping(dict(resume))
             ),
+            analysis_result_reuse=dict(analysis_result_reuse),
             execution=(
                 execution
                 if isinstance(execution, ExecutionConfig)
@@ -693,6 +732,7 @@ class WorkflowConfig:
                 "postprocessing": list(self.postprocessing),
                 "stages": list(self.stages),
                 "resume": self.resume.to_dict(),
+                "analysis_result_reuse": dict(self.analysis_result_reuse),
             },
             "stages": list(self.stages),
             "generation": self.generation.to_dict(),
@@ -709,6 +749,12 @@ def _non_empty_text(value: object, field_name: str) -> str:
     if not isinstance(value, str) or not value.strip():
         raise WorkflowConfigError(f"{field_name} must be a non-empty string.")
     return value.strip()
+
+
+def _json_mapping(value: object, field_name: str) -> dict[str, Any]:
+    if not isinstance(value, Mapping):
+        raise WorkflowConfigError(f"{field_name} must be a mapping.")
+    return to_json_safe(dict(value))
 
 
 def _operations_from_mapping(

@@ -47,7 +47,12 @@ analysis-result references, survivor references, and workflow provenance.
 - five generations;
 - mutation gate schedule `crx`, `crz`, `cz`, `crx`, `crz`;
 - independent thresholds `[1.0, 0.2, 0.1]`;
-- strict-Pareto semantics;
+- three independent `WorkflowRunner` trajectories, one per threshold;
+- strict Pareto feedback over `expressibility` and `trainability`;
+- structural cost used only as the threshold filter;
+- fixed mutation edge `[0, 1]`;
+- all valid single-layer insertion positions;
+- repeat-mutated-single-layer propagation;
 - no fallback policy.
 
 Expensive expressibility/trainability reproduction is documented but not run by default.

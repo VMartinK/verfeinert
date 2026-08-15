@@ -8,7 +8,11 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Mapping, Sequence
 
-from verfeinert.ansatz_generator import SANZ19_TEMPLATE_IDS, build_sanz19_candidate_records
+from verfeinert.ansatz_generator import (
+    SANZ19_TEMPLATE_IDS,
+    build_sanz19_candidate_record,
+    build_sanz19_candidate_records,
+)
 from verfeinert.core import read_yaml, write_json
 from verfeinert.workflow import WorkflowConfig, WorkflowRunner
 
@@ -54,9 +58,19 @@ def build_cx01_candidate_records(
     profile_config = dict(config["profiles"][profile])
     template_ids = _template_ids(profile_config.get("template_ids", "all"))
     layers = tuple(int(layer) for layer in profile_config.get("layers", campaign["layers"]))
-    edges = _edges(profile_config.get("edges", "all_valid"), n_qubits=int(campaign["n_qubits"]))
+    raw_edges = profile_config.get("edges", "all_valid")
     gate = str(campaign["mutation"]["gate"]).lower()
 
+    if raw_edges == "all_valid":
+        return _build_topology_aware_records(
+            template_ids,
+            layers,
+            n_qubits=int(campaign["n_qubits"]),
+            gate=gate,
+            max_candidates=profile_config.get("max_candidates"),
+        )
+
+    edges = _edges(raw_edges, n_qubits=int(campaign["n_qubits"]))
     parents = build_sanz19_candidate_records(
         template_ids,
         layers,
@@ -67,6 +81,40 @@ def build_cx01_candidate_records(
         for variant_index, edge in enumerate(edges, start=1):
             records.append(_cx_knock_in_record(parent, gate=gate, edge=edge, variant_index=variant_index))
     max_candidates = profile_config.get("max_candidates")
+    if max_candidates is not None:
+        records = records[: int(max_candidates)]
+    return records
+
+
+def _build_topology_aware_records(
+    template_ids: Sequence[str],
+    layers: Sequence[int],
+    *,
+    n_qubits: int,
+    gate: str,
+    max_candidates: object,
+) -> list[dict[str, Any]]:
+    records: list[dict[str, Any]] = []
+    for template_id in template_ids:
+        parent_l1 = build_sanz19_candidate_record(template_id, 1, n_qubits=n_qubits)
+        for variant_index, edge in enumerate(_historical_edges(template_id, n_qubits=n_qubits), start=1):
+            unit_operations = _mutated_l1_operations(
+                parent_l1["operations"],
+                gate=gate,
+                edge=edge,
+                variant_index=variant_index,
+            )
+            for layer in layers:
+                records.append(
+                    _cx_repeated_layer_record(
+                        parent_l1,
+                        gate=gate,
+                        edge=edge,
+                        variant_index=variant_index,
+                        layer=int(layer),
+                        unit_operations=unit_operations,
+                    ),
+                )
     if max_candidates is not None:
         records = records[: int(max_candidates)]
     return records
@@ -154,6 +202,100 @@ def _cx_knock_in_record(
     return record
 
 
+def _cx_repeated_layer_record(
+    parent_l1: Mapping[str, Any],
+    *,
+    gate: str,
+    edge: tuple[int, int],
+    variant_index: int,
+    layer: int,
+    unit_operations: Sequence[Mapping[str, Any]],
+) -> dict[str, Any]:
+    operations = _repeat_mutated_layer(unit_operations, layer)
+    template_id = str(parent_l1["template_id"])
+    child_id = f"{template_id}-L{layer}_cx-v{variant_index:03d}"
+    record = {
+        **dict(parent_l1),
+        "circuit_id": child_id,
+        "child_id": child_id,
+        "parent_circuit_id": parent_l1["circuit_id"],
+        "root_circuit_id": parent_l1["circuit_id"],
+        "generation_index": 1,
+        "mutation_type": "knock_in",
+        "mutation_gate": gate,
+        "mutation_id": f"{child_id}-mutation",
+        "variant_index": variant_index,
+        "layer": layer,
+        "L": f"L{layer}",
+        "recipe_id": f"{template_id}_CX_V{variant_index:03d}_L{layer}",
+        "operations": operations,
+        "metadata": {
+            **dict(parent_l1.get("metadata", {})),
+            "reproduction": "cx01",
+            "mutation_type": "knock_in",
+            "mutation_gate": gate,
+            "mutation_edge": list(edge),
+            "placement": "after_rotation_block",
+            "propagation_policy": "repeat_mutated_single_layer",
+            "layer_generation_policy": "mutate_then_repeat_layer",
+            "base_layer_source": f"{template_id}-L1",
+            "variant_index": variant_index,
+            "layer": layer,
+            "L": f"L{layer}",
+        },
+    }
+    record.pop("template_id", None)
+    record.pop("ansatz_id", None)
+    return record
+
+
+def _mutated_l1_operations(
+    operations: Sequence[Mapping[str, Any]],
+    *,
+    gate: str,
+    edge: tuple[int, int],
+    variant_index: int,
+) -> list[dict[str, Any]]:
+    unit = [copy.deepcopy(dict(operation)) for operation in operations]
+    insert_at = _after_rotation_block_index(unit)
+    mutation_operation = {
+        "gate": gate,
+        "wires": list(edge),
+        "parameterized": False,
+        "params": [],
+        "layer": 0,
+        "metadata": {
+            "source": "cx01_reproduction",
+            "placement": "after_rotation_block",
+            "edge": list(edge),
+            "variant_index": variant_index,
+            "propagation_policy": "repeat_mutated_single_layer",
+            "layer_generation_policy": "mutate_then_repeat_layer",
+            "mutation_applied_to_single_layer_block": True,
+        },
+    }
+    return _renumber_operations(unit[:insert_at] + [mutation_operation] + unit[insert_at:])
+
+
+def _repeat_mutated_layer(
+    unit_operations: Sequence[Mapping[str, Any]],
+    layer_count: int,
+) -> list[dict[str, Any]]:
+    repeated: list[dict[str, Any]] = []
+    for layer_index in range(layer_count):
+        for layer_local_order, operation in enumerate(unit_operations):
+            item = copy.deepcopy(dict(operation))
+            item["layer"] = layer_index
+            metadata = dict(item.get("metadata", {}))
+            metadata["layer_index"] = layer_index
+            metadata["layer_local_order"] = layer_local_order
+            if metadata.get("source") == "cx01_reproduction":
+                metadata["replicated_layer"] = layer_index
+            item["metadata"] = metadata
+            repeated.append(item)
+    return _renumber_operations(repeated)
+
+
 def _after_rotation_block_index(operations: Sequence[Mapping[str, Any]]) -> int:
     for index, operation in enumerate(operations):
         wires = operation.get("wires", operation.get("qubits", ()))
@@ -185,6 +327,38 @@ def _edges(raw: object, *, n_qubits: int) -> tuple[tuple[int, int], ...]:
     if raw == "all_valid":
         return tuple((wire, target) for wire in range(n_qubits) for target in range(n_qubits) if wire != target)
     return tuple((int(edge[0]), int(edge[1])) for edge in raw)  # type: ignore[index]
+
+
+def _historical_edges(template_id: str, *, n_qubits: int) -> tuple[tuple[int, int], ...]:
+    topology = _historical_topology(template_id)
+    if topology == "disconnected":
+        return ()
+    if topology == "all_to_all":
+        return tuple(
+            (source, target)
+            for source in range(n_qubits)
+            for target in range(n_qubits)
+            if source != target
+        )
+    undirected = [(wire, wire + 1) for wire in range(n_qubits - 1)]
+    if topology == "ring":
+        undirected.append((0, n_qubits - 1))
+    directed: list[tuple[int, int]] = []
+    for source, target in sorted(tuple(sorted(edge)) for edge in undirected):
+        directed.append((source, target))
+        directed.append((target, source))
+    return tuple(directed)
+
+
+def _historical_topology(template_id: str) -> str:
+    normalized = str(template_id).upper()
+    if normalized == "A01":
+        return "disconnected"
+    if normalized in {"A05", "A06"}:
+        return "all_to_all"
+    if normalized in {"A10", "A13", "A14", "A15", "A18", "A19"}:
+        return "ring"
+    return "linear"
 
 
 def _workflow_mapping(config: Mapping[str, Any], *, output_root: Path, profile: str) -> dict[str, Any]:

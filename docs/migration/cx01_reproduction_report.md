@@ -38,7 +38,13 @@ The YAML records:
 
 The integration test verifies config loading, smoke candidate generation, Candidate schema validation, AnalysisResult schema validation, EvolutionRun schema validation, lineage mutation fields, and absence of local/thesis/legacy path coupling in the example files.
 
-## Deferred Work
+## v0.2.1 Hotfix
 
-- Full expressibility/trainability reproduction is not automated in smoke tests.
-- Historical numeric comparisons need a future opt-in metric runtime and reference-result fixtures.
+- The full profile now uses the historical topology-aware edge set rather than
+  the Cartesian all-valid edge set.
+- A01 is disconnected; A05/A06 are all-to-all; A10/A13/A14/A15/A18/A19 are
+  rings; all remaining templates use linear/brickwork edges.
+- Full-profile candidates mutate the L1 structural block and repeat that
+  mutated block through layers `1`, `2`, and `3`, preserving smoke and
+  materialized-smoke behavior.
+- Full expressibility/trainability metric execution remains explicit opt-in.

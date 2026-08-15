@@ -24,6 +24,7 @@ from verfeinert.ansatz_analyzer import (
     validate_candidate_document,
     validate_comparison_result_document,
     validate_staged_package_document,
+    write_analysis_result_json,
 )
 from verfeinert.ansatz_analyzer.tables import (
     write_analysis_results_csv,
@@ -48,8 +49,9 @@ from verfeinert.ansatz_evolver.evaluation import ingest_analysis_results
 from verfeinert.ansatz_evolver.mutation import (
     MutationPolicy,
     MutationRecipe,
-    build_mutation_requests,
+    expand_mutation_requests,
 )
+from verfeinert.ansatz_evolver.population import deduplicate_candidate_refs
 from verfeinert.ansatz_evolver.selection import (
     ObjectiveSpec,
     ThresholdRule,
@@ -57,6 +59,7 @@ from verfeinert.ansatz_evolver.selection import (
     select_by_thresholds,
     select_pareto_front,
     select_strict_pareto,
+    select_strict_pareto_feedback,
 )
 from verfeinert.ansatz_generator import (
     CandidateJsonExportConfig,
@@ -74,6 +77,7 @@ from .provenance import workflow_provenance
 
 
 EVOLUTION_FINGERPRINT_VERSION = "verfeinert.workflow.evolution_fingerprint.v1"
+ANALYSIS_REUSE_FINGERPRINT_VERSION = "verfeinert.workflow.analysis_reuse_fingerprint.v1"
 
 
 @dataclass(frozen=True)
@@ -162,6 +166,19 @@ class WorkflowResult:
 class _CandidateArtifact:
     document: dict[str, Any]
     uri: str | None = None
+
+
+@dataclass(frozen=True)
+class _AnalysisResultArtifact:
+    document: dict[str, Any]
+    uri: str | None = None
+
+
+@dataclass(frozen=True)
+class _AnalysisRunOutput:
+    documents: tuple[dict[str, Any], ...]
+    paths: tuple[Path, ...] = ()
+    generated_paths: tuple[Path, ...] = ()
 
 
 class WorkflowRunner:
@@ -284,22 +301,28 @@ class WorkflowRunner:
                 _input_roots_for_sources(analysis_sources_for_pipeline, fallback=config.input_roots),
                 analysis_root,
             )
-            paths: list[Path] = []
-            pipeline = AnalysisPipeline(analyzer_config)
-            for source in analysis_sources_for_pipeline:
-                paths.extend(
-                    pipeline.run_and_write(
-                        source,
-                        metric_callables=metric_callables,
-                    ),
-                )
-            analysis_result_paths = tuple(paths)
-            analysis_collection = AnalysisResultCollection.from_sources(
-                analysis_result_paths,
+            analysis_run = self._run_analysis(
+                candidates=tuple(artifact.document for artifact in candidate_artifacts),
+                input_sources=analysis_sources_for_pipeline,
+                analyzer_config=analyzer_config,
+                metric_callables=metric_callables,
+                package_output_root=package_output_root,
+                package_id=f"{config.run_id}-analysis-reuse-miss-package",
+                reuse_artifacts=(
+                    _load_analysis_result_artifacts(all_analysis_sources)
+                    if _analysis_result_reuse_enabled(config)
+                    else ()
+                ),
+                consumed_artifacts=consumed_artifacts,
+                reused_artifacts=reused_artifacts,
+                produced_artifacts=produced_artifacts,
+            )
+            analysis_result_paths = analysis_run.paths
+            analysis_collection = AnalysisResultCollection.from_records(
+                analysis_run.documents,
                 collection_id=f"{config.run_id}:analysis",
             )
             executed.append("analyze")
-            produced_artifacts.extend(_path_records("analysis_result", analysis_result_paths))
         elif all_analysis_sources:
             analysis_collection = AnalysisResultCollection.from_sources(
                 all_analysis_sources,
@@ -323,6 +346,11 @@ class WorkflowRunner:
                 candidate_factory=candidate_factory,
                 reference_analysis_results=reference_analysis_results,
                 analysis_result_paths=analysis_result_paths,
+                analysis_reuse_artifacts=(
+                    _load_analysis_result_artifacts(all_analysis_sources)
+                    if _analysis_result_reuse_enabled(config)
+                    else ()
+                ),
                 analysis_root=analysis_root,
                 package_output_root=package_output_root,
                 consumed_artifacts=consumed_artifacts,
@@ -690,6 +718,90 @@ class WorkflowRunner:
             materialization=config.analyzer.materialization,
         )
 
+    def _run_analysis(
+        self,
+        *,
+        candidates: Sequence[Mapping[str, Any]],
+        input_sources: Sequence[str | Path | Mapping[str, Any]],
+        analyzer_config: AnalyzerConfig,
+        metric_callables: Mapping[str, Any] | None,
+        package_output_root: Path,
+        package_id: str,
+        reuse_artifacts: Sequence[_AnalysisResultArtifact],
+        consumed_artifacts: list[dict[str, Any]],
+        reused_artifacts: list[dict[str, Any]],
+        produced_artifacts: list[dict[str, Any]],
+    ) -> _AnalysisRunOutput:
+        if not _analysis_result_reuse_enabled(self.config):
+            paths: list[Path] = []
+            pipeline = AnalysisPipeline(analyzer_config)
+            for source in input_sources:
+                paths.extend(
+                    pipeline.run_and_write(
+                        source,
+                        metric_callables=metric_callables,
+                    ),
+                )
+            produced_artifacts.extend(_path_records("analysis_result", paths))
+            return _AnalysisRunOutput(
+                documents=tuple(validate_analysis_result_document(read_json(path)) for path in paths),
+                paths=tuple(paths),
+            )
+
+        fingerprint = _analysis_config_fingerprint(analyzer_config)
+        ordered_candidates = tuple(validate_candidate_document(candidate) for candidate in candidates)
+        result_by_candidate_id: dict[str, dict[str, Any]] = {}
+        paths_by_analysis_result_id: dict[str, Path] = {}
+        misses: list[dict[str, Any]] = []
+        for candidate in ordered_candidates:
+            artifact = _matching_analysis_artifact(candidate, reuse_artifacts, fingerprint)
+            if artifact is None:
+                misses.append(candidate)
+                continue
+            document = artifact.document
+            result_by_candidate_id[candidate["candidate_id"]] = document
+            if artifact.uri is not None:
+                paths_by_analysis_result_id[document["analysis_result_id"]] = Path(artifact.uri).expanduser()
+            record = _artifact_record("analysis_result", artifact.uri, document_id=document["analysis_result_id"])
+            consumed_artifacts.append(record)
+            reused_artifacts.append(record)
+
+        generated_paths: list[Path] = []
+        if misses:
+            package = write_canonical_staged_package_json(
+                misses,
+                config=self._canonical_staged_package_config(
+                    package_output_root,
+                    package_id=package_id,
+                ),
+            )
+            if package.package_root is None or package.staged_package_path is None:
+                raise RuntimeError("Canonical staged package exporter did not return paths.")
+            generated_paths.extend((package.package_root, package.staged_package_path, *package.candidate_paths))
+            produced_artifacts.extend(
+                _staged_package_records(package.staged_package_path, package.candidate_paths),
+            )
+            miss_config = _analyzer_config_for_input_root(analyzer_config, package.package_root)
+            pipeline = AnalysisPipeline(miss_config)
+            for record in pipeline.run(package.staged_package_path, metric_callables=metric_callables):
+                document = _analysis_document_with_fingerprint(record.to_dict(), fingerprint)
+                path = write_analysis_result_json(document, miss_config)
+                produced_artifacts.append(_artifact_record("analysis_result", str(path)))
+                result_by_candidate_id[document["candidate_ref"]["candidate_id"]] = document
+                paths_by_analysis_result_id[document["analysis_result_id"]] = path
+
+        documents = tuple(result_by_candidate_id[candidate["candidate_id"]] for candidate in ordered_candidates)
+        paths = tuple(
+            paths_by_analysis_result_id[document["analysis_result_id"]]
+            for document in documents
+            if document["analysis_result_id"] in paths_by_analysis_result_id
+        )
+        return _AnalysisRunOutput(
+            documents=documents,
+            paths=paths,
+            generated_paths=tuple(generated_paths),
+        )
+
     def _run_evolution(
         self,
         *,
@@ -699,6 +811,7 @@ class WorkflowRunner:
         candidate_factory: Any | None,
         reference_analysis_results: Sequence[Mapping[str, Any]],
         analysis_result_paths: Sequence[Path],
+        analysis_reuse_artifacts: Sequence[_AnalysisResultArtifact],
         analysis_root: Path,
         package_output_root: Path,
         consumed_artifacts: list[dict[str, Any]],
@@ -717,6 +830,14 @@ class WorkflowRunner:
             for artifact in candidate_artifacts
             if artifact.uri is not None
         }
+        analysis_by_candidate_id: dict[str, dict[str, Any]] = {}
+        if analysis_collection is not None:
+            analysis_by_candidate_id.update(
+                {
+                    document["candidate_ref"]["candidate_id"]: document
+                    for document in analysis_collection.documents
+                },
+            )
 
         if evolution_source is not None:
             document, source_path = _evolution_document_with_path(evolution_source)
@@ -724,6 +845,9 @@ class WorkflowRunner:
             reused_artifacts.append(_artifact_record("evolution_run", _source_uri(evolution_source)))
             state = _state_from_evolution_document(document)
             candidate_lookup.update(_candidate_documents_from_state(state, source_path=source_path))
+            analysis_by_candidate_id.update(
+                _analysis_result_documents_from_state(state, source_path=source_path),
+            )
             state = _state_for_resume_or_branch(
                 state,
                 document=document,
@@ -738,6 +862,12 @@ class WorkflowRunner:
                 uri_by_candidate_id=candidate_uri_lookup,
             )
             selection = self._select(collection, reference_analysis_results)
+            analysis_by_candidate_id.update(
+                {
+                    document["candidate_ref"]["candidate_id"]: document
+                    for document in collection.documents
+                },
+            )
             generation = _generation_record(
                 generation_index=0,
                 candidate_refs=candidate_refs,
@@ -760,18 +890,15 @@ class WorkflowRunner:
 
         while _should_extend_evolution(config, state, candidate_factory):
             next_generation = state.generations[-1].generation_index + 1
-            parent_refs = (
-                state.generations[-1].survivor_refs
-                or state.generations[-1].archive_refs
-                or state.generations[-1].candidate_refs
-            )
+            parent_refs = _parent_refs_for_next_generation(config, state, next_generation)
             if not parent_refs:
                 raise WorkflowConfigError("invalid resume state: latest generation has no parent candidates.")
             policy = _mutation_policy_for_generation(config, next_generation)
-            requests = build_mutation_requests(
+            requests = expand_mutation_requests(
                 parent_refs,
                 generation_index=next_generation,
                 policy=policy,
+                parent_candidates=candidate_lookup,
             )
             children = []
             for request in requests:
@@ -783,7 +910,7 @@ class WorkflowRunner:
                     )
                 child = produce_candidate_from_request(request, parent, candidate_factory)
                 children.append(child)
-                candidate_lookup[child["candidate_id"]] = child
+            children, dedup_report = _deduplicate_offspring(children, config.evolver.offspring_deduplication)
             package = write_canonical_staged_package_json(
                 children,
                 config=self._canonical_staged_package_config(
@@ -802,15 +929,44 @@ class WorkflowRunner:
                 candidate_lookup[candidate["candidate_id"]] = candidate
 
             analyzer_config = self._analyzer_config((package.package_root,), analysis_root)
-            analysis_paths = tuple(AnalysisPipeline(analyzer_config).run_and_write(package.staged_package_path))
-            produced_artifacts.extend(_path_records("analysis_result", analysis_paths))
+            analysis_run = self._run_analysis(
+                candidates=tuple(package.candidates),
+                input_sources=(package.staged_package_path,),
+                analyzer_config=analyzer_config,
+                metric_callables=None,
+                package_output_root=package_output_root,
+                package_id=f"{config.run_id}-g{next_generation:03d}-analysis-reuse-miss-package",
+                reuse_artifacts=(
+                    *tuple(analysis_reuse_artifacts),
+                    *tuple(_AnalysisResultArtifact(document) for document in analysis_by_candidate_id.values()),
+                ),
+                consumed_artifacts=consumed_artifacts,
+                reused_artifacts=reused_artifacts,
+                produced_artifacts=produced_artifacts,
+            )
+            analysis_paths = analysis_run.paths
+            generated_paths.extend(analysis_run.generated_paths)
             if "analyze" not in executed:
                 executed.append("analyze")
-            child_collection = AnalysisResultCollection.from_sources(
-                analysis_paths,
+            child_collection = AnalysisResultCollection.from_records(
+                analysis_run.documents,
                 collection_id=f"{config.run_id}:g{next_generation:03d}:analysis",
             )
-            selection = self._select(child_collection, reference_analysis_results)
+            selection = self._select(
+                child_collection,
+                _selection_reference_results(
+                    config,
+                    state,
+                    analysis_by_candidate_id,
+                    reference_analysis_results,
+                ),
+            )
+            analysis_by_candidate_id.update(
+                {
+                    document["candidate_ref"]["candidate_id"]: document
+                    for document in child_collection.documents
+                },
+            )
             child_refs = tuple(
                 CandidateRef.from_candidate_document(candidate, candidate_uri=candidate_uri_lookup.get(candidate["candidate_id"]))
                 for candidate in package.candidates
@@ -820,9 +976,25 @@ class WorkflowRunner:
                 candidate_refs=child_refs,
                 collection=child_collection,
                 selection=selection,
-                analysis_uris=_analysis_uri_map(analysis_paths),
+                analysis_uris=_analysis_uri_map_from_documents(analysis_run.documents, analysis_paths),
                 parent_refs=tuple(parent_refs),
                 run_id=config.run_id,
+                extra_configuration=(
+                    {"offspring_deduplication": dedup_report.to_dict()}
+                    if dedup_report is not None
+                    else None
+                ),
+                extra_events=(
+                    (
+                        EvolutionEvent(
+                            event_type="workflow_offspring_deduplicated",
+                            status="completed",
+                            metadata=dedup_report.to_dict(),
+                        ),
+                    )
+                    if dedup_report is not None
+                    else ()
+                ),
             )
             state = _state_with_generation(config, state, generation)
 
@@ -858,6 +1030,16 @@ class WorkflowRunner:
                 objectives=objectives,
                 policy_id=config.policy_id,
             )
+        if config.selection_mode == "strict_pareto_feedback":
+            return select_strict_pareto_feedback(
+                collection.documents,
+                objectives=objectives,
+                reference_results=reference_analysis_results,
+                thresholds=config.thresholds,
+                threshold_direction=config.threshold_direction,
+                strict_ties=config.strict_ties,
+                policy_id=config.policy_id,
+            )
         return select_strict_pareto(
             collection.documents,
             objectives=objectives,
@@ -890,6 +1072,33 @@ def _load_staged_package_artifacts(
         package = validate_staged_package_document(document)
         packages.append({"document": package, "uri": str(path) if path is not None else None})
     return packages
+
+
+def _load_analysis_result_artifacts(
+    sources: Sequence[str | Path | Mapping[str, Any]],
+) -> tuple[_AnalysisResultArtifact, ...]:
+    artifacts: list[_AnalysisResultArtifact] = []
+    for source in sources:
+        if isinstance(source, Mapping):
+            artifacts.append(_AnalysisResultArtifact(validate_analysis_result_document(source)))
+            continue
+        path = Path(source).expanduser()
+        if path.is_dir():
+            for child in sorted(path.glob("*.json")):
+                artifacts.append(
+                    _AnalysisResultArtifact(
+                        validate_analysis_result_document(read_json(child)),
+                        str(child),
+                    ),
+                )
+            continue
+        artifacts.append(
+            _AnalysisResultArtifact(
+                validate_analysis_result_document(read_json(path)),
+                str(path),
+            ),
+        )
+    return tuple(artifacts)
 
 
 def _candidate_artifacts_from_staged_packages(
@@ -1087,6 +1296,107 @@ def _analysis_uri_map_from_collection(
     return uris
 
 
+def _analysis_uri_map_from_documents(
+    documents: Sequence[Mapping[str, Any]],
+    paths: Sequence[Path],
+) -> dict[str, str]:
+    uris: dict[str, str] = {}
+    for path in paths:
+        document = validate_analysis_result_document(read_json(path))
+        uris[document["analysis_result_id"]] = str(path)
+    return {
+        document["analysis_result_id"]: uris[document["analysis_result_id"]]
+        for document in documents
+        if document["analysis_result_id"] in uris
+    }
+
+
+def _analysis_result_reuse_enabled(config: WorkflowConfig) -> bool:
+    reuse = dict(config.analysis_result_reuse)
+    return bool(reuse.get("enabled", False))
+
+
+def _matching_analysis_artifact(
+    candidate: Mapping[str, Any],
+    artifacts: Sequence[_AnalysisResultArtifact],
+    fingerprint: str,
+) -> _AnalysisResultArtifact | None:
+    candidate_id = str(candidate["candidate_id"])
+    structural_hash = str(dict(candidate["identity"]).get("structural_hash") or "")
+    if not structural_hash:
+        return None
+    for artifact in artifacts:
+        document = artifact.document
+        candidate_ref = dict(document["candidate_ref"])
+        if candidate_ref.get("candidate_id") != candidate_id:
+            continue
+        if candidate_ref.get("structural_hash") != structural_hash:
+            continue
+        if _analysis_result_fingerprint(document) != fingerprint:
+            continue
+        return artifact
+    return None
+
+
+def _analysis_config_fingerprint(config: AnalyzerConfig) -> str:
+    return _analysis_config_fingerprint_from_dict(config.to_dict())
+
+
+def _analysis_config_fingerprint_from_dict(config: Mapping[str, Any]) -> str:
+    data = to_json_safe(dict(config))
+    for volatile in ("run_id", "input_roots", "output_root"):
+        data.pop(volatile, None)
+    return stable_hash(
+        {
+            "fingerprint_version": ANALYSIS_REUSE_FINGERPRINT_VERSION,
+            "analyzer": data,
+        },
+    )
+
+
+def _analysis_result_fingerprint(document: Mapping[str, Any]) -> str | None:
+    metadata = dict(document.get("metadata", {}))
+    fingerprint = metadata.get("analysis_compatibility_fingerprint")
+    if isinstance(fingerprint, str) and fingerprint:
+        return fingerprint
+    provenance = dict(document.get("provenance", {}))
+    execution = dict(provenance.get("execution", {}))
+    config = execution.get("config")
+    if isinstance(config, Mapping):
+        return _analysis_config_fingerprint_from_dict(config)
+    return None
+
+
+def _analysis_document_with_fingerprint(
+    document: Mapping[str, Any],
+    fingerprint: str,
+) -> dict[str, Any]:
+    payload = dict(document)
+    metadata = dict(payload.get("metadata", {}))
+    metadata["analysis_compatibility_fingerprint"] = fingerprint
+    metadata["analysis_compatibility_fingerprint_version"] = ANALYSIS_REUSE_FINGERPRINT_VERSION
+    payload["metadata"] = metadata
+    return validate_analysis_result_document(payload)
+
+
+def _analyzer_config_for_input_root(
+    config: AnalyzerConfig,
+    input_root: Path,
+) -> AnalyzerConfig:
+    return AnalyzerConfig(
+        run_id=config.run_id,
+        input_roots=(input_root,),
+        output_root=config.output_root,
+        selected_metrics=config.selected_metrics,
+        execution=config.execution,
+        permissions=config.permissions,
+        random_seed=config.random_seed,
+        structural_cost=config.structural_cost,
+        metric_configs=config.metric_configs,
+        materialization=config.materialization,
+    )
+
+
 def _staged_package_records(
     staged_package_path: Path,
     candidate_paths: Sequence[Path],
@@ -1259,6 +1569,8 @@ def _generation_record(
     analysis_uris: Mapping[str, str],
     parent_refs: Sequence[CandidateRef],
     run_id: str,
+    extra_configuration: Mapping[str, Any] | None = None,
+    extra_events: Sequence[EvolutionEvent] = (),
 ) -> GenerationRecord:
     ingestion = ingest_analysis_results(
         candidate_refs,
@@ -1277,11 +1589,12 @@ def _generation_record(
         parent_refs=tuple(parent_refs),
         survivor_refs=selection.survivor_refs,
         rejected_refs=selection.rejected_refs,
-        archive_refs=selection.survivor_refs,
+        archive_refs=selection.archive_refs,
         analysis_result_refs=ingestion.analysis_result_refs,
         configuration={
             "workflow_run_id": run_id,
             "selection": selection.configuration,
+            **dict(extra_configuration or {}),
         },
         events=(
             EvolutionEvent(
@@ -1297,6 +1610,7 @@ def _generation_record(
                 policy_id=selection.policy_id,
                 status="completed",
             ),
+            *tuple(extra_events),
         ),
     )
 
@@ -1504,6 +1818,111 @@ def _candidate_documents_from_state(
                 continue
             documents[ref.candidate_id] = validate_candidate_document(read_json(path))
     return documents
+
+
+def _analysis_result_documents_from_state(
+    state: EvolutionRunState,
+    *,
+    source_path: Path | None,
+) -> dict[str, dict[str, Any]]:
+    documents: dict[str, dict[str, Any]] = {}
+    base = source_path.parent if source_path is not None else None
+    for generation in state.generations:
+        for ref in generation.analysis_result_refs:
+            if ref.analysis_result_uri is None:
+                continue
+            path = Path(ref.analysis_result_uri).expanduser()
+            if not path.is_absolute() and base is not None:
+                path = base / path
+            if not path.is_file():
+                continue
+            document = validate_analysis_result_document(read_json(path))
+            analysis_result_id = document["analysis_result_id"]
+            candidate_id = document["candidate_ref"]["candidate_id"]
+            if analysis_result_id != ref.analysis_result_id:
+                raise WorkflowConfigError(
+                    "invalid resume state: analysis_result_uri for candidate "
+                    f"{ref.candidate_id!r} resolved to AnalysisResult {analysis_result_id!r}, "
+                    f"expected {ref.analysis_result_id!r}.",
+                )
+            if candidate_id != ref.candidate_id:
+                raise WorkflowConfigError(
+                    "invalid resume state: analysis_result_uri for AnalysisResult "
+                    f"{ref.analysis_result_id!r} resolved to candidate {candidate_id!r}, "
+                    f"expected {ref.candidate_id!r}.",
+                )
+            existing = documents.get(ref.candidate_id)
+            if existing is not None and existing["analysis_result_id"] != analysis_result_id:
+                raise WorkflowConfigError(
+                    "invalid resume state: conflicting AnalysisResult identities for "
+                    f"candidate {ref.candidate_id!r}: {existing['analysis_result_id']!r} and "
+                    f"{analysis_result_id!r}.",
+                )
+            documents[ref.candidate_id] = document
+    return documents
+
+
+def _parent_refs_for_next_generation(
+    config: WorkflowConfig,
+    state: EvolutionRunState,
+    next_generation: int,
+) -> tuple[CandidateRef, ...]:
+    generations = tuple(state.generations)
+    if not generations:
+        return ()
+    if config.evolver.initial_parent_policy == "all_generation_zero_candidates" and next_generation == 1:
+        return tuple(generations[0].candidate_refs)
+    latest = generations[-1]
+    if config.evolver.selection_mode == "strict_pareto_feedback" and next_generation > 1:
+        return tuple(latest.survivor_refs)
+    return tuple(latest.survivor_refs or latest.archive_refs or latest.candidate_refs)
+
+
+def _selection_reference_results(
+    config: WorkflowConfig,
+    state: EvolutionRunState,
+    analysis_by_candidate_id: Mapping[str, Mapping[str, Any]],
+    fallback_reference_results: Sequence[Mapping[str, Any]],
+) -> tuple[Mapping[str, Any], ...]:
+    if config.evolver.selection_mode != "strict_pareto_feedback":
+        return tuple(fallback_reference_results)
+    if not state.generations:
+        return tuple(fallback_reference_results)
+    references: list[Mapping[str, Any]] = list(fallback_reference_results)
+    missing: list[str] = []
+    for ref in state.generations[-1].archive_refs:
+        document = analysis_by_candidate_id.get(ref.candidate_id)
+        if document is None:
+            missing.append(ref.candidate_id)
+        else:
+            references.append(document)
+    if missing:
+        raise WorkflowConfigError(
+            "cannot continue strict_pareto_feedback: unresolved AnalysisResult(s) "
+            f"for accumulated archive: {missing}",
+        )
+    return tuple(references)
+
+
+def _deduplicate_offspring(
+    candidates: Sequence[Mapping[str, Any]],
+    config: Mapping[str, Any],
+) -> tuple[list[dict[str, Any]], Any | None]:
+    dedup_config = dict(config or {})
+    if not bool(dedup_config.get("enabled", False)):
+        return [validate_candidate_document(candidate) for candidate in candidates], None
+    refs = tuple(CandidateRef.from_candidate_document(candidate) for candidate in candidates)
+    kept_refs, report = deduplicate_candidate_refs(
+        refs,
+        key=str(dedup_config.get("key", "structural_hash")),  # type: ignore[arg-type]
+        keep=str(dedup_config.get("keep", "first")),  # type: ignore[arg-type]
+    )
+    kept_ids = {ref.candidate_id for ref in kept_refs}
+    return [
+        validate_candidate_document(candidate)
+        for candidate in candidates
+        if candidate["candidate_id"] in kept_ids
+    ], report
 
 
 def _should_extend_evolution(

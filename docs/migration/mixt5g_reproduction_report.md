@@ -38,7 +38,15 @@ The YAML records:
 
 The integration test runs the smoke profile, validates generated Candidate and AnalysisResult JSON documents, validates the combined EvolutionRun JSON, checks parent/child lineage references, and scans example files for local/thesis/legacy coupling.
 
-## Deferred Work
+## v0.2.1 Hotfix
 
-- Full mixed strict-Pareto reproduction with expressibility and trainability remains opt-in.
-- The reusable multi-generation loop should move from the example into evolver once Phase 6 APIs are hardened around analysis-result linkage and generation factories.
+- The full profile now coordinates three independent public `WorkflowRunner`
+  trajectories for thresholds `1.0`, `0.2`, and `0.1`.
+- Full-profile selection uses `strict_pareto_feedback` with objectives
+  `expressibility` and `trainability`; `structural_cost` is only a threshold
+  filter.
+- Mutation expansion is generic: `apply_to: all_valid_positions`, fixed edge
+  `[0, 1]`, and `propagation_policy: repeat_mutated_single_layer`.
+- The closed historical accounting anchors are recorded in
+  `examples/MIXT5G_reproduction/comparison/reference_summary.json` without
+  making old artifacts runtime dependencies.

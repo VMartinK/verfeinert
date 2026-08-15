@@ -65,14 +65,17 @@ class SelectionResult:
     decisions: tuple[SelectionDecision, ...]
     configuration: dict[str, Any] = field(default_factory=dict)
     analysis_result_refs: tuple[AnalysisResultRef, ...] = ()
+    archive_refs: tuple[CandidateRef, ...] = ()
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "policy_id", require_identifier(self.policy_id, "policy_id"))
-        for field_name in ("survivor_refs", "rejected_refs"):
+        for field_name in ("survivor_refs", "rejected_refs", "archive_refs"):
             refs = tuple(getattr(self, field_name))
             if any(not isinstance(ref, CandidateRef) for ref in refs):
                 raise ValueError(f"{field_name} must contain CandidateRef objects.")
             object.__setattr__(self, field_name, refs)
+        if not self.archive_refs:
+            object.__setattr__(self, "archive_refs", self.survivor_refs)
         decisions = tuple(self.decisions)
         if any(not isinstance(decision, SelectionDecision) for decision in decisions):
             raise ValueError("decisions must contain SelectionDecision objects.")
@@ -89,6 +92,7 @@ class SelectionResult:
             "policy_id": self.policy_id,
             "survivor_refs": [ref.to_ref_dict() for ref in self.survivor_refs],
             "rejected_refs": [ref.to_ref_dict() for ref in self.rejected_refs],
+            "archive_refs": [ref.to_ref_dict() for ref in self.archive_refs],
             "analysis_result_refs": [ref.to_ref_dict() for ref in self.analysis_result_refs],
             "decisions": [decision.to_dict() for decision in self.decisions],
             "configuration": dict(self.configuration),
@@ -165,6 +169,8 @@ def metric_value(result: Mapping[str, Any], name: str) -> float | None:
             continue
         if metric.get("name") == name and metric.get("status") == "computed":
             value = metric.get("value")
+            if isinstance(value, Mapping):
+                value = value.get(name, value.get("score"))
             return float(value) if isinstance(value, (int, float)) else None
     return None
 

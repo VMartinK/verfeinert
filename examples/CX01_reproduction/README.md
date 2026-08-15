@@ -18,3 +18,9 @@ EvolutionRun. The `materialized_smoke` profile demonstrates the analyzer-owned
 PennyLane materialization bridge with tiny expressibility/trainability settings.
 Full expressibility/trainability reproduction remains opt-in because the
 reference scientific settings are expensive.
+
+The `full` profile uses the historical topology-aware L1 mutation expansion:
+A01 is disconnected, A05/A06 are all-to-all, A10/A13/A14/A15/A18/A19 are
+rings, and the remaining templates use linear/brickwork edges. The example
+mutates the L1 structural block once and repeats that mutated block for layers
+1, 2, and 3.

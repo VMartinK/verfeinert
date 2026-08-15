@@ -107,13 +107,11 @@ class InsertGateMutationFactory:
             "schema_version": CANDIDATE_SCHEMA_VERSION,
             "candidate_id": child_id,
             "identity": {
-                "structural_hash": stable_hash(
-                    {
-                        "n_qubits": circuit["n_qubits"],
-                        "wire_order": circuit.get("wire_order"),
-                        "parameters": circuit["parameters"],
-                        "operations": circuit["operations"],
-                    },
+                "structural_hash": _mutation_structural_hash(
+                    circuit,
+                    canonicalize_equivalent_insertions=(
+                        parameters.get("propagation_policy") == "repeat_mutated_single_layer"
+                    ),
                 ),
                 "lineage_hash": stable_hash(lineage),
                 "hash_schema_version": parent["identity"].get(
@@ -157,6 +155,16 @@ def _mutated_circuit(
     insertion_strategy: str,
 ) -> dict[str, Any]:
     circuit = copy.deepcopy(dict(parent_circuit))
+    if parameters.get("propagation_policy") == "repeat_mutated_single_layer":
+        return _repeat_mutated_single_layer_circuit(
+            circuit,
+            gate=gate,
+            qubits=qubits,
+            parameters=parameters,
+            request_metadata=request_metadata,
+            request=request,
+            insertion_strategy=insertion_strategy,
+        )
     existing_parameters = [dict(parameter) for parameter in circuit.get("parameters", [])]
     operation_parameters, circuit_parameters = _operation_parameters(
         gate,
@@ -164,20 +172,16 @@ def _mutated_circuit(
         existing_parameters,
     )
     operations = [dict(operation) for operation in circuit["operations"]]
-    insert_at = _insertion_index(operations, insertion_strategy)
-    operation = {
-        "operation_id": "op-000",
-        "gate": {
-            "name": gate,
-            "namespace": str(parameters.get("gate_namespace") or "verfeinert.default_gates"),
-        },
-        "qubits": list(qubits),
-        "parameters": operation_parameters,
-        "layer": int(parameters.get("layer", 0)),
-        "order": 0,
-        "role": _operation_role(gate, qubits),
-        "metadata": _operation_metadata(parameters, request_metadata=request_metadata, request=request, qubits=qubits),
-    }
+    insert_at = _insertion_index(operations, insertion_strategy, explicit_index=parameters.get("insertion_index"))
+    operation = _insert_operation(
+        gate=gate,
+        qubits=qubits,
+        parameters=parameters,
+        operation_parameters=operation_parameters,
+        request_metadata=request_metadata,
+        request=request,
+        layer=int(parameters.get("layer", 0)),
+    )
     mutated_operations = _renumber_operations(operations[:insert_at] + [operation] + operations[insert_at:])
     if bool(parameters.get("renumber_parameters", True)):
         mutated_operations, circuit_parameters = _renumber_parameter_references(
@@ -189,6 +193,150 @@ def _mutated_circuit(
         "wire_order": list(circuit.get("wire_order") or range(int(circuit["n_qubits"]))),
         "parameters": circuit_parameters,
         "operations": mutated_operations,
+    }
+
+
+def _mutation_structural_hash(
+    circuit: Mapping[str, Any],
+    *,
+    canonicalize_equivalent_insertions: bool,
+) -> str:
+    if not canonicalize_equivalent_insertions:
+        return stable_hash(
+            {
+                "n_qubits": circuit["n_qubits"],
+                "wire_order": circuit.get("wire_order"),
+                "parameters": circuit["parameters"],
+                "operations": circuit["operations"],
+            },
+        )
+    return stable_hash(
+        {
+            "n_qubits": circuit["n_qubits"],
+            "wire_order": circuit.get("wire_order"),
+            "operations": [_structural_operation_signature(operation) for operation in circuit["operations"]],
+        },
+    )
+
+
+def _structural_operation_signature(operation: Mapping[str, Any]) -> dict[str, Any]:
+    gate = operation.get("gate")
+    if isinstance(gate, Mapping):
+        gate_signature = {
+            "name": gate.get("name"),
+            "namespace": gate.get("namespace"),
+        }
+    else:
+        gate_signature = {"name": gate}
+    return {
+        "gate": gate_signature,
+        "qubits": list(operation.get("qubits", operation.get("wires", ()))),
+        "layer": operation.get("layer"),
+        "role": operation.get("role"),
+        "parameters": [_structural_parameter_signature(parameter) for parameter in operation.get("parameters", ())],
+    }
+
+
+def _structural_parameter_signature(parameter: Mapping[str, Any]) -> dict[str, Any]:
+    item = dict(parameter)
+    if item.get("kind") == "reference":
+        return {"kind": "reference"}
+    if item.get("kind") == "literal":
+        return {"kind": "literal", "value": to_json_safe(item.get("value"))}
+    return to_json_safe(item)
+
+
+def _repeat_mutated_single_layer_circuit(
+    circuit: Mapping[str, Any],
+    *,
+    gate: str,
+    qubits: tuple[int, ...],
+    parameters: Mapping[str, Any],
+    request_metadata: Mapping[str, Any],
+    request: Any,
+    insertion_strategy: str,
+) -> dict[str, Any]:
+    source_parameters = {str(parameter["parameter_id"]): dict(parameter) for parameter in circuit.get("parameters", [])}
+    operations = [dict(operation) for operation in circuit["operations"]]
+    blocks = _layer_blocks(operations)
+    base_layer = blocks.get(0, operations)
+    layer_count = max(blocks) + 1 if blocks else int(parameters.get("layer_count", 1))
+    insert_at = _insertion_index(base_layer, insertion_strategy, explicit_index=parameters.get("insertion_index"))
+    new_parameters: list[dict[str, Any]] = []
+    repeated: list[dict[str, Any]] = []
+    for layer_index in range(layer_count):
+        for local_order, operation in enumerate(base_layer[:insert_at]):
+            repeated.append(
+                _clone_operation_for_repeat(
+                    operation,
+                    layer_index=layer_index,
+                    layer_local_order=local_order,
+                    source_parameters=source_parameters,
+                    circuit_parameters=new_parameters,
+                ),
+            )
+        operation_parameters, new_parameters = _operation_parameters(gate, parameters, new_parameters)
+        repeated.append(
+            _insert_operation(
+                gate=gate,
+                qubits=qubits,
+                parameters=parameters,
+                operation_parameters=operation_parameters,
+                request_metadata=request_metadata,
+                request=request,
+                layer=layer_index,
+                extra_metadata={
+                    "layer_index": layer_index,
+                    "layer_local_order": insert_at,
+                    "propagation_policy": "repeat_mutated_single_layer",
+                    "layer_generation_policy": "mutate_then_repeat_layer",
+                    "mutation_applied_to_single_layer_block": True,
+                },
+            ),
+        )
+        for local_order, operation in enumerate(base_layer[insert_at:], start=insert_at + 1):
+            repeated.append(
+                _clone_operation_for_repeat(
+                    operation,
+                    layer_index=layer_index,
+                    layer_local_order=local_order,
+                    source_parameters=source_parameters,
+                    circuit_parameters=new_parameters,
+                ),
+            )
+    return {
+        "n_qubits": int(circuit["n_qubits"]),
+        "wire_order": list(circuit.get("wire_order") or range(int(circuit["n_qubits"]))),
+        "parameters": new_parameters,
+        "operations": _renumber_operations(repeated),
+    }
+
+
+def _insert_operation(
+    *,
+    gate: str,
+    qubits: tuple[int, ...],
+    parameters: Mapping[str, Any],
+    operation_parameters: Sequence[Mapping[str, Any]],
+    request_metadata: Mapping[str, Any],
+    request: Any,
+    layer: int,
+    extra_metadata: Mapping[str, Any] | None = None,
+) -> dict[str, Any]:
+    metadata = _operation_metadata(parameters, request_metadata=request_metadata, request=request, qubits=qubits)
+    metadata.update(dict(extra_metadata or {}))
+    return {
+        "operation_id": "op-000",
+        "gate": {
+            "name": gate,
+            "namespace": str(parameters.get("gate_namespace") or "verfeinert.default_gates"),
+        },
+        "qubits": list(qubits),
+        "parameters": [dict(parameter) for parameter in operation_parameters],
+        "layer": layer,
+        "order": 0,
+        "role": _operation_role(gate, qubits),
+        "metadata": metadata,
     }
 
 
@@ -250,13 +398,81 @@ def _next_parameter_id(used_ids: set[str]) -> str:
         index += 1
 
 
-def _insertion_index(operations: Sequence[Mapping[str, Any]], insertion_strategy: str) -> int:
+def _insertion_index(
+    operations: Sequence[Mapping[str, Any]],
+    insertion_strategy: str,
+    *,
+    explicit_index: object = None,
+) -> int:
+    if explicit_index is not None:
+        index = int(explicit_index)
+        if index < 0 or index > len(operations):
+            raise GeneratorValidationError("insertion_index must be between 0 and the operation count.")
+        return index
     if insertion_strategy == "append":
         return len(operations)
     for index, operation in enumerate(operations):
         if len(operation.get("qubits", operation.get("wires", ()))) > 1:
             return index
     return len(operations)
+
+
+def _layer_blocks(operations: Sequence[Mapping[str, Any]]) -> dict[int, list[dict[str, Any]]]:
+    blocks: dict[int, list[dict[str, Any]]] = {}
+    for operation in operations:
+        metadata = dict(operation.get("metadata", {}))
+        raw_layer = metadata.get("layer_index", operation.get("layer"))
+        if raw_layer is None:
+            return {}
+        try:
+            layer = int(raw_layer)
+        except (TypeError, ValueError):
+            return {}
+        blocks.setdefault(layer, []).append(copy.deepcopy(dict(operation)))
+    for layer, items in blocks.items():
+        blocks[layer] = sorted(items, key=lambda item: int(item.get("order", 0)))
+    return blocks
+
+
+def _clone_operation_for_repeat(
+    operation: Mapping[str, Any],
+    *,
+    layer_index: int,
+    layer_local_order: int,
+    source_parameters: Mapping[str, Mapping[str, Any]],
+    circuit_parameters: list[dict[str, Any]],
+) -> dict[str, Any]:
+    item = copy.deepcopy(dict(operation))
+    refs: list[dict[str, Any]] = []
+    used_ids = {str(parameter["parameter_id"]) for parameter in circuit_parameters}
+    for parameter in item.get("parameters", []):
+        parameter_record = dict(parameter)
+        if parameter_record.get("kind") != "reference":
+            refs.append(parameter_record)
+            continue
+        old_id = str(parameter_record["parameter_id"])
+        new_id = _next_parameter_id(used_ids)
+        used_ids.add(new_id)
+        old = dict(source_parameters.get(old_id, {}))
+        kind = str(old.get("kind", "trainable"))
+        new_parameter = {
+            "parameter_id": new_id,
+            "kind": kind,
+            "symbol": new_id.replace("-", "_") if kind == "trainable" else str(old.get("symbol") or new_id),
+        }
+        if "value" in old:
+            new_parameter["value"] = old["value"]
+        if "metadata" in old:
+            new_parameter["metadata"] = old["metadata"]
+        circuit_parameters.append(to_json_safe(new_parameter))
+        refs.append({"kind": "reference", "parameter_id": new_id})
+    item["parameters"] = refs
+    item["layer"] = layer_index
+    metadata = dict(item.get("metadata", {}))
+    metadata["layer_index"] = layer_index
+    metadata["layer_local_order"] = layer_local_order
+    item["metadata"] = metadata
+    return item
 
 
 def _renumber_operations(operations: Sequence[Mapping[str, Any]]) -> list[dict[str, Any]]:
@@ -324,6 +540,10 @@ def _operation_metadata(
     payload.setdefault("edge", list(qubits))
     payload.setdefault("mutation_code", parameters.get("mutation_code") or _request_attr(request, "recipe_id"))
     payload.setdefault("source", parameters.get("source_label") or "verfeinert.generic_insert_gate")
+    if parameters.get("insertion_index") is not None:
+        payload.setdefault("insertion_index", int(parameters["insertion_index"]))
+    if parameters.get("propagation_policy") is not None:
+        payload.setdefault("propagation_policy", str(parameters["propagation_policy"]))
     payload.setdefault(
         "variant_index",
         int(request_metadata.get("parent_index", int(_request_attr(request, "variant_index")))) + 1,

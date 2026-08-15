@@ -51,7 +51,8 @@ EvolutionRun.
 
 - all Sanz19 templates;
 - layers `1`, `2`, and `3`;
-- all valid CX edges;
+- historical topology-aware CX edges;
+- L1 mutation followed by repeated mutated single-layer structure;
 - structural cost plus documented expressibility/trainability and Pareto settings.
 
 Expensive metrics are not run by default. They remain explicit opt-in once a canonical metric runtime configuration is selected.

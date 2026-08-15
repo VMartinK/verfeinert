@@ -12,7 +12,65 @@
     "mode": "strict_pareto_feedback_true_multithreshold",
     "thresholds": [1.0, 0.2, 0.1],
     "threshold_trajectory_mode": "independent",
+    "objectives": ["expressibility", "trainability"],
+    "cost_field": "structural_cost",
+    "cost_role": "threshold_filter_only",
     "fallback_policy": "none"
+  },
+  "full_profile_anchors": {
+    "generation_zero_candidates_per_trajectory": 30,
+    "single_threshold_trajectory_count": 3,
+    "scheduled_mutation_gates": ["crx", "crz", "cz", "crx", "crz"],
+    "fixed_edge": [0, 1],
+    "a14_generation_one_collapsing_insertion_positions": [7, 8],
+    "generation_one_raw_candidate_requests": 480,
+    "generation_one_unique_candidates_after_deduplication": 477,
+    "evolutionary_candidate_count_across_thresholds": 4523,
+    "total_candidate_accounting_including_generation_zero": 4613
+  },
+  "historical_trajectory_counts": {
+    "thresholds": {
+      "1.0": {
+        "generation_one_parent_count": 30,
+        "initial_frontier_count": 17,
+        "generations": [
+          {"generation": 1, "candidate_count": 477, "survivor_count": 24},
+          {"generation": 2, "candidate_count": 364, "survivor_count": 17},
+          {"generation": 3, "candidate_count": 271, "survivor_count": 18},
+          {"generation": 4, "candidate_count": 277, "survivor_count": 10},
+          {"generation": 5, "candidate_count": 160, "survivor_count": 4}
+        ]
+      },
+      "0.2": {
+        "generation_one_parent_count": 30,
+        "initial_frontier_count": 8,
+        "generations": [
+          {"generation": 1, "candidate_count": 477, "survivor_count": 15},
+          {"generation": 2, "candidate_count": 250, "survivor_count": 19},
+          {"generation": 3, "candidate_count": 329, "survivor_count": 23},
+          {"generation": 4, "candidate_count": 392, "survivor_count": 25},
+          {"generation": 5, "candidate_count": 456, "survivor_count": 4}
+        ]
+      },
+      "0.1": {
+        "generation_one_parent_count": 30,
+        "initial_frontier_count": 4,
+        "generations": [
+          {"generation": 1, "candidate_count": 477, "survivor_count": 5},
+          {"generation": 2, "candidate_count": 70, "survivor_count": 8},
+          {"generation": 3, "candidate_count": 120, "survivor_count": 12},
+          {"generation": 4, "candidate_count": 179, "survivor_count": 14},
+          {"generation": 5, "candidate_count": 224, "survivor_count": 5}
+        ]
+      }
+    },
+    "accounting": {
+      "evolutionary_candidate_count_g1_to_g5": 4523,
+      "generation_zero_candidate_count_per_trajectory": 30,
+      "single_threshold_trajectory_count": 3,
+      "generation_zero_candidate_count_across_trajectories": 90,
+      "total_candidate_accounting": 4613
+    }
   },
   "analysis": {
     "expressibility_n_pairs": 5000,
