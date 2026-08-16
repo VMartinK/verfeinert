@@ -2,12 +2,27 @@
 
 from __future__ import annotations
 
+import importlib.util
+
 import pytest
 
-matplotlib = pytest.importorskip("matplotlib")
-matplotlib.use("Agg")
-from matplotlib import pyplot
-from matplotlib.colors import to_hex
+
+_HAS_MATPLOTLIB = importlib.util.find_spec("matplotlib") is not None
+
+pytestmark = pytest.mark.skipif(
+    not _HAS_MATPLOTLIB,
+    reason="matplotlib is not installed",
+)
+
+if _HAS_MATPLOTLIB:
+    import matplotlib
+
+    matplotlib.use("Agg")
+    from matplotlib import pyplot
+    from matplotlib.colors import to_hex
+else:
+    pyplot = None
+    to_hex = None
 
 from verfeinert.ansatz_analyzer.visualization import (
     BarSeries,

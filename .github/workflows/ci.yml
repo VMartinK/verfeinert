@@ -103,5 +103,13 @@ jobs:
       - name: Run visualization tests
         env:
           PYTHONDONTWRITEBYTECODE: "1"
-          MPLCONFIGDIR: /tmp/matplotlib-verfeinertv2
-        run: python -m unittest tests/test_ansatz_analyzer_phase_5_7_visualization.py -q
+          MPLCONFIGDIR: /tmp/matplotlib-verfeinert
+          MPLBACKEND: Agg
+        run: |
+          python -m pytest \
+            tests/test_ansatz_analyzer_phase_5_7_visualization.py \
+            tests/test_visualization_individual_golden.py \
+            tests/test_visualization_evolution_golden.py \
+            tests/test_visualization_global_golden.py \
+            tests/test_visualization_scientific_boundary.py \
+            -q
