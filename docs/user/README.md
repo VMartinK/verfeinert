@@ -9,7 +9,7 @@ These guides describe reproducible researcher workflows built on public
 From a GitHub release wheel once downloaded:
 
 ```bash
-python -m pip install ./verfeinert-0.2.1-py3-none-any.whl
+python -m pip install ./verfeinert-0.3.0-py3-none-any.whl
 ```
 
 From a repository checkout:

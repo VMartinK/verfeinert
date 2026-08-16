@@ -1,24 +1,113 @@
 """Optional visualization layer for analyzer-derived outputs."""
 
 from .comparison import comparison_plot_data, plot_comparison_objective_space
-from .export import FigureExportConfig, VisualizationDependencyError, save_figure
+from .evolution import (
+    LineageBarPanelSpec,
+    MetricPanelSpec,
+    evolution_plot_data,
+    plot_evolution_by_layer,
+    plot_evolution_ranking_table,
+    plot_final_frontier_vs_eligible,
+    plot_frontier_evolution,
+    plot_frontier_generation_comparison,
+    plot_generation_candidate_counts,
+    plot_generation_metric_grid,
+    plot_lineage_evolution,
+)
+from .export import FigureExportConfig, VisualizationDependencyError, save_figure, save_publication_figure
+from .global_analysis import (
+    plot_campaign_frontiers,
+    plot_global_aggregate_metric,
+    plot_global_contributions,
+    plot_global_cost_eligibility,
+    plot_global_lineages,
+    plot_global_pareto,
+    plot_global_pareto_score_map,
+    plot_global_ranking_table,
+)
+from .individual import (
+    plot_individual_by_layer,
+    plot_individual_by_lineage,
+    plot_individual_classification,
+    plot_individual_frontier_comparison,
+    plot_individual_joint_frontiers,
+    plot_individual_pareto_by_lineage,
+)
 from .lineage import lineage_plot_data, plot_lineage_summary
+from .models import BarSeries, MetricSeries, ObjectivePoint, ObjectiveSeries, TableSpec, VisualizationModelError
 from .pareto import pareto_plot_data, plot_pareto_front
+from .primitives import (
+    apply_publication_legend,
+    grouped_categorical_bars,
+    ordered_lineage_color_map,
+    plot_frontier_line_series,
+    plot_publication_table,
+    publication_table_figure_size,
+    render_publication_table,
+    resolve_lineage_color,
+    resolve_role_style,
+    scatter_objective_series,
+    setup_publication_objective_axis,
+)
 from .ranking import plot_ranking_scores, ranking_plot_data
-from .styles import DEFAULT_STYLE, VisualizationStyle
+from .styles import DEFAULT_STYLE, PublicationLayouts, SemanticRoleStyle, VisualizationStyle
 
 __all__ = [
+    "BarSeries",
     "DEFAULT_STYLE",
     "FigureExportConfig",
+    "LineageBarPanelSpec",
+    "MetricSeries",
+    "MetricPanelSpec",
+    "ObjectivePoint",
+    "ObjectiveSeries",
+    "PublicationLayouts",
+    "SemanticRoleStyle",
+    "TableSpec",
     "VisualizationDependencyError",
+    "VisualizationModelError",
     "VisualizationStyle",
+    "apply_publication_legend",
     "comparison_plot_data",
+    "evolution_plot_data",
+    "grouped_categorical_bars",
     "lineage_plot_data",
+    "ordered_lineage_color_map",
     "pareto_plot_data",
+    "plot_campaign_frontiers",
+    "plot_frontier_line_series",
     "plot_comparison_objective_space",
+    "plot_evolution_by_layer",
+    "plot_evolution_ranking_table",
+    "plot_final_frontier_vs_eligible",
+    "plot_frontier_evolution",
+    "plot_frontier_generation_comparison",
+    "plot_generation_candidate_counts",
+    "plot_generation_metric_grid",
+    "plot_global_aggregate_metric",
+    "plot_global_contributions",
+    "plot_global_cost_eligibility",
+    "plot_global_lineages",
+    "plot_global_pareto",
+    "plot_global_pareto_score_map",
+    "plot_global_ranking_table",
+    "plot_individual_by_layer",
+    "plot_individual_by_lineage",
+    "plot_individual_classification",
+    "plot_individual_frontier_comparison",
+    "plot_individual_joint_frontiers",
+    "plot_individual_pareto_by_lineage",
     "plot_lineage_summary",
     "plot_pareto_front",
+    "plot_publication_table",
     "plot_ranking_scores",
+    "publication_table_figure_size",
     "ranking_plot_data",
+    "render_publication_table",
+    "resolve_lineage_color",
+    "resolve_role_style",
     "save_figure",
+    "save_publication_figure",
+    "scatter_objective_series",
+    "setup_publication_objective_axis",
 ]

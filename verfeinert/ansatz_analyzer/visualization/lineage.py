@@ -8,6 +8,7 @@ from typing import Any
 
 from ..collections import AnalysisResultCollection
 from .export import require_pyplot
+from .primitives import setup_publication_objective_axis
 from .styles import DEFAULT_STYLE, VisualizationStyle
 
 
@@ -52,8 +53,7 @@ def plot_lineage_summary(
         [counts[generation] for generation in generations],
         color=style.palette.get("lineage"),
     )
-    axis.set_xlabel("Generation")
-    axis.set_ylabel("Candidates")
+    setup_publication_objective_axis(axis, xlabel="Generation", ylabel="Candidates", style=style)
     return figure
 
 

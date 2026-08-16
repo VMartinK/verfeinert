@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "verfeinert"
-version = "0.2.1"
+version = "0.3.0"
 description = "Open-source scientific framework for quantum ansatz generation, analysis, and evolution."
 readme = "README.md"
 requires-python = ">=3.11"

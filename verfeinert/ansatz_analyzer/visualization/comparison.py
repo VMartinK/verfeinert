@@ -8,6 +8,7 @@ from typing import Any
 from ..comparison import ComparisonResult
 from .export import require_pyplot
 from .pareto import _axis_label
+from .primitives import apply_publication_legend, setup_publication_objective_axis
 from .styles import DEFAULT_STYLE, VisualizationStyle
 
 
@@ -108,13 +109,13 @@ def plot_comparison_objective_space(
             linewidths=1.4,
             label="global Pareto",
         )
-    axis.set_xlabel(_axis_label(x_metric))
-    axis.set_ylabel(_axis_label(y_metric))
-    axis.legend(
-        frameon=style.legend_frame,
-        fontsize=style.legend_size,
-        loc=style.legend_location,
+    setup_publication_objective_axis(
+        axis,
+        xlabel=_axis_label(x_metric),
+        ylabel=_axis_label(y_metric),
+        style=style,
     )
+    apply_publication_legend(axis, style=style)
     figure._verfeinert_colorbar = colorbar  # type: ignore[attr-defined]
     return figure
 

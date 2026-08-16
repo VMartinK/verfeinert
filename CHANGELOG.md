@@ -2,6 +2,32 @@
 
 All notable changes to Verfeinert will be documented in this file.
 
+## 0.3.0 - 2026-08-16
+
+### Visualization
+
+- Added immutable semantic visualization models for prepared objective points,
+  metric series, bar series, and publication tables.
+- Promoted `DEFAULT_STYLE` to publication-grade defaults with
+  `PublicationLayouts`, ordered palettes, semantic role styles, and canonical
+  PNG/PDF/SVG export formats.
+- Added Individual, Evolution, and Global analysis publication renderers over
+  already-prepared semantic data.
+- Added `save_publication_figure` for guarded multi-format publication export
+  with deterministic PNG/PDF/SVG output.
+
+### Validation
+
+- Added structural golden tests for the frozen publication figure families.
+- Added scientific-boundary tests ensuring visualization renderers do not
+  import metric implementations or call Pareto, dominance, ranking, selection,
+  evolution, or top-lineage selection internals.
+
+Visualization consumes prepared scientific results. It does not recompute
+Trainability, Expressibility, structural cost, Pareto membership, dominance,
+combined scientific score, ranking, selection, evolution, or top-lineage
+selection.
+
 ## 0.2.0 - 2026-08-13
 
 ### Scientific execution

@@ -7,6 +7,7 @@ from typing import Any
 from ..collections import AnalysisResultCollection, cost_value, metric_value
 from ..pareto import ParetoResult
 from .export import require_pyplot
+from .primitives import apply_publication_legend, setup_publication_objective_axis
 from .styles import DEFAULT_STYLE, VisualizationStyle
 
 
@@ -88,13 +89,13 @@ def plot_pareto_front(
             marker=style.markers.get(label, "o"),
             color=style.palette.get(label),
         )
-    axis.set_xlabel(_axis_label(x_metric))
-    axis.set_ylabel(_axis_label(y_metric))
-    axis.legend(
-        frameon=style.legend_frame,
-        fontsize=style.legend_size,
-        loc=style.legend_location,
+    setup_publication_objective_axis(
+        axis,
+        xlabel=_axis_label(x_metric),
+        ylabel=_axis_label(y_metric),
+        style=style,
     )
+    apply_publication_legend(axis, style=style)
     return figure
 
 

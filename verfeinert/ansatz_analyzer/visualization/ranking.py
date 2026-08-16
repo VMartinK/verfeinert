@@ -6,6 +6,7 @@ from typing import Any
 
 from ..ranking import RankingResult
 from .export import require_pyplot
+from .primitives import setup_publication_objective_axis
 from .styles import DEFAULT_STYLE, VisualizationStyle
 
 
@@ -40,8 +41,7 @@ def plot_ranking_scores(
         marker=style.markers.get("ranking", "o"),
         color=style.palette.get("ranking"),
     )
-    axis.set_xlabel("Rank")
-    axis.set_ylabel("Score")
+    setup_publication_objective_axis(axis, xlabel="Rank", ylabel="Score", style=style)
     return figure
 
 
