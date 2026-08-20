@@ -18,6 +18,7 @@ from verfeinert.ansatz_analyzer import (
     AnalyzerExecutionPermissions,
     CircuitMaterializationConfig,
     CircuitMaterializationError,
+    OperationView,
     StructuralCostConfig,
     materialize_candidate,
     validate_analysis_result_document,
@@ -91,10 +92,18 @@ def _op(
     gate: str,
     qubits: list[int],
     parameters: list[dict] | None = None,
+    *,
+    namespace: str | None = None,
+    version: str | None = None,
 ) -> dict:
+    gate_record = {"name": gate}
+    if namespace is not None:
+        gate_record["namespace"] = namespace
+    if version is not None:
+        gate_record["version"] = version
     return {
         "operation_id": operation_id,
-        "gate": {"name": gate},
+        "gate": gate_record,
         "qubits": qubits,
         "parameters": parameters or [],
         "order": int(operation_id.rsplit("-", 1)[-1]),
@@ -153,6 +162,72 @@ def _explicit_state_callable(params):
 
 
 class AnalyzerPhase101MaterializationTests(unittest.TestCase):
+    def test_operation_view_preserves_v030_positional_constructor_contract(self) -> None:
+        parameters = ({"kind": "reference", "parameter_id": "theta-0"},)
+        metadata = {"source": "legacy-positional"}
+
+        legacy = OperationView(
+            "op-legacy",
+            "rx",
+            (1,),
+            parameters,
+            2,
+            3,
+            "candidate",
+            metadata,
+        )
+
+        self.assertEqual(legacy.operation_id, "op-legacy")
+        self.assertEqual(legacy.gate_name, "rx")
+        self.assertEqual(legacy.qubits, (1,))
+        self.assertEqual(legacy.parameters, parameters)
+        self.assertEqual(legacy.layer, 2)
+        self.assertEqual(legacy.order, 3)
+        self.assertEqual(legacy.role, "candidate")
+        self.assertEqual(legacy.metadata, metadata)
+        self.assertIsNone(legacy.gate_namespace)
+        self.assertIsNone(legacy.gate_version)
+
+        keyword_identity = OperationView(
+            "op-keyword",
+            "rz",
+            (0,),
+            parameters,
+            1,
+            2,
+            "reference",
+            {"source": "keyword"},
+            gate_namespace="verfeinert.default_gates",
+            gate_version="test-version",
+        )
+        self.assertEqual(keyword_identity.gate_namespace, "verfeinert.default_gates")
+        self.assertEqual(keyword_identity.gate_version, "test-version")
+
+        from_document = OperationView.from_document(
+            {
+                "operation_id": "op-document",
+                "gate": {
+                    "name": "ry",
+                    "namespace": "verfeinert.default_gates",
+                    "version": "document-version",
+                },
+                "qubits": [0],
+                "parameters": list(parameters),
+                "layer": 4,
+                "order": 5,
+                "role": "document",
+                "metadata": {"source": "document"},
+            },
+        )
+        self.assertEqual(from_document.gate_name, "ry")
+        self.assertEqual(from_document.gate_namespace, "verfeinert.default_gates")
+        self.assertEqual(from_document.gate_version, "document-version")
+        self.assertEqual(from_document.parameters, parameters)
+        self.assertEqual(from_document.layer, 4)
+        self.assertEqual(from_document.order, 5)
+        self.assertEqual(from_document.role, "document")
+        self.assertEqual(from_document.metadata, {"source": "document"})
+
     def test_static_candidate_materializes_and_preserves_operation_order(self) -> None:
         candidate = _canonical_candidate(
             candidate_id="phase101-static",
@@ -172,6 +247,17 @@ class AnalyzerPhase101MaterializationTests(unittest.TestCase):
         self.assertTrue(np.allclose(state, expected))
         self.assertEqual(materialized.trainable_parameter_ids, ())
         self.assertEqual(materialized.gate_names, ("x", "h"))
+
+    def test_built_in_candidate_fixture_materializes_with_default_namespace(self) -> None:
+        materialized = materialize_candidate(
+            read_json(CANDIDATE_EXAMPLE),
+            config=CircuitMaterializationConfig(enabled=True),
+        )
+        state = np.asarray(materialized.state_callable([0.0, 0.0]), dtype=complex)
+
+        self.assertEqual(materialized.gate_names, ("rx", "rz", "cz"))
+        self.assertEqual(materialized.trainable_parameter_ids, ("theta-0", "theta-1"))
+        self.assertAlmostEqual(float(np.sum(np.abs(state) ** 2)), 1.0)
 
     def test_parameter_order_literals_and_repeated_references_are_canonical(self) -> None:
         candidate = _canonical_candidate(
@@ -274,6 +360,70 @@ class AnalyzerPhase101MaterializationTests(unittest.TestCase):
         )
 
         with self.assertRaisesRegex(CircuitMaterializationError, "unsupported candidate operation 'mystery'"):
+            materialize_candidate(candidate, config=CircuitMaterializationConfig(enabled=True))
+
+    def test_derived_parameter_is_representable_but_not_materializable(self) -> None:
+        candidate = _canonical_candidate(
+            candidate_id="phase101-derived",
+            parameters=[
+                {"parameter_id": "theta-a", "kind": "trainable", "symbol": "theta_a"},
+                {
+                    "parameter_id": "theta-derived",
+                    "kind": "derived",
+                    "symbol": "theta_derived",
+                    "metadata": {"expression": "2 * theta_a"},
+                },
+            ],
+            operations=[
+                _op("op-000", "rx", [0], [_ref("theta-derived")]),
+            ],
+        )
+
+        with self.assertRaisesRegex(CircuitMaterializationError, "derived parameter 'theta-derived'.*not materializable"):
+            materialize_candidate(candidate, config=CircuitMaterializationConfig(enabled=True))
+
+    def test_unsupported_gate_namespace_is_not_matched_by_name(self) -> None:
+        candidate = _canonical_candidate(
+            candidate_id="phase101-namespace",
+            operations=[
+                _op(
+                    "op-000",
+                    "rx",
+                    [0],
+                    [_literal(0.0)],
+                    namespace="external.default_gates",
+                ),
+            ],
+        )
+
+        with self.assertRaisesRegex(CircuitMaterializationError, "unsupported semantic gate identity"):
+            materialize_candidate(candidate, config=CircuitMaterializationConfig(enabled=True))
+
+    def test_unsupported_gate_version_is_not_matched_by_name(self) -> None:
+        candidate = _canonical_candidate(
+            candidate_id="phase101-version",
+            operations=[
+                _op(
+                    "op-000",
+                    "rx",
+                    [0],
+                    [_literal(0.0)],
+                    namespace="verfeinert.default_gates",
+                    version="2026-08",
+                ),
+            ],
+        )
+
+        with self.assertRaisesRegex(CircuitMaterializationError, "unsupported semantic gate identity"):
+            materialize_candidate(candidate, config=CircuitMaterializationConfig(enabled=True))
+
+    def test_non_numeric_literal_parameter_fails_clearly(self) -> None:
+        candidate = _canonical_candidate(
+            candidate_id="phase101-literal",
+            operations=[_op("op-000", "rx", [0], [{"kind": "literal", "value": "pi"}])],
+        )
+
+        with self.assertRaisesRegex(CircuitMaterializationError, "literal value must be numeric"):
             materialize_candidate(candidate, config=CircuitMaterializationConfig(enabled=True))
 
     def test_pipeline_computes_real_metrics_from_candidate_json(self) -> None:

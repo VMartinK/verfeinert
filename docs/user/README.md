@@ -9,7 +9,7 @@ These guides describe reproducible researcher workflows built on public
 From a GitHub release wheel once downloaded:
 
 ```bash
-python -m pip install ./verfeinert-0.3.0-py3-none-any.whl
+python -m pip install ./verfeinert-0.3.1-py3-none-any.whl
 ```
 
 From a repository checkout:
@@ -33,6 +33,11 @@ python -m pip install ".[visualization]"
 NumPy, PennyLane, PyYAML, and JSON Schema support are standard runtime
 dependencies because Verfeinert includes analyzer-owned scientific execution.
 Matplotlib is required only for visualization calls.
+
+Scientific analyzer and workflow runs in v0.3.x support sequential execution.
+Core multiprocessing executor primitives exist for future integration, but
+`execution.mode: multiprocessing` is rejected for candidate science in this
+release line.
 
 ## Minimal Individual Campaign
 
@@ -167,7 +172,8 @@ scientific data.
 
 ## Visualization
 
-Visualization uses the neutral public `DEFAULT_STYLE` and remains optional via
+Visualization uses the campaign-neutral publication-grade public `DEFAULT_STYLE`
+and remains optional via
 the `visualization` extra. Plot data adapters can be used independently from
 figure export. Plotting calls fail with a clear optional-dependency error when
 Matplotlib is unavailable.

@@ -163,3 +163,11 @@ available, config snapshot, requested operations, executed operations, artifact
 reuse, campaign type, resume/branch relationship, and truth flags such as
 `notebooks_executed = false` and
 `campaign_specific_logic_in_framework = false`.
+
+Flags ending in `_by_runner` describe work directly executed or exported by
+`WorkflowRunner`, not work delegated to analyzer/evolver APIs. For example,
+`qnodes_executed_by_runner` remains false even when analyzer-owned metric
+execution records QNode work in AnalysisResult provenance. When workflow
+visualization is requested and figures are written, `visualization_executed`,
+`figure_exported`, and the legacy `plots_generated_by_runner` flag are all
+true. Workflows without visualization leave those figure flags false.

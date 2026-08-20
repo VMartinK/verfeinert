@@ -24,7 +24,7 @@ visualization/
 
 The style module centralizes fonts, figure dimensions, palettes, markers,
 legend behavior, and export defaults. The current public style constant is
-`DEFAULT_STYLE`, a neutral publication-oriented default. Thesis-specific style
+`DEFAULT_STYLE`, a campaign-neutral publication-grade default. Thesis-specific style
 names and modes are not public API.
 
 ## Dependency Policy

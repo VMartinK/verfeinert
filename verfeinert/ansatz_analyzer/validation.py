@@ -6,10 +6,10 @@ from functools import lru_cache
 import json
 from typing import Any, Mapping
 
-from jsonschema import Draft202012Validator, RefResolver, ValidationError
+from jsonschema import Draft202012Validator, ValidationError
 
 from verfeinert.core.schema_resources import load_schema as load_packaged_schema
-from verfeinert.core.schema_resources import schema_store as packaged_schema_store
+from verfeinert.core.schema_resources import schema_registry as packaged_schema_registry
 
 
 class AnalyzerValidationError(ValueError):
@@ -73,15 +73,14 @@ def _load_schema(schema_name: str) -> dict[str, Any]:
 
 
 @lru_cache(maxsize=1)
-def _schema_store() -> dict[str, dict[str, Any]]:
-    return packaged_schema_store(SCHEMA_NAMES)
+def _schema_registry():
+    return packaged_schema_registry(SCHEMA_NAMES)
 
 
 @lru_cache(maxsize=None)
 def _validator(schema_name: str) -> Draft202012Validator:
     schema = _load_schema(schema_name)
-    resolver = RefResolver.from_schema(schema, store=_schema_store())
-    return Draft202012Validator(schema, resolver=resolver)
+    return Draft202012Validator(schema, registry=_schema_registry())
 
 
 __all__ = [

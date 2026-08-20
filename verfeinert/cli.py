@@ -14,6 +14,7 @@ import yaml
 from verfeinert.core import CoreValidationError
 from verfeinert.core import read_yaml
 from verfeinert.workflow import WorkflowConfig, run_workflow
+from verfeinert.ansatz_analyzer.visualization import VisualizationDependencyError
 
 
 class CliError(RuntimeError):
@@ -33,6 +34,13 @@ def main(argv: Sequence[str] | None = None) -> int:
     if args.command == "run":
         try:
             result = _run_config(args.config, output_root=args.output_root)
+        except VisualizationDependencyError as exc:
+            print(
+                "verfeinert: error: visualization extra is required for "
+                f"requested visualization output: {exc}",
+                file=sys.stderr,
+            )
+            return 1
         except (CliError, CoreValidationError, ValueError) as exc:
             print(f"verfeinert: error: {exc}", file=sys.stderr)
             return 1

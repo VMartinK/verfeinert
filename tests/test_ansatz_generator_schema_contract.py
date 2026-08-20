@@ -9,7 +9,7 @@ import tempfile
 from typing import Any, Mapping
 import unittest
 
-from jsonschema import Draft202012Validator, RefResolver, ValidationError
+from jsonschema import Draft202012Validator, ValidationError
 
 from verfeinert.ansatz_generator import (
     CandidateCompilationConfig,
@@ -18,6 +18,7 @@ from verfeinert.ansatz_generator import (
     move_first_gate_to_end_on_wire,
 )
 from verfeinert.core.hashing import stable_hash
+from verfeinert.core.schema_resources import schema_registry
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -56,15 +57,9 @@ def _read_json(path: Path) -> dict[str, Any]:
     return json.loads(path.read_text(encoding="utf-8"))
 
 
-def _schema_store() -> dict[str, dict[str, Any]]:
-    schemas = {name: _read_json(path) for name, path in SCHEMA_FILES.items()}
-    return {schema["$id"]: schema for schema in schemas.values()}
-
-
 def _validator(schema_name: str) -> Draft202012Validator:
     schema = _read_json(SCHEMA_FILES[schema_name])
-    resolver = RefResolver.from_schema(schema, store=_schema_store())
-    return Draft202012Validator(schema, resolver=resolver)
+    return Draft202012Validator(schema, registry=schema_registry(SCHEMA_FILES))
 
 
 def _canonical_candidate(

@@ -11,12 +11,12 @@ import math
 from pathlib import Path
 from typing import Any
 
-from jsonschema import Draft202012Validator, RefResolver, ValidationError
+from jsonschema import Draft202012Validator, ValidationError
 
 from verfeinert.core.io import read_json
 from verfeinert.core.io.serialization import to_json_safe
 from verfeinert.core.schema_resources import load_schema as load_packaged_schema
-from verfeinert.core.schema_resources import schema_store as packaged_schema_store
+from verfeinert.core.schema_resources import schema_registry as packaged_schema_registry
 
 from .collections import AnalysisResultCollection, cost_value, metric_record, metric_value
 from .pareto import ObjectiveSpec, ParetoConfig, compute_pareto_classifications
@@ -589,8 +589,10 @@ def read_comparison_result_json(path: str | Path) -> ComparisonResult:
 @lru_cache(maxsize=None)
 def _comparison_result_validator() -> Draft202012Validator:
     schema = load_packaged_schema("comparison_result")
-    resolver = RefResolver.from_schema(schema, store=packaged_schema_store(("comparison_result",)))
-    return Draft202012Validator(schema, resolver=resolver)
+    return Draft202012Validator(
+        schema,
+        registry=packaged_schema_registry(("comparison_result",)),
+    )
 
 
 def _ensure_unique_candidate_ids(sources: Sequence[ComparisonSource]) -> None:

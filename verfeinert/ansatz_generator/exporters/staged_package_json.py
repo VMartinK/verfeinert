@@ -8,10 +8,11 @@ from pathlib import Path
 import json
 from typing import Any
 
-from jsonschema import Draft202012Validator, FormatChecker, RefResolver
+from jsonschema import Draft202012Validator, FormatChecker
 
 from verfeinert import __version__
 from verfeinert.core import current_git_commit, ensure_output_root, hash_file, to_json_safe, write_json
+from verfeinert.core.schema_resources import schema_registry as packaged_schema_registry
 from verfeinert.core.validation import CoreValidationError, require_identifier, require_non_empty_text
 
 from ..validation import GeneratorValidationError
@@ -340,16 +341,12 @@ def _created_at(config: StagedPackageJsonExportConfig) -> str:
 
 def _staged_package_validator() -> Draft202012Validator:
     schema = _read_schema("staged_package")
-    candidate_schema = _read_schema("candidate")
     Draft202012Validator.check_schema(schema)
-    resolver = RefResolver.from_schema(
+    return Draft202012Validator(
         schema,
-        store={
-            schema["$id"]: schema,
-            candidate_schema["$id"]: candidate_schema,
-        },
+        registry=packaged_schema_registry(("staged_package", "candidate")),
+        format_checker=FormatChecker(),
     )
-    return Draft202012Validator(schema, resolver=resolver, format_checker=FormatChecker())
 
 
 def _hash_mapping(value: Mapping[str, str]) -> dict[str, str]:

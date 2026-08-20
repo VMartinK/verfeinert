@@ -18,7 +18,7 @@ from .validation import validate_analysis_result_document
 
 
 class AnalysisPipeline:
-    """Structural-cost-only pipeline over canonical Candidate JSON."""
+    """Analyzer pipeline over canonical Candidate JSON with optional scientific metrics."""
 
     def __init__(self, config: AnalyzerConfig):
         if not isinstance(config, AnalyzerConfig):

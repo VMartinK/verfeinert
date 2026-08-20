@@ -24,7 +24,7 @@ The visualization layer supports:
 - explicit style objects passed to plotting functions;
 - centralized export parameters for reproducible figure generation.
 
-The public default is neutral `DEFAULT_STYLE`. There is no special thesis mode
+The public default is campaign-neutral publication-grade `DEFAULT_STYLE`. There is no special thesis mode
 and no automatic campaign label, threshold color, or display-name rewriting.
 The default score colormap is `plasma` for scalar score encodings where a
 caller requests score-colored plots.

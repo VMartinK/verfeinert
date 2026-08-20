@@ -133,7 +133,8 @@ campaign names as compatibility evidence.
 
 Visualization lives under `verfeinert.ansatz_analyzer.visualization`.
 Matplotlib is optional and required only when plot functions or figure export
-are called. The public default style is neutral `DEFAULT_STYLE`; there is no
+are called. The public default style is campaign-neutral publication-grade
+`DEFAULT_STYLE`; there is no
 thesis mode or automatic research-specific renaming.
 
 Raw visualization reference notebooks and private/global-export data are

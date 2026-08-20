@@ -25,6 +25,12 @@ ExecutionScope = Literal["candidate"]
 
 SUPPORTED_EXECUTION_MODES: tuple[ExecutionMode, ...] = ("sequential", "multiprocessing")
 SUPPORTED_EXECUTION_SCOPES: tuple[ExecutionScope, ...] = ("candidate",)
+SCIENTIFIC_MULTIPROCESSING_DEFERRED_MESSAGE = (
+    "multiprocessing executor primitives are available in verfeinert.core, "
+    "but multiprocessing integration for scientific candidate pipelines is "
+    "deferred to v0.4.0; use execution.mode='sequential' for v0.3.x scientific "
+    "analysis, evolution, and workflow runs."
+)
 
 
 @dataclass(frozen=True)
@@ -184,6 +190,7 @@ __all__ = [
     "ExecutionScope",
     "PathConfig",
     "RunConfig",
+    "SCIENTIFIC_MULTIPROCESSING_DEFERRED_MESSAGE",
     "SUPPORTED_EXECUTION_MODES",
     "SUPPORTED_EXECUTION_SCOPES",
 ]

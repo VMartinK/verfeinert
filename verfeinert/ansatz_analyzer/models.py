@@ -31,6 +31,8 @@ class OperationView:
     order: int | None = None
     role: str | None = None
     metadata: dict[str, Any] = field(default_factory=dict)
+    gate_namespace: str | None = field(default=None, kw_only=True)
+    gate_version: str | None = field(default=None, kw_only=True)
 
     def __post_init__(self) -> None:
         object.__setattr__(
@@ -43,6 +45,18 @@ class OperationView:
             "gate_name",
             _require_non_empty_text(self.gate_name, "gate_name").lower(),
         )
+        if self.gate_namespace is not None:
+            object.__setattr__(
+                self,
+                "gate_namespace",
+                _require_non_empty_text(self.gate_namespace, "gate_namespace"),
+            )
+        if self.gate_version is not None:
+            object.__setattr__(
+                self,
+                "gate_version",
+                _require_non_empty_text(self.gate_version, "gate_version"),
+            )
         qubits = tuple(_require_non_negative_int(item, "qubits") for item in self.qubits)
         if not qubits:
             raise AnalyzerModelError("qubits must not be empty.")
@@ -82,6 +96,8 @@ class OperationView:
         return cls(
             operation_id=operation["operation_id"],
             gate_name=gate["name"],
+            gate_namespace=gate.get("namespace"),
+            gate_version=gate.get("version"),
             qubits=tuple(operation["qubits"]),
             parameters=tuple(operation.get("parameters", ())),
             layer=operation.get("layer"),
@@ -101,6 +117,8 @@ class OperationView:
             {
                 "operation_id": self.operation_id,
                 "gate_name": self.gate_name,
+                "gate_namespace": self.gate_namespace,
+                "gate_version": self.gate_version,
                 "qubits": list(self.qubits),
                 "parameters": list(self.parameters),
                 "layer": self.layer,
