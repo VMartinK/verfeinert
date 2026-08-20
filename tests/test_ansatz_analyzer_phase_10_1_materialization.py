@@ -18,6 +18,7 @@ from verfeinert.ansatz_analyzer import (
     AnalyzerExecutionPermissions,
     CircuitMaterializationConfig,
     CircuitMaterializationError,
+    OperationView,
     StructuralCostConfig,
     materialize_candidate,
     validate_analysis_result_document,
@@ -161,6 +162,72 @@ def _explicit_state_callable(params):
 
 
 class AnalyzerPhase101MaterializationTests(unittest.TestCase):
+    def test_operation_view_preserves_v030_positional_constructor_contract(self) -> None:
+        parameters = ({"kind": "reference", "parameter_id": "theta-0"},)
+        metadata = {"source": "legacy-positional"}
+
+        legacy = OperationView(
+            "op-legacy",
+            "rx",
+            (1,),
+            parameters,
+            2,
+            3,
+            "candidate",
+            metadata,
+        )
+
+        self.assertEqual(legacy.operation_id, "op-legacy")
+        self.assertEqual(legacy.gate_name, "rx")
+        self.assertEqual(legacy.qubits, (1,))
+        self.assertEqual(legacy.parameters, parameters)
+        self.assertEqual(legacy.layer, 2)
+        self.assertEqual(legacy.order, 3)
+        self.assertEqual(legacy.role, "candidate")
+        self.assertEqual(legacy.metadata, metadata)
+        self.assertIsNone(legacy.gate_namespace)
+        self.assertIsNone(legacy.gate_version)
+
+        keyword_identity = OperationView(
+            "op-keyword",
+            "rz",
+            (0,),
+            parameters,
+            1,
+            2,
+            "reference",
+            {"source": "keyword"},
+            gate_namespace="verfeinert.default_gates",
+            gate_version="test-version",
+        )
+        self.assertEqual(keyword_identity.gate_namespace, "verfeinert.default_gates")
+        self.assertEqual(keyword_identity.gate_version, "test-version")
+
+        from_document = OperationView.from_document(
+            {
+                "operation_id": "op-document",
+                "gate": {
+                    "name": "ry",
+                    "namespace": "verfeinert.default_gates",
+                    "version": "document-version",
+                },
+                "qubits": [0],
+                "parameters": list(parameters),
+                "layer": 4,
+                "order": 5,
+                "role": "document",
+                "metadata": {"source": "document"},
+            },
+        )
+        self.assertEqual(from_document.gate_name, "ry")
+        self.assertEqual(from_document.gate_namespace, "verfeinert.default_gates")
+        self.assertEqual(from_document.gate_version, "document-version")
+        self.assertEqual(from_document.parameters, parameters)
+        self.assertEqual(from_document.layer, 4)
+        self.assertEqual(from_document.order, 5)
+        self.assertEqual(from_document.role, "document")
+        self.assertEqual(from_document.metadata, {"source": "document"})
+
     def test_static_candidate_materializes_and_preserves_operation_order(self) -> None:
         candidate = _canonical_candidate(
             candidate_id="phase101-static",

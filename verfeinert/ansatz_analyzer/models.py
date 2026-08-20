@@ -26,13 +26,13 @@ class OperationView:
     operation_id: str
     gate_name: str
     qubits: tuple[int, ...]
-    gate_namespace: str | None = None
-    gate_version: str | None = None
     parameters: tuple[dict[str, Any], ...] = ()
     layer: int | None = None
     order: int | None = None
     role: str | None = None
     metadata: dict[str, Any] = field(default_factory=dict)
+    gate_namespace: str | None = field(default=None, kw_only=True)
+    gate_version: str | None = field(default=None, kw_only=True)
 
     def __post_init__(self) -> None:
         object.__setattr__(
