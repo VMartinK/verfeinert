@@ -8,7 +8,10 @@ import math
 from pathlib import Path
 from typing import Any
 
-from verfeinert.core.config import ExecutionConfig
+from verfeinert.core.config import (
+    ExecutionConfig,
+    SCIENTIFIC_MULTIPROCESSING_DEFERRED_MESSAGE,
+)
 from verfeinert.core.io.paths import validate_separate_roots
 from verfeinert.core.io.serialization import to_json_safe
 from verfeinert.core.validation import (
@@ -235,6 +238,8 @@ class AnalyzerConfig:
 
         if not isinstance(self.execution, ExecutionConfig):
             raise AnalyzerConfigError("execution must be an ExecutionConfig.")
+        if self.execution.mode != "sequential":
+            raise AnalyzerConfigError(SCIENTIFIC_MULTIPROCESSING_DEFERRED_MESSAGE)
         if not isinstance(self.permissions, AnalyzerExecutionPermissions):
             raise AnalyzerConfigError(
                 "permissions must be an AnalyzerExecutionPermissions.",

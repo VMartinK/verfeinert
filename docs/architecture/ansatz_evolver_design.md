@@ -82,6 +82,10 @@ This layout preserves a reference-based model: population, mutation,
 selection, evaluation refs, and exporters are separate from analyzer metric
 execution.
 
+In v0.3.x, `EvolverConfig.execution` is sequential-only for public evolver
+state construction. Core multiprocessing primitives exist, but evolver/workflow
+scientific integration is deferred to v0.4.0.
+
 ## Population Representation
 
 The canonical population model is reference-based.

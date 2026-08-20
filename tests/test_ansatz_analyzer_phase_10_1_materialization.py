@@ -91,10 +91,18 @@ def _op(
     gate: str,
     qubits: list[int],
     parameters: list[dict] | None = None,
+    *,
+    namespace: str | None = None,
+    version: str | None = None,
 ) -> dict:
+    gate_record = {"name": gate}
+    if namespace is not None:
+        gate_record["namespace"] = namespace
+    if version is not None:
+        gate_record["version"] = version
     return {
         "operation_id": operation_id,
-        "gate": {"name": gate},
+        "gate": gate_record,
         "qubits": qubits,
         "parameters": parameters or [],
         "order": int(operation_id.rsplit("-", 1)[-1]),
@@ -172,6 +180,17 @@ class AnalyzerPhase101MaterializationTests(unittest.TestCase):
         self.assertTrue(np.allclose(state, expected))
         self.assertEqual(materialized.trainable_parameter_ids, ())
         self.assertEqual(materialized.gate_names, ("x", "h"))
+
+    def test_built_in_candidate_fixture_materializes_with_default_namespace(self) -> None:
+        materialized = materialize_candidate(
+            read_json(CANDIDATE_EXAMPLE),
+            config=CircuitMaterializationConfig(enabled=True),
+        )
+        state = np.asarray(materialized.state_callable([0.0, 0.0]), dtype=complex)
+
+        self.assertEqual(materialized.gate_names, ("rx", "rz", "cz"))
+        self.assertEqual(materialized.trainable_parameter_ids, ("theta-0", "theta-1"))
+        self.assertAlmostEqual(float(np.sum(np.abs(state) ** 2)), 1.0)
 
     def test_parameter_order_literals_and_repeated_references_are_canonical(self) -> None:
         candidate = _canonical_candidate(
@@ -274,6 +293,70 @@ class AnalyzerPhase101MaterializationTests(unittest.TestCase):
         )
 
         with self.assertRaisesRegex(CircuitMaterializationError, "unsupported candidate operation 'mystery'"):
+            materialize_candidate(candidate, config=CircuitMaterializationConfig(enabled=True))
+
+    def test_derived_parameter_is_representable_but_not_materializable(self) -> None:
+        candidate = _canonical_candidate(
+            candidate_id="phase101-derived",
+            parameters=[
+                {"parameter_id": "theta-a", "kind": "trainable", "symbol": "theta_a"},
+                {
+                    "parameter_id": "theta-derived",
+                    "kind": "derived",
+                    "symbol": "theta_derived",
+                    "metadata": {"expression": "2 * theta_a"},
+                },
+            ],
+            operations=[
+                _op("op-000", "rx", [0], [_ref("theta-derived")]),
+            ],
+        )
+
+        with self.assertRaisesRegex(CircuitMaterializationError, "derived parameter 'theta-derived'.*not materializable"):
+            materialize_candidate(candidate, config=CircuitMaterializationConfig(enabled=True))
+
+    def test_unsupported_gate_namespace_is_not_matched_by_name(self) -> None:
+        candidate = _canonical_candidate(
+            candidate_id="phase101-namespace",
+            operations=[
+                _op(
+                    "op-000",
+                    "rx",
+                    [0],
+                    [_literal(0.0)],
+                    namespace="external.default_gates",
+                ),
+            ],
+        )
+
+        with self.assertRaisesRegex(CircuitMaterializationError, "unsupported semantic gate identity"):
+            materialize_candidate(candidate, config=CircuitMaterializationConfig(enabled=True))
+
+    def test_unsupported_gate_version_is_not_matched_by_name(self) -> None:
+        candidate = _canonical_candidate(
+            candidate_id="phase101-version",
+            operations=[
+                _op(
+                    "op-000",
+                    "rx",
+                    [0],
+                    [_literal(0.0)],
+                    namespace="verfeinert.default_gates",
+                    version="2026-08",
+                ),
+            ],
+        )
+
+        with self.assertRaisesRegex(CircuitMaterializationError, "unsupported semantic gate identity"):
+            materialize_candidate(candidate, config=CircuitMaterializationConfig(enabled=True))
+
+    def test_non_numeric_literal_parameter_fails_clearly(self) -> None:
+        candidate = _canonical_candidate(
+            candidate_id="phase101-literal",
+            operations=[_op("op-000", "rx", [0], [{"kind": "literal", "value": "pi"}])],
+        )
+
+        with self.assertRaisesRegex(CircuitMaterializationError, "literal value must be numeric"):
             materialize_candidate(candidate, config=CircuitMaterializationConfig(enabled=True))
 
     def test_pipeline_computes_real_metrics_from_candidate_json(self) -> None:

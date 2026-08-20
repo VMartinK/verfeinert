@@ -43,7 +43,7 @@ verfeinert
 From a GitHub release wheel once downloaded:
 
 ```bash
-python -m pip install ./verfeinert-0.3.0-py3-none-any.whl
+python -m pip install ./verfeinert-0.3.1-py3-none-any.whl
 ```
 
 From a repository checkout:
@@ -71,6 +71,11 @@ dependencies. Matplotlib is required only for plotting and figure export:
 ```bash
 python -m pip install -e ".[dev,visualization]"
 ```
+
+Scientific analyzer and workflow runs in v0.3.x support sequential execution.
+Core multiprocessing executor primitives exist, but scientific multiprocessing
+integration is deferred and rejected for candidate science in this release
+line.
 
 ## Validate
 
@@ -249,7 +254,8 @@ campaign names. Pareto membership, scalar score, and cost eligibility remain
 separate fields in the resulting `ComparisonResult`.
 
 Visualization is optional and consumes persisted or derived artifacts. It uses
-neutral `DEFAULT_STYLE`; display aliases are explicit presentation metadata and
+campaign-neutral publication-grade `DEFAULT_STYLE`; display aliases are explicit
+presentation metadata and
 never change canonical candidate IDs.
 
 Legacy `stages` declarations are normalized into the same internal plan. If

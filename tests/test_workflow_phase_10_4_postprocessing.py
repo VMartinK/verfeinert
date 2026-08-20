@@ -280,6 +280,9 @@ class WorkflowPhase104PostprocessingTests(unittest.TestCase):
             self.assertEqual(len(result.comparison_csv_paths), 1)
             self.assertEqual(result.reused_artifacts[0]["kind"], "comparison_result")
             self.assertFalse(result.provenance["execution"]["comparison_executed"])
+            self.assertFalse(result.provenance["execution"]["visualization_executed"])
+            self.assertFalse(result.provenance["execution"]["figure_exported"])
+            self.assertFalse(result.provenance["execution"]["plots_generated_by_runner"])
 
     def test_comparison_result_artifact_visualizes_without_recomputing_comparison(self) -> None:
         if not optional_dependency_available("matplotlib"):
@@ -324,6 +327,8 @@ class WorkflowPhase104PostprocessingTests(unittest.TestCase):
             self.assertEqual(len(result.visualization_paths), 1)
             self.assertTrue(result.visualization_paths[0].is_file())
             self.assertTrue(result.provenance["execution"]["visualization_executed"])
+            self.assertTrue(result.provenance["execution"]["figure_exported"])
+            self.assertTrue(result.provenance["execution"]["plots_generated_by_runner"])
 
     def test_analysis_results_pareto_ranking_visualization_only_runs_requested_postprocessing(self) -> None:
         if not optional_dependency_available("matplotlib"):
@@ -348,6 +353,9 @@ class WorkflowPhase104PostprocessingTests(unittest.TestCase):
             self.assertEqual(len(result.visualization_paths), 2)
             self.assertFalse(result.provenance["execution"]["candidate_generation_executed"])
             self.assertFalse(result.provenance["execution"]["analysis_executed"])
+            self.assertTrue(result.provenance["execution"]["visualization_executed"])
+            self.assertTrue(result.provenance["execution"]["figure_exported"])
+            self.assertTrue(result.provenance["execution"]["plots_generated_by_runner"])
 
     def test_evolution_run_lineage_visualization_does_not_rerun_evolution(self) -> None:
         if not optional_dependency_available("matplotlib"):

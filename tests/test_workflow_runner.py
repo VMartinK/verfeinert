@@ -76,6 +76,7 @@ class WorkflowRunnerTests(unittest.TestCase):
             self.assertIsNotNone(result.ranking_csv_path)
             self.assertEqual(result.provenance["runner"], "verfeinert.workflow")
             self.assertFalse(result.provenance["execution"]["qnodes_executed_by_runner"])
+            self.assertFalse(result.provenance["execution"]["plots_generated_by_runner"])
 
             evolution = json.loads(result.evolution_run_path.read_text(encoding="utf-8"))
             generation = evolution["generations"][0]

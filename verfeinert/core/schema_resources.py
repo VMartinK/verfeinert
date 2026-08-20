@@ -7,6 +7,8 @@ from importlib import resources
 import json
 from typing import Any, Iterable
 
+from referencing import Registry, Resource
+
 from .validation import CoreValidationError
 
 
@@ -63,6 +65,15 @@ def schema_store(schema_names_to_load: Iterable[str] | None = None) -> dict[str,
     return store
 
 
+def schema_registry(schema_names_to_load: Iterable[str] | None = None) -> Registry:
+    """Return a referencing registry for packaged JSON Schemas."""
+    store = schema_store(schema_names_to_load)
+    return Registry().with_resources(
+        (uri, Resource.from_contents(schema))
+        for uri, schema in store.items()
+    )
+
+
 def _normalize_schema_name(schema_name: str) -> str:
     value = str(schema_name).strip()
     if value.endswith(".schema.json"):
@@ -75,6 +86,7 @@ __all__ = [
     "SCHEMA_RESOURCE_PACKAGE",
     "load_schema",
     "read_schema_text",
+    "schema_registry",
     "schema_filename",
     "schema_names",
     "schema_store",

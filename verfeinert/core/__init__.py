@@ -1,6 +1,12 @@
 """Lightweight shared infrastructure for Verfeinert."""
 
-from .config import ExecutionConfig, PathConfig, RunConfig, load_run_config_yaml
+from .config import (
+    ExecutionConfig,
+    PathConfig,
+    RunConfig,
+    SCIENTIFIC_MULTIPROCESSING_DEFERRED_MESSAGE,
+    load_run_config_yaml,
+)
 from .execution import (
     Executor,
     MultiprocessingExecutor,
@@ -30,6 +36,7 @@ from .schema_resources import (
     read_schema_text,
     schema_filename,
     schema_names,
+    schema_registry,
     schema_store,
 )
 from .validation import CoreValidationError
@@ -44,6 +51,7 @@ __all__ = [
     "PathValidationError",
     "RunConfig",
     "RunMetadata",
+    "SCIENTIFIC_MULTIPROCESSING_DEFERRED_MESSAGE",
     "SequentialExecutor",
     "SerializationError",
     "build_executor",
@@ -60,6 +68,7 @@ __all__ = [
     "read_yaml",
     "schema_filename",
     "schema_names",
+    "schema_registry",
     "schema_store",
     "stable_hash",
     "to_json_safe",

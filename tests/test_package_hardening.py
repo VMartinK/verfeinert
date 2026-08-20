@@ -284,6 +284,111 @@ print(json.dumps({
         self.assertTrue(payload["comparison_csv"])
         self.assertIn("Install the 'visualization' extra", payload["visualization_error"])
 
+    def test_cli_visualization_dependency_failure_is_clean(self) -> None:
+        code = r"""
+import contextlib
+import importlib.abc
+import io
+import json
+import sys
+import tempfile
+import textwrap
+from pathlib import Path
+
+
+class BlockMatplotlib(importlib.abc.MetaPathFinder):
+    def find_spec(self, fullname, path=None, target=None):
+        if fullname == "matplotlib" or fullname.startswith("matplotlib."):
+            raise ModuleNotFoundError(f"blocked optional dependency: {fullname}")
+        return None
+
+
+sys.meta_path.insert(0, BlockMatplotlib())
+
+from verfeinert.cli import main as cli_main
+
+
+analysis_result = {
+    "schema_version": "verfeinert.analysis_result.v1",
+    "analysis_result_id": "analysis-cli-visualization",
+    "candidate_ref": {"candidate_id": "cli-visualization"},
+    "metrics": [
+        {
+            "metric_id": "metric-expressibility-cli-visualization",
+            "name": "expressibility",
+            "status": "computed",
+            "value": {"expressibility": 1.0},
+        },
+        {
+            "metric_id": "metric-trainability-cli-visualization",
+            "name": "trainability",
+            "status": "computed",
+            "value": {"trainability": 0.5},
+        },
+    ],
+    "cost": {"structural_cost": 0.1},
+    "classifications": [],
+    "provenance": {
+        "created_at": "2026-08-20T00:00:00Z",
+        "analyzer": "cli-visualization-test",
+        "execution": {"qnodes_executed": False},
+    },
+}
+
+with tempfile.TemporaryDirectory() as tmp:
+    root = Path(tmp)
+    analysis_path = root / "analysis.json"
+    config_path = root / "workflow.yaml"
+    analysis_path.write_text(json.dumps(analysis_result), encoding="utf-8")
+    config_path.write_text(
+        textwrap.dedent(
+            f'''
+            run:
+              run_id: cli-visualization-dependency
+              created_at: "2026-08-20T00:00:00Z"
+            paths:
+              output_root: {root / "outputs"}
+            workflow:
+              campaign_type: individual
+              scientific_execution: []
+              postprocessing: [visualization]
+            artifacts:
+              analysis_results:
+                - {analysis_path}
+            '''
+        ),
+        encoding="utf-8",
+    )
+    stdout = io.StringIO()
+    stderr = io.StringIO()
+    with contextlib.redirect_stdout(stdout), contextlib.redirect_stderr(stderr):
+        exit_code = cli_main(["run", str(config_path)])
+
+print(json.dumps({
+    "exit_code": exit_code,
+    "stdout": stdout.getvalue(),
+    "stderr": stderr.getvalue(),
+}, sort_keys=True))
+"""
+        env = os.environ.copy()
+        env["PYTHONPATH"] = str(PROJECT_ROOT)
+        env["PYTHONDONTWRITEBYTECODE"] = "1"
+        env.setdefault("MPLCONFIGDIR", "/tmp/matplotlib-verfeinert")
+        with tempfile.TemporaryDirectory() as tmp:
+            completed = subprocess.run(
+                [sys.executable, "-c", code],
+                cwd=tmp,
+                env=env,
+                check=True,
+                text=True,
+                capture_output=True,
+            )
+        payload = json.loads(completed.stdout)
+        self.assertEqual(payload["exit_code"], 1)
+        self.assertEqual(payload["stdout"], "")
+        self.assertIn("visualization extra is required", payload["stderr"].lower())
+        self.assertNotIn("traceback", payload["stderr"].lower())
+
     def test_framework_schema_validation_uses_package_resources(self) -> None:
         forbidden_tokens = (
             'PROJECT_ROOT = Path(__file__).resolve().parents[2]',

@@ -20,7 +20,7 @@ publication export
 ```
 
 The package supports legacy plot-data adapters for analyzer artifacts and the
-v0.3.0 publication renderers for prepared semantic data. Public figure APIs use
+v0.3.x publication renderers for prepared semantic data. Public figure APIs use
 descriptive names such as `plot_individual_classification` and
 `plot_global_pareto`; notebook-local figure labels are not public API concepts.
 

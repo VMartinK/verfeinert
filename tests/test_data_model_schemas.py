@@ -6,8 +6,10 @@ import json
 from pathlib import Path
 import unittest
 
-from jsonschema import Draft202012Validator, RefResolver
+from jsonschema import Draft202012Validator
 import yaml
+
+from verfeinert.core.schema_resources import schema_registry
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -42,19 +44,9 @@ def _read_json(path: Path) -> dict:
     return json.loads(path.read_text(encoding="utf-8"))
 
 
-def _schema_store() -> dict[str, dict]:
-    schemas = {name: _read_json(path) for name, path in SCHEMA_FILES.items()}
-    return {
-        schema["$id"]: schema
-        for schema in schemas.values()
-    }
-
-
 def _validator(schema_name: str) -> Draft202012Validator:
     schema = _read_json(SCHEMA_FILES[schema_name])
-    store = _schema_store()
-    resolver = RefResolver.from_schema(schema, store=store)
-    return Draft202012Validator(schema, resolver=resolver)
+    return Draft202012Validator(schema, registry=schema_registry(SCHEMA_FILES))
 
 
 def _candidate_example() -> dict:

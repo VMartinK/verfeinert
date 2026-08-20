@@ -2,6 +2,38 @@
 
 All notable changes to Verfeinert will be documented in this file.
 
+## v0.3.1 - 2026-08-20 - Correctness and Contract Hardening
+
+### Contract corrections
+
+- Synchronized package version metadata across `pyproject.toml`,
+  `verfeinert._version`, installed metadata checks, citation metadata, and
+  current installation documentation.
+- Corrected workflow provenance so runner-generated visualization artifacts set
+  the corresponding visualization, figure, and legacy plot-generation flags.
+- Added clean CLI handling for missing visualization dependencies when
+  visualization output is requested.
+
+### Capability honesty
+
+- Scientific metric definitions are unchanged.
+- Pareto, ranking, evolution, strict Pareto feedback, CX-01, MIXT-5G, and
+  multithreshold trajectory semantics are unchanged.
+- Multiprocessing executor primitives remain available in `verfeinert.core`,
+  but scientific workflow/analyzer multiprocessing integration remains
+  deferred.
+- Candidate JSON remains more expressive than the current PennyLane
+  materializer; unsupported gate identities, derived parameters, and unsupported
+  runtime parameter forms now fail closed with explicit materialization errors.
+- Broader workflow architecture work remains deferred to v0.4.0.
+
+### Maintenance
+
+- Migrated production schema validation from deprecated
+  `jsonschema.RefResolver` usage to a packaged-schema `referencing` registry.
+- Updated current docs/docstrings that overstated analyzer and visualization
+  terminology.
+
 ## 0.3.0 - 2026-08-16
 
 ### Visualization

@@ -7,7 +7,10 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from verfeinert.core.config import ExecutionConfig
+from verfeinert.core.config import (
+    ExecutionConfig,
+    SCIENTIFIC_MULTIPROCESSING_DEFERRED_MESSAGE,
+)
 from verfeinert.core.io import ensure_output_root
 from verfeinert.core.validation import (
     CoreValidationError,
@@ -88,6 +91,8 @@ class EvolverConfig:
         )
         if not isinstance(self.execution, ExecutionConfig):
             raise CoreValidationError("execution must be an ExecutionConfig.")
+        if self.execution.mode != "sequential":
+            raise CoreValidationError(SCIENTIFIC_MULTIPROCESSING_DEFERRED_MESSAGE)
         if not isinstance(self.permissions, EvolverExecutionPermissions):
             raise CoreValidationError("permissions must be EvolverExecutionPermissions.")
         metrics = tuple(str(metric).strip() for metric in self.requested_metrics)

@@ -16,6 +16,7 @@ from .validation import validate_candidate_document
 
 
 MATERIALIZER_VERSION = "verfeinert.ansatz_analyzer.materialization.v1"
+SUPPORTED_GATE_NAMESPACE = "verfeinert.default_gates"
 
 
 class CircuitMaterializationError(ValueError):
@@ -197,7 +198,8 @@ def _parameter_bindings(candidate: CandidateView) -> tuple[dict[str, dict[str, A
             continue
         if kind == "derived":
             raise CircuitMaterializationError(
-                f"derived parameter {parameter_id!r} is not supported by the Phase 10.1 materializer.",
+                f"derived parameter {parameter_id!r} is representable in Candidate JSON "
+                "but is not materializable by the v0.3.1 PennyLane materializer.",
             )
         raise CircuitMaterializationError(f"unsupported parameter kind for {parameter_id!r}: {kind!r}")
     return bindings, tuple(trainable_parameter_ids)
@@ -215,7 +217,7 @@ def _validate_operations(
             raise CircuitMaterializationError(
                 f"operation {operation.operation_id!r} references qubits outside wire_order.",
             )
-        spec = _gate_spec(operation.gate_name)
+        spec = _gate_spec(operation)
         if spec is None:
             raise CircuitMaterializationError(
                 f"unsupported candidate operation {operation.gate_name!r} "
@@ -362,7 +364,24 @@ def _literal_value(value: Any, *, field_name: str) -> float:
     return float(value)
 
 
-def _gate_spec(gate: str) -> tuple[int, int] | None:
+def _gate_spec(operation: OperationView) -> tuple[int, int] | None:
+    gate = operation.gate_name
+    if operation.gate_namespace not in {None, SUPPORTED_GATE_NAMESPACE}:
+        raise CircuitMaterializationError(
+            "unsupported semantic gate identity for operation "
+            f"{operation.operation_id!r}: gate={gate!r}, "
+            f"namespace={operation.gate_namespace!r}, version={operation.gate_version!r}. "
+            f"The v0.3.1 PennyLane materializer supports only legacy omitted "
+            f"namespaces or {SUPPORTED_GATE_NAMESPACE!r} without a gate version.",
+        )
+    if operation.gate_version is not None:
+        raise CircuitMaterializationError(
+            "unsupported semantic gate identity for operation "
+            f"{operation.operation_id!r}: gate={gate!r}, "
+            f"namespace={operation.gate_namespace!r}, version={operation.gate_version!r}. "
+            f"The v0.3.1 PennyLane materializer supports only legacy omitted "
+            f"versions for {SUPPORTED_GATE_NAMESPACE!r}.",
+        )
     if gate in {"rx", "ry", "rz"}:
         return 1, 1
     if gate in {"x", "y", "z", "h"}:
@@ -378,6 +397,7 @@ __all__ = [
     "CircuitMaterializationError",
     "MATERIALIZER_VERSION",
     "MaterializedCircuit",
+    "SUPPORTED_GATE_NAMESPACE",
     "StateCallableProvider",
     "make_state_callable",
     "materialize_candidate",

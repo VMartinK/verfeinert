@@ -44,6 +44,13 @@ PennyLane, Matplotlib, notebooks, generated callables, or QNodes.
 scientific metric execution. Materialization through PennyLane is analyzer
 owned, opt-in, and truthfully recorded in AnalysisResult provenance.
 
+The canonical Candidate schema is intentionally more expressive than the
+v0.3.1 PennyLane materializer. The materializer supports built-in Verfeinert
+gate records with omitted legacy namespace or `verfeinert.default_gates` and
+no explicit gate version. Unsupported namespaces, explicit gate versions,
+derived parameters, and non-numeric runtime literals fail closed with
+`CircuitMaterializationError`.
+
 `pipeline.py` wires the foundation flow:
 
 ```text
@@ -113,6 +120,10 @@ flags for:
 Expressibility and trainability require explicit configuration, materialization,
 and execution permissions because they can construct QNodes and run expensive
 scientific workloads.
+
+Candidate JSON may represent derived parameters and extensible gate identities.
+Those records remain valid Candidate data, but v0.3.1 does not evaluate derived
+expressions or map arbitrary gate namespaces/versions to PennyLane operations.
 
 ## Dependency Boundary
 
