@@ -238,6 +238,7 @@ class AnalysisPipeline:
                     "materialization_enabled": True,
                     "automatic_materialization_used": False,
                     "materialization_error": str(exc),
+                    "materialization_error_reason": exc.reason,
                     "qnodes_executed": False,
                 },
             )

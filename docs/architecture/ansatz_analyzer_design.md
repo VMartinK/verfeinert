@@ -89,6 +89,12 @@ It is pure and no-QNode.
 `metrics.expressibility` and `metrics.trainability` own the scientific metric
 definitions. Analyzer materialization owns PennyLane-backed executable circuit
 construction, and expensive metrics require explicit execution permission.
+`inspect_materialization_capability` reports supported operations, parameter
+modes, backend/device identity, configured materialization limits, and
+candidate-specific unsupported operations without executing QNodes.
+`CircuitMaterializationConfig` can also set fail-closed limits for qubits,
+operations, and trainable parameters; exceeding a configured limit yields a
+machine-readable materialization failure rather than an interpreted result.
 
 `pareto.py` classifies result collections using objective
 directions and optional cost constraints. Cost is an external filter, not a

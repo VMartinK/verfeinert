@@ -154,6 +154,9 @@ class CircuitMaterializationConfig:
     device: str = "default.qubit"
     interface: str = "autograd"
     diff_method: str = "best"
+    max_qubits: int | None = None
+    max_operations: int | None = None
+    max_trainable_parameters: int | None = None
 
     def __post_init__(self) -> None:
         object.__setattr__(
@@ -183,6 +186,24 @@ class CircuitMaterializationConfig:
             "diff_method",
             require_non_empty_text(self.diff_method, "materialization.diff_method"),
         )
+        object.__setattr__(
+            self,
+            "max_qubits",
+            _materialization_limit(self.max_qubits, "materialization.max_qubits"),
+        )
+        object.__setattr__(
+            self,
+            "max_operations",
+            _materialization_limit(self.max_operations, "materialization.max_operations"),
+        )
+        object.__setattr__(
+            self,
+            "max_trainable_parameters",
+            _materialization_limit(
+                self.max_trainable_parameters,
+                "materialization.max_trainable_parameters",
+            ),
+        )
 
     @classmethod
     def from_mapping(
@@ -197,6 +218,9 @@ class CircuitMaterializationConfig:
             device=data.get("device", "default.qubit"),  # type: ignore[arg-type]
             interface=data.get("interface", "autograd"),  # type: ignore[arg-type]
             diff_method=data.get("diff_method", "best"),  # type: ignore[arg-type]
+            max_qubits=data.get("max_qubits"),  # type: ignore[arg-type]
+            max_operations=data.get("max_operations"),  # type: ignore[arg-type]
+            max_trainable_parameters=data.get("max_trainable_parameters"),  # type: ignore[arg-type]
         )
 
     def to_dict(self) -> dict[str, Any]:
@@ -207,6 +231,9 @@ class CircuitMaterializationConfig:
             "device": self.device,
             "interface": self.interface,
             "diff_method": self.diff_method,
+            "max_qubits": self.max_qubits,
+            "max_operations": self.max_operations,
+            "max_trainable_parameters": self.max_trainable_parameters,
         }
 
 
@@ -385,6 +412,13 @@ def _clean_metric_configs(configs: Mapping[str, object]) -> dict[str, object]:
         else:
             raise AnalyzerConfigError(f"metric_configs[{key!r}] must be a mapping.")
     return cleaned
+
+
+def _materialization_limit(value: object, field_name: str) -> int | None:
+    try:
+        return require_non_negative_int_or_none(value, field_name)
+    except CoreValidationError as exc:
+        raise AnalyzerConfigError(str(exc)) from exc
 
 
 def _clean_component_weights(

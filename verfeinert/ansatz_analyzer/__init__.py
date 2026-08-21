@@ -41,8 +41,10 @@ from .models import (
 )
 from .materialization import (
     CircuitMaterializationError,
+    MaterializationCapability,
     MaterializedCircuit,
     StateCallableProvider,
+    inspect_materialization_capability,
     make_state_callable,
     materialize_candidate,
 )
@@ -94,6 +96,7 @@ __all__ = [
     "CompatibilityIssue",
     "CompatibilityReport",
     "CostRecord",
+    "MaterializationCapability",
     "MaterializedCircuit",
     "MetricRecord",
     "ObjectiveSpec",
@@ -116,6 +119,7 @@ __all__ = [
     "dominates",
     "load_candidate_document",
     "load_candidate_views",
+    "inspect_materialization_capability",
     "make_state_callable",
     "materialize_candidate",
     "rank_analysis_results",
