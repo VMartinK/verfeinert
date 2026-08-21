@@ -25,6 +25,8 @@ from verfeinert.core.validation import (
     require_non_negative_int_or_none,
     require_positive_int,
 )
+from verfeinert.ansatz_generator import ConstraintSet
+from verfeinert.ansatz_generator.validation import GeneratorValidationError
 
 
 class WorkflowConfigError(CoreValidationError):
@@ -96,6 +98,7 @@ class GenerationStageConfig:
     package_id: str | None = None
     source_label: str = "verfeinert.workflow"
     created_at: str | None = None
+    constraints: ConstraintSet | None = None
     metadata: dict[str, Any] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
@@ -114,6 +117,16 @@ class GenerationStageConfig:
         object.__setattr__(self, "template_ids", template_ids)
         object.__setattr__(self, "layers", layers)
         object.__setattr__(self, "n_qubits", require_positive_int(self.n_qubits, "generation.n_qubits"))
+        constraints = _constraint_set_or_none(self.constraints, "generation.constraints")
+        if (
+            constraints is not None
+            and constraints.connectivity is not None
+            and constraints.connectivity.n_qubits != self.n_qubits
+        ):
+            raise WorkflowConfigError(
+                "generation.constraints.connectivity.n_qubits must match generation.n_qubits.",
+            )
+        object.__setattr__(self, "constraints", constraints)
         object.__setattr__(
             self,
             "candidate_id_prefix",
@@ -137,6 +150,7 @@ class GenerationStageConfig:
             package_id=data.get("package_id"),
             source_label=data.get("source_label", "verfeinert.workflow"),
             created_at=data.get("created_at"),
+            constraints=data.get("constraints", data.get("constraint_set")),
             metadata=dict(data.get("metadata", {})),
         )
 
@@ -151,6 +165,7 @@ class GenerationStageConfig:
             "package_id": self.package_id,
             "source_label": self.source_label,
             "created_at": self.created_at,
+            "constraints": self.constraints.to_dict() if self.constraints is not None else None,
             "metadata": dict(self.metadata),
         }
 
@@ -768,6 +783,19 @@ def _json_mapping(value: object, field_name: str) -> dict[str, Any]:
     if not isinstance(value, Mapping):
         raise WorkflowConfigError(f"{field_name} must be a mapping.")
     return to_json_safe(dict(value))
+
+
+def _constraint_set_or_none(value: object, field_name: str) -> ConstraintSet | None:
+    if value is None:
+        return None
+    if isinstance(value, ConstraintSet):
+        return value
+    if not isinstance(value, Mapping):
+        raise WorkflowConfigError(f"{field_name} must be a mapping or ConstraintSet.")
+    try:
+        return ConstraintSet.from_mapping(value)
+    except (GeneratorValidationError, TypeError, ValueError) as exc:
+        raise WorkflowConfigError(f"{field_name} is invalid: {exc}") from exc
 
 
 def _operations_from_mapping(

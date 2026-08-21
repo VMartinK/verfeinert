@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping, Sequence
+from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
@@ -67,8 +67,10 @@ from verfeinert.ansatz_evolver.selection import (
 )
 from verfeinert.ansatz_generator import (
     CandidateJsonExportConfig,
+    GeneratorValidationError,
     StagedPackageJsonExportConfig,
     build_sanz19_candidate_records,
+    validate_candidate_constraints,
     write_canonical_staged_package_json,
     write_staged_package_json,
 )
@@ -240,6 +242,10 @@ class WorkflowRunner:
         candidate_artifacts = _load_candidate_artifacts(all_candidate_sources)
         staged_artifacts = _load_staged_package_artifacts(all_staged_sources)
         candidate_artifacts.extend(_candidate_artifacts_from_staged_packages(staged_artifacts))
+        _validate_candidate_artifacts_against_constraints(
+            candidate_artifacts,
+            config.generation.constraints,
+        )
         for artifact in candidate_artifacts:
             consumed_artifacts.append(_artifact_record("candidate", artifact.uri))
         for package in staged_artifacts:
@@ -666,6 +672,7 @@ class WorkflowRunner:
                 "workflow_run_id": config.run_id,
                 **dict(generation.metadata),
             },
+            constraints=generation.constraints,
         )
         return StagedPackageJsonExportConfig(
             package_id=package_id,
@@ -697,6 +704,7 @@ class WorkflowRunner:
                 source_label="verfeinert.workflow",
                 git_commit=None,
                 discover_git_commit=False,
+                constraints=config.generation.constraints,
             ),
             created_at=config.created_at,
             producer="verfeinert.workflow",
@@ -861,6 +869,10 @@ class WorkflowRunner:
                 source_path=source_path,
                 config=config,
             )
+            _validate_candidate_documents_against_constraints(
+                candidate_lookup.values(),
+                config.generation.constraints,
+            )
         else:
             collection = _require_collection(analysis_collection)
             candidate_refs = _candidate_refs_for_collection(
@@ -925,7 +937,12 @@ class WorkflowRunner:
                         "unresolved artifact reference for evolution parent: "
                         f"{request.parent_candidate_id}",
                     )
-                child = produce_candidate_from_request(request, parent, candidate_factory)
+                child = _produce_candidate_with_constraints(
+                    request,
+                    parent,
+                    candidate_factory,
+                    config=config,
+                )
                 children.append(child)
             children, dedup_report = _deduplicate_offspring(children, config.evolver.offspring_deduplication)
             package = write_canonical_staged_package_json(
@@ -1093,6 +1110,33 @@ def _load_candidate_artifacts(
             ),
         )
     return artifacts
+
+
+def _validate_candidate_artifacts_against_constraints(
+    artifacts: Sequence[_CandidateArtifact],
+    constraints: Any | None,
+) -> None:
+    _validate_candidate_documents_against_constraints(
+        (artifact.document for artifact in artifacts),
+        constraints,
+    )
+
+
+def _validate_candidate_documents_against_constraints(
+    candidates: Iterable[Mapping[str, Any]],
+    constraints: Any | None,
+) -> None:
+    if constraints is None:
+        return
+    for candidate in candidates:
+        try:
+            validate_candidate_constraints(candidate, constraints)
+        except GeneratorValidationError as exc:
+            candidate_id = dict(candidate).get("candidate_id", "<unknown>")
+            raise WorkflowConfigError(
+                "candidate violates workflow generation.constraints: "
+                f"{candidate_id}: {exc}",
+            ) from exc
 
 
 def _load_staged_package_artifacts(
@@ -2007,6 +2051,25 @@ def _deduplicate_offspring(
     ], report
 
 
+def _produce_candidate_with_constraints(
+    request,
+    parent: Mapping[str, Any],
+    candidate_factory: Any,
+    *,
+    config: WorkflowConfig,
+) -> dict[str, Any]:
+    try:
+        if config.generation.constraints is not None:
+            validate_candidate_constraints(parent, config.generation.constraints)
+        child = produce_candidate_from_request(request, parent, candidate_factory)
+        return validate_candidate_constraints(child, config.generation.constraints)
+    except GeneratorValidationError as exc:
+        raise WorkflowConfigError(
+            "mutation produced a candidate that violates workflow generation.constraints: "
+            f"{exc}",
+        ) from exc
+
+
 def _stopping_policy(config: WorkflowConfig) -> StoppingPolicy:
     return StoppingPolicy(
         max_generations=config.evolver.max_generations,
@@ -2126,13 +2189,16 @@ def _evolution_configuration(config: WorkflowConfig) -> dict[str, Any]:
     max_generations = selection_policy.pop("max_generations")
     patience = selection_policy.pop("patience")
     selection_policy.pop("metadata", None)
+    mutation_configuration = {
+        "policy": mutation_policy,
+        "requested_metrics": list(config.analyzer.selected_metrics),
+    }
+    if config.generation.constraints is not None:
+        mutation_configuration["structural_constraints"] = config.generation.constraints.to_dict()
     return {
         "random_seed": config.random_seed,
         "execution": config.execution.to_dict(),
-        "mutation_policy": {
-            "policy": mutation_policy,
-            "requested_metrics": list(config.analyzer.selected_metrics),
-        },
+        "mutation_policy": mutation_configuration,
         "selection_policy": selection_policy,
         "stopping_policy": {
             "max_generations": max_generations,
@@ -2159,6 +2225,8 @@ def _evolution_fingerprint(config: WorkflowConfig) -> str:
             "metric_configs": config.analyzer.metric_configs,
         },
     }
+    if config.generation.constraints is not None:
+        payload["structural_constraints"] = config.generation.constraints.to_dict()
     if patience is not None:
         payload["stopping_policy"] = {"patience": patience}
     return stable_hash(payload)

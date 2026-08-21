@@ -18,6 +18,7 @@ from .exporters import (
     CANDIDATE_SCHEMA_VERSION,
 )
 from .exporters.candidate_json import validate_candidate_json
+from .constraints import ConstraintSet, validate_candidate_constraints
 from .operations import DEFAULT_GATE_REGISTRY
 from .validation import GeneratorValidationError
 
@@ -44,6 +45,7 @@ class InsertGateMutationFactory:
     default_candidate_id_template: str = "{root_candidate_id}_g{generation:03d}-{recipe_id}-v{variant_ordinal:03d}"
     source_label: str = "verfeinert.ansatz_generator.insert_gate_mutation_factory"
     created_at: str | None = None
+    constraints: ConstraintSet | None = None
     metadata: Mapping[str, Any] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
@@ -65,11 +67,15 @@ class InsertGateMutationFactory:
                 f"default_edge_selection must be one of {EDGE_SELECTION_MODES}.",
             )
         object.__setattr__(self, "source_label", require_non_empty_text(self.source_label, "source_label"))
+        if self.constraints is not None and not isinstance(self.constraints, ConstraintSet):
+            object.__setattr__(self, "constraints", ConstraintSet.from_mapping(self.constraints))  # type: ignore[arg-type]
         object.__setattr__(self, "metadata", to_json_safe(dict(self.metadata)))
 
     def __call__(self, request: Any, parent_candidate: Mapping[str, Any]) -> dict[str, Any]:
         """Return a validated canonical child Candidate JSON document."""
         parent = validate_candidate_json(parent_candidate)
+        if self.constraints is not None:
+            validate_candidate_constraints(parent, self.constraints)
         parameters = _request_parameters(request)
         metadata = _request_metadata(request)
         gate = _gate_name(parameters.get("gate") or parameters.get("mutation_gate") or self.default_gate)
@@ -81,6 +87,8 @@ class InsertGateMutationFactory:
             default_edges=self.default_edges,
             default_edge_selection=self.default_edge_selection,
         )
+        if self.constraints is not None:
+            _validate_insert_intent(gate, qubits, self.constraints)
         insertion_strategy = str(parameters.get("insertion_strategy") or self.default_insertion_strategy)
         if insertion_strategy not in INSERTION_STRATEGIES:
             raise GeneratorValidationError(f"insertion_strategy must be one of {INSERTION_STRATEGIES}.")
@@ -141,7 +149,8 @@ class InsertGateMutationFactory:
                 "input_hashes": {},
             },
         }
-        return validate_candidate_json(child)
+        validated = validate_candidate_json(child)
+        return validate_candidate_constraints(validated, self.constraints)
 
 
 def _mutated_circuit(
@@ -658,6 +667,19 @@ def _request_qubits(
 
 def _request_parameters(request: Any) -> dict[str, Any]:
     return dict(_request_attr(request, "parameters") or {})
+
+
+def _validate_insert_intent(gate: str, qubits: tuple[int, ...], constraints: ConstraintSet) -> None:
+    if not constraints.is_inserted_gate_allowed(gate):
+        raise GeneratorValidationError(
+            "mutation violates structural constraints: "
+            f"inserted gate {gate!r} is not allowed.",
+        )
+    if len(qubits) == 2 and not constraints.is_edge_allowed(qubits[0], qubits[1]):
+        raise GeneratorValidationError(
+            "mutation violates structural constraints: "
+            f"inserted edge {list(qubits)!r} is not allowed.",
+        )
 
 
 def _request_metadata(request: Any) -> dict[str, Any]:

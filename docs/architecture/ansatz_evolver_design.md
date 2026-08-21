@@ -159,6 +159,15 @@ A mutation request records one requested child creation:
 Generated child Candidate JSON must carry the resulting parent/root/generation
 and mutation provenance in canonical `lineage`.
 
+Structural constraints are enforced by the generator, not by duplicated
+evolver gate/connectivity logic. A workflow-level `generation.constraints`
+declaration is routed to generator export and candidate-factory APIs. The
+evolver may persist the configured constraint snapshot as part of mutation
+configuration and fingerprints, but concrete validity decisions remain in
+`ansatz_generator.ConstraintSet` and generator-owned candidate validation.
+Custom factories used by workflow are revalidated through that same generator
+API before any child Candidate JSON is persisted.
+
 ## Evaluation Boundary
 
 The evolver does not call metric functions. Its evaluation model is:

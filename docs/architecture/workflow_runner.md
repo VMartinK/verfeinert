@@ -100,6 +100,14 @@ Campaign-specific preparation, such as selecting a research seed set or
 constructing a reproduction fixture, belongs in examples or caller code. The
 framework core consumes candidate records and public factories.
 
+`generation.constraints` is an optional declarative `ConstraintSet` snapshot.
+When present, workflow routes it to canonical Candidate export, validates
+loaded Candidate/StagedPackage artifacts before analysis or evolution,
+validates every child returned by a candidate factory, persists it under
+EvolutionRun mutation configuration, and includes it in the evolution
+compatibility fingerprint. Concrete gate and connectivity checks stay in
+`ansatz_generator`; workflow does not duplicate generator validation rules.
+
 ## Analysis Boundary
 
 The runner calls `AnalysisPipeline` with explicit analyzer configuration.

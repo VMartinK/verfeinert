@@ -17,6 +17,8 @@ from verfeinert.ansatz_analyzer import (
 )
 from verfeinert.ansatz_generator import (
     CandidateJsonExportConfig,
+    ConstraintSet,
+    InsertGateMutationFactory,
     StagedPackageJsonExportConfig,
     write_canonical_staged_package_json,
 )
@@ -48,6 +50,7 @@ def _workflow_mapping(
     max_generations: int = 1,
     keep: int = 1,
     resume_mode: str = "continue",
+    constraints: dict | None = None,
 ) -> dict:
     mapping = {
         "run": {
@@ -92,9 +95,24 @@ def _workflow_mapping(
             },
         },
     }
+    if constraints is not None:
+        mapping["generation"]["constraints"] = constraints
+        mapping["evolver"]["mutation_policy"]["recipes"][0]["parameters"] = {
+            "gate": "cz",
+            "edge": [1, 2],
+            "parameterized": False,
+        }
     if artifacts is not None:
         mapping["artifacts"] = artifacts
     return mapping
+
+
+def _linear_constraints() -> dict:
+    return {
+        "allowed_gates": ["rx", "rz", "cx", "cz"],
+        "allowed_inserted_gates": ["cz"],
+        "connectivity": {"n_qubits": 4, "topology": "linear"},
+    }
 
 
 def _candidate_document() -> dict:
@@ -291,6 +309,23 @@ class WorkflowPhase102ArtifactOrchestrationTests(unittest.TestCase):
             self.assertEqual(len(result.analysis_result_paths), 1)
             self.assertFalse(result.provenance["execution"]["candidate_generation_executed"])
 
+    def test_candidate_artifact_violating_generation_constraints_is_rejected(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            mapping = _workflow_mapping(
+                Path(tmp) / "out",
+                run_id="candidate-constraint-reject",
+                scientific_execution=("analyze",),
+                artifacts={"candidates": [str(CANDIDATE_EXAMPLE)]},
+                constraints={
+                    "allowed_gates": ["rx", "rz"],
+                    "allowed_inserted_gates": ["cz"],
+                },
+            )
+
+            with mock.patch.object(AnalysisPipeline, "run_and_write", side_effect=AssertionError("analyzer must not run")):
+                with self.assertRaisesRegex(WorkflowConfigError, "violates workflow generation.constraints"):
+                    WorkflowRunner(WorkflowConfig.from_mapping(mapping)).run()
+
     def test_staged_package_enters_directly_at_analyze(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             package_path = _write_staged_package(Path(tmp) / "inputs")
@@ -456,6 +491,102 @@ class WorkflowPhase102ArtifactOrchestrationTests(unittest.TestCase):
             self.assertEqual(relationship["source_evolution_run_id"], "source-run-evolution")
             self.assertEqual(relationship["source_generation"], 1)
             self.assertEqual(branch_doc["generations"][0], source_doc["generations"][0])
+
+    def test_generation_constraints_roundtrip_and_evolution_resume_compatibility(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            mapping = _workflow_mapping(
+                root / "out",
+                run_id="constraint-config",
+                campaign_type="evolutionary",
+                scientific_execution=("generate", "analyze", "evolve"),
+                max_generations=2,
+                constraints=_linear_constraints(),
+            )
+            config = WorkflowConfig.from_mapping(mapping)
+
+            self.assertEqual(
+                WorkflowConfig.from_mapping(config.to_dict()).generation.constraints.to_dict(),
+                config.generation.constraints.to_dict(),
+            )
+
+            factory = InsertGateMutationFactory(
+                constraints=config.generation.constraints,
+                created_at=CREATED_AT,
+            )
+            result = WorkflowRunner(config).run(candidate_factory=factory)
+
+            first_doc = json.loads(result.evolution_run_path.read_text(encoding="utf-8"))
+            self.assertEqual([generation["generation_index"] for generation in first_doc["generations"]], [0, 1])
+            self.assertEqual(
+                first_doc["configuration"]["mutation_policy"]["structural_constraints"],
+                config.generation.constraints.to_dict(),
+            )
+
+            resumed_config = WorkflowConfig.from_mapping(
+                _workflow_mapping(
+                    root / "out",
+                    run_id="constraint-config",
+                    campaign_type="evolutionary",
+                    scientific_execution=("evolve",),
+                    artifacts={"evolution_run": str(result.evolution_run_path)},
+                    max_generations=3,
+                    constraints=_linear_constraints(),
+                ),
+            )
+            resumed = WorkflowRunner(resumed_config).run(
+                candidate_factory=InsertGateMutationFactory(
+                    constraints=resumed_config.generation.constraints,
+                    created_at=CREATED_AT,
+                ),
+            )
+            resumed_doc = json.loads(resumed.evolution_run_path.read_text(encoding="utf-8"))
+            self.assertEqual([generation["generation_index"] for generation in resumed_doc["generations"]], [0, 1, 2])
+            self.assertEqual(resumed_doc["metadata"]["workflow"]["relationship"]["type"], "continuation")
+
+    def test_changed_generation_constraints_require_explicit_branch(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            source_mapping = _workflow_mapping(
+                root / "out",
+                run_id="constraint-source",
+                campaign_type="evolutionary",
+                scientific_execution=("generate", "analyze", "evolve"),
+                max_generations=2,
+                constraints=_linear_constraints(),
+            )
+            source_config = WorkflowConfig.from_mapping(source_mapping)
+            source = WorkflowRunner(source_config).run(
+                candidate_factory=InsertGateMutationFactory(
+                    constraints=source_config.generation.constraints,
+                    created_at=CREATED_AT,
+                ),
+            )
+
+            changed = _linear_constraints()
+            changed["connectivity"] = {
+                "n_qubits": 4,
+                "edges": [[0, 1], [2, 3]],
+            }
+            with self.assertRaisesRegex(WorkflowConfigError, "branch required"):
+                WorkflowRunner(
+                    WorkflowConfig.from_mapping(
+                        _workflow_mapping(
+                            root / "out",
+                            run_id="constraint-source",
+                            campaign_type="evolutionary",
+                            scientific_execution=("evolve",),
+                            artifacts={"evolution_run": str(source.evolution_run_path)},
+                            max_generations=3,
+                            constraints=changed,
+                        ),
+                    ),
+                ).run(
+                    candidate_factory=InsertGateMutationFactory(
+                        constraints=ConstraintSet.from_mapping(changed),
+                        created_at=CREATED_AT,
+                    ),
+                )
 
 
 if __name__ == "__main__":

@@ -16,6 +16,7 @@ from verfeinert.core import current_git_commit, ensure_output_root, stable_hash,
 from verfeinert.core.schema_resources import load_schema as load_packaged_schema
 from verfeinert.core.validation import CoreValidationError, require_identifier, require_non_empty_text
 
+from ..constraints import ConstraintSet, validate_candidate_constraints
 from ..operations import DEFAULT_GATE_REGISTRY
 from ..validation import GeneratorValidationError
 
@@ -50,6 +51,7 @@ class CandidateJsonExportConfig:
     discover_git_commit: bool = True
     input_hashes: Mapping[str, str] = field(default_factory=dict)
     gate_namespace: str = DEFAULT_GATE_NAMESPACE
+    constraints: ConstraintSet | None = None
     metadata: Mapping[str, Any] = field(default_factory=dict)
     hash_schema_version: str = CANONICAL_CANDIDATE_HASH_SCHEMA_VERSION
 
@@ -72,6 +74,8 @@ class CandidateJsonExportConfig:
             "hash_schema_version",
             require_non_empty_text(self.hash_schema_version, "hash_schema_version"),
         )
+        if self.constraints is not None and not isinstance(self.constraints, ConstraintSet):
+            object.__setattr__(self, "constraints", ConstraintSet.from_mapping(self.constraints))  # type: ignore[arg-type]
         object.__setattr__(self, "input_hashes", _hash_mapping(self.input_hashes))
         object.__setattr__(self, "metadata", to_json_safe(dict(self.metadata)))
 
@@ -119,7 +123,8 @@ def export_candidate_json(
         "metadata": _canonical_metadata(source, export_config),
         "provenance": _canonical_provenance(source, lineage, export_config),
     }
-    return validate_candidate_json(candidate)
+    validated = validate_candidate_json(candidate)
+    return validate_candidate_constraints(validated, export_config.constraints)
 
 
 def write_candidate_json(
@@ -387,6 +392,8 @@ def _canonical_metadata(source: Mapping[str, Any], config: CandidateJsonExportCo
     for key in ("template_id", "ansatz_id", "layer", "recipe_id", "source_backend_name"):
         if source.get(key) is not None:
             payload[key] = source[key]
+    if config.constraints is not None:
+        payload["structural_constraints"] = config.constraints.to_dict()
     payload.update(dict(config.metadata))
     return to_json_safe(payload)
 

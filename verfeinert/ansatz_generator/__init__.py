@@ -30,7 +30,7 @@ from .compilation import (
     write_candidate_staged_package,
 )
 from .connectivity import Connectivity
-from .constraints import ConstraintSet
+from .constraints import ConstraintSet, validate_candidate_constraints
 from .exporters import (
     CANONICAL_CANDIDATE_HASH_SCHEMA_VERSION,
     CANDIDATE_SCHEMA_VERSION,
@@ -141,6 +141,7 @@ __all__ = [
     "structural_hash_operations",
     "swap_first_last_gate_on_wire",
     "validate_campaign_spec",
+    "validate_candidate_constraints",
     "write_callable_module",
     "write_canonical_staged_package_json",
     "write_candidate_json",
