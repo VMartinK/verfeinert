@@ -84,6 +84,7 @@ POSTPROCESSING_ALIASES = {
     "visualization": "visualization",
     "plot": "visualization",
 }
+SUPPORTED_OBSERVER_ERROR_POLICIES = ("raise", "record_warning")
 
 
 @dataclass(frozen=True)
@@ -624,6 +625,51 @@ class WorkflowCheckpointConfig:
 
 
 @dataclass(frozen=True)
+class WorkflowObservabilityConfig:
+    """Configuration for workflow lifecycle events."""
+
+    event_log_enabled: bool = False
+    observer_error_policy: str = "raise"
+
+    def __post_init__(self) -> None:
+        object.__setattr__(
+            self,
+            "event_log_enabled",
+            require_bool(self.event_log_enabled, "observability.event_log_enabled"),
+        )
+        policy = _non_empty_text(
+            self.observer_error_policy,
+            "observability.observer_error_policy",
+        ).lower()
+        if policy not in SUPPORTED_OBSERVER_ERROR_POLICIES:
+            raise WorkflowConfigError(
+                "observability.observer_error_policy must be raise or record_warning.",
+            )
+        object.__setattr__(self, "observer_error_policy", policy)
+
+    @classmethod
+    def from_mapping(cls, mapping: Mapping[str, Any]) -> "WorkflowObservabilityConfig":
+        """Build observability config from parsed YAML/Python data."""
+        data = dict(mapping)
+        event_log = data.get("event_log", {})
+        event_log_enabled = data.get("event_log_enabled")
+        if event_log_enabled is None and isinstance(event_log, Mapping):
+            event_log_enabled = event_log.get("enabled")
+        return cls(
+            event_log_enabled=bool(event_log_enabled),
+            observer_error_policy=data.get("observer_error_policy", "raise"),
+        )
+
+    def to_dict(self) -> dict[str, Any]:
+        """Return JSON-safe observability configuration."""
+        return {
+            "event_log_enabled": self.event_log_enabled,
+            "event_log": {"enabled": self.event_log_enabled},
+            "observer_error_policy": self.observer_error_policy,
+        }
+
+
+@dataclass(frozen=True)
 class WorkflowConfig:
     """Top-level configuration for one public workflow run."""
 
@@ -641,6 +687,7 @@ class WorkflowConfig:
     comparisons: tuple[WorkflowComparisonConfig, ...] = ()
     resume: WorkflowResumeConfig = field(default_factory=WorkflowResumeConfig)
     checkpoint: WorkflowCheckpointConfig = field(default_factory=WorkflowCheckpointConfig)
+    observability: WorkflowObservabilityConfig = field(default_factory=WorkflowObservabilityConfig)
     analysis_result_reuse: dict[str, Any] = field(default_factory=dict)
     execution: ExecutionConfig = field(default_factory=ExecutionConfig)
     random_seed: int | None = None
@@ -709,6 +756,8 @@ class WorkflowConfig:
             raise WorkflowConfigError("resume must be WorkflowResumeConfig.")
         if not isinstance(self.checkpoint, WorkflowCheckpointConfig):
             raise WorkflowConfigError("checkpoint must be WorkflowCheckpointConfig.")
+        if not isinstance(self.observability, WorkflowObservabilityConfig):
+            raise WorkflowConfigError("observability must be WorkflowObservabilityConfig.")
         object.__setattr__(
             self,
             "analysis_result_reuse",
@@ -736,6 +785,7 @@ class WorkflowConfig:
         artifacts = data.get("artifacts", workflow.get("artifacts", {}))
         resume = data.get("resume", workflow.get("resume", {}))
         checkpoint = data.get("checkpoint", workflow.get("checkpoint", {}))
+        observability = data.get("observability", workflow.get("observability", {}))
         analysis_result_reuse = _first_non_none(
             data.get("analysis_result_reuse"),
             workflow.get("analysis_result_reuse"),
@@ -772,6 +822,11 @@ class WorkflowConfig:
                 if isinstance(checkpoint, WorkflowCheckpointConfig)
                 else WorkflowCheckpointConfig.from_mapping(dict(checkpoint))
             ),
+            observability=(
+                observability
+                if isinstance(observability, WorkflowObservabilityConfig)
+                else WorkflowObservabilityConfig.from_mapping(dict(observability))
+            ),
             analysis_result_reuse=dict(analysis_result_reuse),
             execution=(
                 execution
@@ -802,6 +857,7 @@ class WorkflowConfig:
                 "stages": list(self.stages),
                 "resume": self.resume.to_dict(),
                 "checkpoint": self.checkpoint.to_dict(),
+                "observability": self.observability.to_dict(),
                 "analysis_result_reuse": dict(self.analysis_result_reuse),
             },
             "stages": list(self.stages),
@@ -811,6 +867,7 @@ class WorkflowConfig:
             "artifacts": self.artifacts.to_dict(),
             "comparisons": [item.to_dict() for item in self.comparisons],
             "checkpoint": self.checkpoint.to_dict(),
+            "observability": self.observability.to_dict(),
             "execution": self.execution.to_dict(),
             "metadata": dict(self.metadata),
         }
@@ -1018,5 +1075,6 @@ __all__ = [
     "WorkflowCheckpointConfig",
     "WorkflowConfig",
     "WorkflowConfigError",
+    "WorkflowObservabilityConfig",
     "WorkflowResumeConfig",
 ]

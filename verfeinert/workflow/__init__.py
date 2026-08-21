@@ -10,6 +10,7 @@ from .config import (
     WorkflowComparisonSourceConfig,
     WorkflowConfig,
     WorkflowConfigError,
+    WorkflowObservabilityConfig,
     WorkflowResumeConfig,
 )
 from .checkpoints import (
@@ -21,6 +22,12 @@ from .checkpoints import (
     workflow_checkpoint_fingerprint,
     write_workflow_checkpoint_json,
 )
+from .events import (
+    WORKFLOW_EVENT_SCHEMA_VERSION,
+    WorkflowEvent,
+    WorkflowEventRecorder,
+    read_workflow_event_log,
+)
 from .provenance import workflow_provenance
 from .runner import WorkflowResult, WorkflowRunner, run_workflow
 
@@ -30,6 +37,7 @@ __all__ = [
     "GenerationStageConfig",
     "WORKFLOW_CHECKPOINT_FINGERPRINT_VERSION",
     "WORKFLOW_CHECKPOINT_SCHEMA_VERSION",
+    "WORKFLOW_EVENT_SCHEMA_VERSION",
     "WorkflowArtifactInputs",
     "WorkflowCheckpointConfig",
     "WorkflowCheckpointError",
@@ -37,10 +45,14 @@ __all__ = [
     "WorkflowComparisonSourceConfig",
     "WorkflowConfig",
     "WorkflowConfigError",
+    "WorkflowEvent",
+    "WorkflowEventRecorder",
+    "WorkflowObservabilityConfig",
     "WorkflowResumeConfig",
     "WorkflowResult",
     "WorkflowRunner",
     "read_workflow_checkpoint_json",
+    "read_workflow_event_log",
     "run_workflow",
     "validate_workflow_checkpoint_document",
     "workflow_checkpoint_fingerprint",

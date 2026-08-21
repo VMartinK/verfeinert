@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Iterable, Mapping, Sequence
+from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
@@ -88,6 +88,7 @@ from .checkpoints import (
     write_workflow_checkpoint_json,
 )
 from .config import WorkflowConfig, WorkflowConfigError
+from .events import WorkflowEvent, WorkflowEventRecorder
 from .provenance import workflow_provenance
 
 
@@ -115,6 +116,7 @@ class WorkflowResult:
     comparison_csv_paths: tuple[Path, ...] = ()
     visualization_paths: tuple[Path, ...] = ()
     checkpoint_path: Path | None = None
+    event_log_path: Path | None = None
     candidate_ids: tuple[str, ...] = ()
     analysis_result_ids: tuple[str, ...] = ()
     survivor_candidate_ids: tuple[str, ...] = ()
@@ -157,6 +159,7 @@ class WorkflowResult:
                 "comparison_csv_paths": [str(path) for path in self.comparison_csv_paths],
                 "visualization_paths": [str(path) for path in self.visualization_paths],
                 "checkpoint_path": str(self.checkpoint_path) if self.checkpoint_path else None,
+                "event_log_path": str(self.event_log_path) if self.event_log_path else None,
                 "candidate_ids": list(self.candidate_ids),
                 "analysis_result_ids": list(self.analysis_result_ids),
                 "survivor_candidate_ids": list(self.survivor_candidate_ids),
@@ -279,6 +282,53 @@ class WorkflowRunner:
         analysis_result_sources: Sequence[str | Path | Mapping[str, Any]] = (),
         evolution_run_source: str | Path | Mapping[str, Any] | None = None,
         candidate_factory: Any | None = None,
+        event_sink: Callable[[WorkflowEvent], Any] | None = None,
+    ) -> WorkflowResult:
+        """Run only the requested workflow operations over compatible artifacts."""
+        config = self.config
+        event_recorder = _workflow_event_recorder(config, event_sink=event_sink)
+        event_recorder.emit(
+            "run_started",
+            status="running",
+            metadata={
+                "scientific_execution": list(config.scientific_execution),
+                "postprocessing": list(config.postprocessing),
+            },
+        )
+        try:
+            return self._run_impl(
+                candidate_records=candidate_records,
+                metric_callables=metric_callables,
+                reference_analysis_results=reference_analysis_results,
+                candidate_sources=candidate_sources,
+                staged_package_sources=staged_package_sources,
+                analysis_result_sources=analysis_result_sources,
+                evolution_run_source=evolution_run_source,
+                candidate_factory=candidate_factory,
+                event_recorder=event_recorder,
+            )
+        except Exception as exc:
+            event_recorder.emit(
+                "run_failed",
+                status="failed",
+                reason="exception",
+                message=str(exc),
+                metadata={"error_type": type(exc).__name__},
+            )
+            raise
+
+    def _run_impl(
+        self,
+        *,
+        candidate_records: Sequence[Mapping[str, Any] | Any] | None = None,
+        metric_callables: Mapping[str, Any] | None = None,
+        reference_analysis_results: Sequence[Mapping[str, Any]] = (),
+        candidate_sources: Sequence[str | Path | Mapping[str, Any]] = (),
+        staged_package_sources: Sequence[str | Path | Mapping[str, Any]] = (),
+        analysis_result_sources: Sequence[str | Path | Mapping[str, Any]] = (),
+        evolution_run_source: str | Path | Mapping[str, Any] | None = None,
+        candidate_factory: Any | None = None,
+        event_recorder: WorkflowEventRecorder,
     ) -> WorkflowResult:
         """Run only the requested workflow operations over compatible artifacts."""
         config = self.config
@@ -348,6 +398,7 @@ class WorkflowRunner:
 
         generated_package = None
         if stage_plan.scientific_requested("generate"):
+            event_recorder.emit("stage_started", stage="generate", status="running")
             generation_output = self._run_generation_stage(
                 candidate_records=candidate_records,
                 package_output_root=package_output_root,
@@ -357,12 +408,23 @@ class WorkflowRunner:
             executed.append("generate")
             candidate_artifacts = list(generation_output.candidate_artifacts)
             staged_artifacts = list(generation_output.staged_artifacts)
+            event_recorder.emit(
+                "stage_completed",
+                stage="generate",
+                status="completed",
+                metadata={
+                    "candidate_count": len(candidate_artifacts),
+                    "staged_package_count": len(staged_artifacts),
+                },
+            )
         elif candidate_records is not None:
             raise WorkflowConfigError("candidate_records require the generate operation.")
 
         analysis_result_paths: tuple[Path, ...] = ()
         analysis_collection: AnalysisResultCollection | None = None
         if stage_plan.scientific_requested("analyze"):
+            event_recorder.emit("stage_started", stage="analyze", status="running")
+            event_recorder.emit("analysis_started", stage="analyze", status="running")
             analysis_output = self._run_analysis_stage(
                 generated_package=generated_package,
                 candidate_artifacts=candidate_artifacts,
@@ -379,6 +441,18 @@ class WorkflowRunner:
             analysis_result_paths = analysis_output.analysis_result_paths
             analysis_collection = analysis_output.analysis_collection
             executed.append("analyze")
+            event_recorder.emit(
+                "analysis_completed",
+                stage="analyze",
+                status="completed",
+                metadata={"analysis_result_count": len(analysis_result_paths)},
+            )
+            event_recorder.emit(
+                "stage_completed",
+                stage="analyze",
+                status="completed",
+                metadata={"analysis_result_count": len(analysis_result_paths)},
+            )
         elif all_analysis_sources:
             analysis_collection = AnalysisResultCollection.from_sources(
                 all_analysis_sources,
@@ -393,6 +467,7 @@ class WorkflowRunner:
         survivor_candidate_ids: tuple[str, ...] = ()
         rejected_candidate_ids: tuple[str, ...] = ()
         if stage_plan.scientific_requested("evolve"):
+            event_recorder.emit("stage_started", stage="evolve", status="running")
             evolution_output = self._run_evolution_stage(
                 analysis_collection=analysis_collection,
                 candidate_artifacts=candidate_artifacts,
@@ -419,6 +494,16 @@ class WorkflowRunner:
             rejected_candidate_ids = evolution_output.rejected_candidate_ids
             if "evolve" not in executed:
                 executed.append("evolve")
+            event_recorder.emit(
+                "stage_completed",
+                stage="evolve",
+                status="completed",
+                metadata={
+                    "evolution_run_path": str(evolution_path) if evolution_path else None,
+                    "survivor_count": len(survivor_candidate_ids),
+                    "rejected_count": len(rejected_candidate_ids),
+                },
+            )
         elif resolved_evolution_source is not None:
             consumed_artifacts.append(_artifact_record("evolution_run", _source_uri(resolved_evolution_source)))
             reused_artifacts.append(_artifact_record("evolution_run", _source_uri(resolved_evolution_source)))
@@ -432,6 +517,8 @@ class WorkflowRunner:
             else:
                 raise WorkflowConfigError("requested postprocessing has no AnalysisResult input.")
 
+        if requested_postprocessing:
+            event_recorder.emit("stage_started", stage="postprocessing", status="running")
         postprocessing_output = self._run_postprocessing_stage(
             stage_plan=stage_plan,
             analysis_collection=analysis_collection,
@@ -453,6 +540,13 @@ class WorkflowRunner:
         comparison_json_paths = postprocessing_output.comparison_json_paths
         comparison_csv_paths = postprocessing_output.comparison_csv_paths
         visualization_paths = postprocessing_output.visualization_paths
+        if requested_postprocessing:
+            event_recorder.emit(
+                "stage_completed",
+                stage="postprocessing",
+                status="completed",
+                metadata={"executed_operations": list(dict.fromkeys(executed))},
+            )
 
         checkpoint_path: Path | None = None
         if config.checkpoint.enabled:
@@ -491,6 +585,27 @@ class WorkflowRunner:
                     document_id=checkpoint_doc["checkpoint_id"],
                 ),
             )
+            event_recorder.emit(
+                "checkpoint_written",
+                status="completed",
+                metadata={"checkpoint_path": str(checkpoint_path)},
+            )
+
+        warnings.extend(event_recorder.warnings)
+        for warning in tuple(dict.fromkeys(warnings)):
+            event_recorder.emit(
+                "warning",
+                status="warning",
+                message=warning,
+            )
+        event_recorder.emit(
+            "run_completed",
+            status="completed",
+            metadata={"executed_operations": list(dict.fromkeys(executed))},
+        )
+        event_log_path = event_recorder.event_log_path
+        if event_log_path is not None:
+            produced_artifacts.append(_artifact_record("workflow_event_log", str(event_log_path)))
 
         candidate_ids = tuple(
             dict.fromkeys(
@@ -526,6 +641,7 @@ class WorkflowRunner:
                 "executed_operations": list(dict.fromkeys(executed)),
                 "reused_artifact_count": len(reused_artifacts),
                 "checkpoint_written": checkpoint_path is not None,
+                "event_log_written": event_log_path is not None,
                 "candidate_generation_executed": "generate" in executed,
                 "analysis_executed": "analyze" in executed,
                 "evolution_exported": evolution_path is not None,
@@ -572,6 +688,7 @@ class WorkflowRunner:
             comparison_csv_paths=tuple(comparison_csv_paths),
             visualization_paths=tuple(visualization_paths),
             checkpoint_path=checkpoint_path,
+            event_log_path=event_log_path,
             candidate_ids=candidate_ids,
             analysis_result_ids=analysis_result_ids,
             survivor_candidate_ids=survivor_candidate_ids,
@@ -1378,6 +1495,24 @@ def _workflow_stage_plan(config: WorkflowConfig) -> _WorkflowStagePlan:
     return _WorkflowStagePlan(
         scientific=config.scientific_execution,
         postprocessing=config.postprocessing,
+    )
+
+
+def _workflow_event_recorder(
+    config: WorkflowConfig,
+    *,
+    event_sink: Callable[[WorkflowEvent], Any] | None,
+) -> WorkflowEventRecorder:
+    event_log_path = (
+        Path(config.output_root) / config.run_id / "observability" / "events.jsonl"
+        if config.observability.event_log_enabled
+        else None
+    )
+    return WorkflowEventRecorder(
+        run_id=config.run_id,
+        event_sink=event_sink,
+        event_log_path=event_log_path,
+        observer_error_policy=config.observability.observer_error_policy,
     )
 
 
@@ -2743,6 +2878,7 @@ def run_workflow(
     analysis_result_sources: Sequence[str | Path | Mapping[str, Any]] = (),
     evolution_run_source: str | Path | Mapping[str, Any] | None = None,
     candidate_factory: Any | None = None,
+    event_sink: Callable[[WorkflowEvent], Any] | None = None,
 ) -> WorkflowResult:
     """Run a workflow through the public orchestration entry point."""
     return WorkflowRunner(config).run(
@@ -2754,6 +2890,7 @@ def run_workflow(
         analysis_result_sources=analysis_result_sources,
         evolution_run_source=evolution_run_source,
         candidate_factory=candidate_factory,
+        event_sink=event_sink,
     )
 
 

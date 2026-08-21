@@ -168,6 +168,21 @@ StagedPackage, AnalysisResult, ComparisonResult, and EvolutionRun entry points
 as caller-supplied artifacts. Evolution continuation still uses the
 evolver-owned EvolutionRun state-machine boundary.
 
+## Observability
+
+`workflow.observability.event_log.enabled: true` writes a deterministic JSONL
+workflow event log under
+`<output_root>/<run_id>/observability/events.jsonl`. Events are JSON-safe
+`WorkflowEvent` records with monotonic sequence numbers, event type, run ID,
+optional stage/status/reason/message, and compact metadata.
+
+Python callers may also pass `event_sink` to `WorkflowRunner.run()` or
+`run_workflow()`. The sink receives `WorkflowEvent` objects in the same order
+as the event log. Observer errors are governed by
+`workflow.observability.observer_error_policy`: `raise` fails truthfully, while
+`record_warning` records an `observer_error` event and includes a workflow
+warning without changing scientific execution order.
+
 ## Comparison And Postprocessing
 
 Comparison uses explicitly configured sources. It validates scientific
