@@ -82,6 +82,12 @@ def _assert_publication_legend(legend) -> None:
     assert frame.get_alpha() == 1.0
 
 
+def _assert_upper_headroom(axis, data_max: float) -> None:
+    bottom, top = axis.get_ylim()
+    assert top > data_max
+    assert (top - data_max) / (top - bottom) > 0.10
+
+
 def test_i1_individual_classification_structural_contract() -> None:
     reference = _series("eligible reference", (_point("r1", 0.1, 1.0), _point("r2", 0.2, 1.2)))
     reference_frontier = _series("reference frontier", (_point("rf1", 0.1, 1.0), _point("rf2", 0.3, 1.4)))
@@ -114,6 +120,7 @@ def test_i1_individual_classification_structural_contract() -> None:
         "new Pareto optimal",
     ]
     _assert_publication_legend(axis.get_legend())
+    _assert_upper_headroom(axis, 1.7)
     assert axis.get_title() == ""
     pyplot.close(figure)
 
@@ -140,6 +147,10 @@ def test_i2_individual_joint_frontiers_preserves_frontier_order_and_limits() -> 
     assert _legend_labels(axis) == ["t0", "t1", "t2"]
     _assert_publication_legend(axis.get_legend())
     assert axis.get_title() == ""
+
+    auto_figure = plot_individual_joint_frontiers(frontiers)
+    _assert_upper_headroom(auto_figure.axes[0], 2.0)
+    pyplot.close(auto_figure)
     pyplot.close(figure)
 
 
@@ -165,6 +176,7 @@ def test_i3_individual_frontier_comparison_uses_reference_and_primary_styles() -
     assert axis.get_legend()._ncols == 2
     assert _legend_labels(axis) == ["reference 0.1", "reference 0.2", "optimized 0.1", "optimized 0.2"]
     _assert_publication_legend(axis.get_legend())
+    _assert_upper_headroom(axis, 2.0)
     assert axis.get_title() == ""
     pyplot.close(figure)
 

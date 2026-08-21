@@ -89,6 +89,22 @@ def _assert_publication_legend(legend) -> None:
     assert frame.get_alpha() == 1.0
 
 
+def _assert_upper_headroom(axis, data_max: float) -> None:
+    bottom, top = axis.get_ylim()
+    assert top > data_max
+    assert (top - data_max) / (top - bottom) > 0.10
+
+
+def _assert_metric_grid_horizontal_layout(axes) -> None:
+    positions = [axis.get_position() for axis in axes]
+    assert round(positions[0].x0, 6) == round(positions[2].x0, 6)
+    assert round(positions[1].x0, 6) == round(positions[3].x0, 6)
+    assert len({round(position.width, 6) for position in positions}) == 1
+    assert positions[1].x0 - positions[0].x1 > 0.08
+    assert round(positions[0].y0, 6) == round(positions[1].y0, 6)
+    assert round(positions[2].y0, 6) == round(positions[3].y0, 6)
+
+
 def test_e1_generation_candidate_counts_uses_two_panel_layout_and_shared_legend() -> None:
     figure = plot_generation_candidate_counts(
         (_metric("0.1", (3, 5, 8)), _metric("0.2", (2, 4, 7))),
@@ -122,6 +138,7 @@ def test_e2_generation_metric_grid_total_population_contract() -> None:
     assert [text.get_text() for text in figure.legends[0].get_texts()] == ["0.1", "0.2"]
     assert figure.legends[0]._loc == 1
     _assert_publication_legend(figure.legends[0])
+    _assert_metric_grid_horizontal_layout(figure.axes)
     pyplot.close(figure)
 
 
@@ -133,6 +150,7 @@ def test_e3_generation_metric_grid_generation_local_pareto_contract() -> None:
     assert figure.axes[1].get_ylabel() == "Mean expressibility"
     assert list(figure.axes[2].lines[0].get_xdata()) == [0, 1, 2]
     assert list(figure.axes[2].lines[0].get_ydata()) == [3.0, 3.1, 3.2]
+    _assert_metric_grid_horizontal_layout(figure.axes)
     pyplot.close(figure)
 
 
@@ -143,6 +161,7 @@ def test_e4_generation_metric_grid_optimized_frontier_contract() -> None:
     assert [axis.get_title() for axis in figure.axes] == ["", "", "", ""]
     assert figure.axes[3].get_ylabel() == "Mean structural cost"
     assert list(figure.axes[3].lines[1].get_ydata()) == [4.3, 4.4, 4.5]
+    _assert_metric_grid_horizontal_layout(figure.axes)
     pyplot.close(figure)
 
 
@@ -168,6 +187,7 @@ def test_e5_frontier_evolution_uses_threshold_color_and_generation_alpha() -> No
     assert axis.get_xlabel() == PUBLICATION_TRAINABILITY_LABEL
     assert axis.get_ylabel() == PUBLICATION_EXPRESSIBILITY_LABEL
     _assert_publication_legend(axis.get_legend())
+    _assert_upper_headroom(axis, 1.9)
     assert axis.get_title() == ""
 
     other = plot_frontier_evolution(frontiers, 0.2, threshold_color="#654321")
@@ -194,10 +214,15 @@ def test_e6_frontier_generation_comparison_uses_preclassified_improvement_points
     _assert_size(figure, (8.0, 4.5))
     assert len(figure.axes) == 2
     assert [axis.get_title() for axis in figure.axes] == ["Previous frontier", "Generation 2"]
+    assert [axis.get_title(loc="left") for axis in figure.axes] == ["", ""]
+    assert [axis.get_title(loc="right") for axis in figure.axes] == ["", ""]
     assert figure._suptitle is None
     assert round(figure.axes[0].get_position().width, 6) == round(figure.axes[1].get_position().width, 6)
     assert round(figure.axes[0].get_position().height, 6) == round(figure.axes[1].get_position().height, 6)
-    assert len([artist for artist in figure.artists if artist.get_gid() == "verfeinert-panel-separator"]) == 1
+    separators = [artist for artist in figure.artists if artist.get_gid() == "verfeinert-panel-separator"]
+    assert len(separators) == 1
+    separator_x = separators[0].get_xdata()[0]
+    assert figure.axes[0].get_position().x1 < separator_x < figure.axes[1].get_position().x0
     assert len(figure.axes[0].lines) == 2
     assert len(figure.axes[1].collections) == 2
     assert _coords(figure.axes[1].collections[0]) == [(0.35, 1.5)]
@@ -205,6 +230,8 @@ def test_e6_frontier_generation_comparison_uses_preclassified_improvement_points
     assert figure.axes[1].collections[1].get_sizes()[0] == 78
     _assert_publication_legend(figure.axes[0].get_legend())
     _assert_publication_legend(figure.axes[1].get_legend())
+    _assert_upper_headroom(figure.axes[0], 1.2)
+    _assert_upper_headroom(figure.axes[1], 1.8)
     pyplot.close(figure)
 
 
@@ -221,6 +248,7 @@ def test_e7_final_frontier_vs_eligible_draws_only_prepared_background_and_fronti
     assert len(axis.lines) == 1
     assert list(axis.lines[0].get_xdata()) == [0.3, 0.4]
     _assert_publication_legend(axis.get_legend())
+    _assert_upper_headroom(axis, 1.7)
     assert axis.get_title() == ""
     pyplot.close(figure)
 

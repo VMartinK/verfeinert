@@ -10,6 +10,7 @@ from ..collections import AnalysisResultCollection, cost_value, metric_value
 from .export import require_pyplot
 from .models import BarSeries, MetricSeries, ObjectivePoint, ObjectiveSeries, TableSpec, VisualizationModelError
 from .primitives import (
+    apply_objective_vertical_headroom,
     ordered_lineage_color_map,
     plot_publication_table,
     setup_publication_objective_axis,
@@ -95,6 +96,7 @@ def plot_generation_metric_grid(
         _plot_metric_lines(axis, panel.series, style=style)
         axis.set_title("")
         setup_publication_objective_axis(axis, xlabel=x_label, ylabel=panel.y_label, style=style)
+    _space_metric_grid_horizontally(figure, axes)
     _shared_figure_legend(figure, axes[0], style=style)
     return figure
 
@@ -128,6 +130,7 @@ def plot_frontier_evolution(
             label=frontier.label,
         )
     setup_publication_objective_axis(axis, xlabel=x_label, ylabel=y_label, style=style)
+    apply_objective_vertical_headroom(axis)
     _axis_legend(axis, style=style)
     return figure
 
@@ -152,11 +155,13 @@ def plot_frontier_generation_comparison(
         2,
         figsize=style.layouts.standard,
         dpi=style.dpi,
-        gridspec_kw={"width_ratios": (1, 1), "wspace": 0.24},
+        gridspec_kw={"width_ratios": (1, 1), "wspace": 0.28},
     )
+    figure.subplots_adjust(left=0.105, right=0.97)
     axes = tuple(axes_array)
     panel_titles = ("Previous frontier", "Current frontier" if generation is None else f"Generation {generation}")
     for axis, title in zip(axes, panel_titles):
+        axis.set_title("")
         if reference_frontier is not None:
             axis.plot(
                 _x(reference_frontier),
@@ -168,7 +173,7 @@ def plot_frontier_generation_comparison(
                 label=reference_frontier.label,
             )
         setup_publication_objective_axis(axis, xlabel=x_label, ylabel=y_label, style=style)
-        axis.set_title(title, fontsize=style.title_size)
+        axis.set_title(title, loc="center", fontsize=style.title_size, pad=10)
     axes[0].plot(
         _x(previous_frontier),
         _y(previous_frontier),
@@ -189,6 +194,7 @@ def plot_frontier_generation_comparison(
     )
     _scatter_improvement_points(axes[1], improvement_points, style=style)
     for axis in axes:
+        apply_objective_vertical_headroom(axis)
         _axis_legend(axis, style=style)
     _add_panel_separator(figure, axes, pyplot=pyplot, style=style)
     return figure
@@ -229,6 +235,7 @@ def plot_final_frontier_vs_eligible(
         label=final_frontier.label,
     )
     setup_publication_objective_axis(axis, xlabel=x_label, ylabel=y_label, style=style)
+    apply_objective_vertical_headroom(axis)
     _axis_legend(axis, style=style)
     return figure
 
@@ -351,6 +358,11 @@ def _shared_figure_legend(figure, source_axis, *, style: VisualizationStyle) -> 
         fontsize=style.legend_size,
     )
     style_publication_legend(legend, style=style)
+
+
+def _space_metric_grid_horizontally(figure, axes: tuple[Any, ...]) -> None:
+    figure.subplots_adjust(left=0.14, right=0.965, wspace=0.42)
+    figure.align_ylabels(axes)
 
 
 def _axis_legend(axis, *, style: VisualizationStyle) -> None:

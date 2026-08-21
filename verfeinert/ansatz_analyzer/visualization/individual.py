@@ -7,7 +7,12 @@ from typing import Any
 
 from .export import require_pyplot
 from .models import BarSeries, ObjectivePoint, ObjectiveSeries, VisualizationModelError
-from .primitives import ordered_lineage_color_map, setup_publication_objective_axis, style_publication_legend
+from .primitives import (
+    apply_objective_vertical_headroom,
+    ordered_lineage_color_map,
+    setup_publication_objective_axis,
+    style_publication_legend,
+)
 from .styles import DEFAULT_STYLE, VisualizationStyle
 
 
@@ -102,6 +107,7 @@ def plot_individual_classification(
         )
 
     setup_publication_objective_axis(axis, xlabel=x_label, ylabel=y_label, style=style)
+    apply_objective_vertical_headroom(axis)
     _apply_legend(
         axis,
         legend_handles,
@@ -146,6 +152,8 @@ def plot_individual_joint_frontiers(
             label=frontier.label,
         )
     _finish_objective_axis(axis, x_label=x_label, y_label=y_label, xlim=xlim, ylim=ylim, style=style)
+    if ylim is None:
+        apply_objective_vertical_headroom(axis)
     _legend_from_axis(axis, style=style, bbox_to_anchor=(0.985, 0.985))
     return figure
 
@@ -187,6 +195,7 @@ def plot_individual_frontier_comparison(
             label=frontier.label,
         )
     setup_publication_objective_axis(axis, xlabel=x_label, ylabel=y_label, style=style)
+    apply_objective_vertical_headroom(axis)
     _legend_from_axis(
         axis,
         style=style,

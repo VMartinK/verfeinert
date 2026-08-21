@@ -13,6 +13,7 @@ from .styles import DEFAULT_STYLE, SemanticRoleStyle, VisualizationStyle
 
 PUBLICATION_LEGEND_ZORDER = 1000
 BAR_HEADROOM_FACTOR = 1.18
+OBJECTIVE_VERTICAL_HEADROOM_FRACTION = 0.22
 
 
 def setup_publication_objective_axis(
@@ -230,6 +231,19 @@ def apply_bar_headroom(
     axis.set_ylim(0.0, top)
 
 
+def apply_objective_vertical_headroom(
+    axis,
+    *,
+    fraction: float = OBJECTIVE_VERTICAL_HEADROOM_FRACTION,
+) -> None:
+    """Reserve upper data-space margin for objective-space publication legends."""
+    bottom, top = axis.get_ylim()
+    span = top - bottom
+    if span <= 0:
+        return
+    axis.set_ylim(bottom, top + span * float(fraction))
+
+
 def publication_table_figure_size(
     table: TableSpec,
     *,
@@ -325,8 +339,10 @@ def _rgb_hex(red: float, green: float, blue: float) -> str:
 
 __all__ = [
     "BAR_HEADROOM_FACTOR",
+    "OBJECTIVE_VERTICAL_HEADROOM_FRACTION",
     "PUBLICATION_LEGEND_ZORDER",
     "apply_bar_headroom",
+    "apply_objective_vertical_headroom",
     "apply_publication_legend",
     "grouped_categorical_bars",
     "ordered_lineage_color_map",

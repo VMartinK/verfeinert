@@ -92,6 +92,12 @@ def _assert_publication_legend(legend) -> None:
     assert frame.get_alpha() == 1.0
 
 
+def _assert_upper_headroom(axis, data_max: float) -> None:
+    bottom, top = axis.get_ylim()
+    assert top > data_max
+    assert (top - data_max) / (top - bottom) > 0.10
+
+
 def test_objective_series_preserves_positional_contract_and_keyword_score() -> None:
     points = (_point("legacy", 0.1, 1.0),)
 
@@ -156,6 +162,7 @@ def test_g_b_global_pareto_overview_draws_layers_and_global_frontiers_only() -> 
     assert axis.lines[0].get_markersize() == 4.2
     assert axis.lines[0].get_linewidth() == 2.0
     _assert_publication_legend(axis.get_legend())
+    _assert_upper_headroom(axis, 2.0)
     pyplot.close(figure)
 
 
@@ -194,6 +201,7 @@ def test_g_c_campaign_frontiers_include_reference_global_overlay_and_score_color
     assert campaigns[0].score == 0.35
     assert campaigns[1].score == 0.85
     _assert_publication_legend(axis.get_legend())
+    _assert_upper_headroom(axis, 1.8)
     pyplot.close(figure)
 
 
@@ -224,6 +232,7 @@ def test_g_d_global_pareto_score_map_uses_prepared_roles_and_score_values() -> N
     assert axis.lines[0].get_linestyle() == "--"
     assert axis.lines[1].get_color() == "#000000"
     _assert_publication_legend(axis.get_legend())
+    _assert_upper_headroom(axis, 2.0)
     pyplot.close(figure)
 
 
@@ -293,7 +302,7 @@ def test_g_g_global_contributions_use_two_shared_x_panels_with_independent_y_lab
 
 def test_g_h_global_lineages_preserves_lineage_order_and_prepared_counts() -> None:
     lineage_order = ("lineage-b", "lineage-a", "lineage-c")
-    eligible = BarSeries(categories=lineage_order, values=(8, 5, 3), label="Eligible")
+    eligible = BarSeries(categories=lineage_order, values=(5, 8, 3), label="Eligible")
     campaign = BarSeries(categories=lineage_order, values=(3, 1, 2), label="Campaign")
     global_counts = BarSeries(categories=lineage_order, values=(1, 0, 2), label="Global")
     points = _series(
@@ -313,10 +322,14 @@ def test_g_h_global_lineages_preserves_lineage_order_and_prepared_counts() -> No
     _assert_size(figure, (18.0, 9.5))
     assert len(left_axis.patches) == 6
     assert [patch.get_width() for patch in left_axis.patches[:3]] == [8.0, 5.0, 3.0]
-    assert [tick.get_text() for tick in left_axis.get_yticklabels()] == list(lineage_order)
-    assert [text.get_text() for text in left_axis.texts] == ["1", "0", "2"]
-    assert to_hex(left_axis.patches[0].get_facecolor()) == expected_colors["lineage-b"].lower()
-    assert "Bold number = Global-frontier members" in _legend_labels(left_axis)
+    assert [patch.get_width() for patch in left_axis.patches[3:]] == [1.0, 3.0, 2.0]
+    assert [tick.get_text() for tick in left_axis.get_yticklabels()] == ["lineage-a", "lineage-b", "lineage-c"]
+    assert left_axis.yaxis_inverted()
+    assert [text.get_text() for text in left_axis.texts] == ["0", "1", "2"]
+    assert to_hex(left_axis.patches[0].get_facecolor()) == expected_colors["lineage-a"].lower()
+    assert "Number = global-frontier members" in _legend_labels(left_axis)
+    assert left_axis.get_xlim()[1] >= 8.0 * 1.2
+    assert left_axis.get_position().width / right_axis.get_position().width > 0.60
     _assert_publication_legend(left_axis.get_legend())
     assert len(right_axis.collections) == 3
     assert _coords(right_axis.collections[0]) == [(0.1, 1.0)]
@@ -329,6 +342,7 @@ def test_g_h_global_lineages_preserves_lineage_order_and_prepared_counts() -> No
         "global optimized",
     ]
     _assert_publication_legend(right_axis.get_legend())
+    _assert_upper_headroom(right_axis, 2.0)
     pyplot.close(figure)
 
 

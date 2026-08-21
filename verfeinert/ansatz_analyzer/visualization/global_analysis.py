@@ -10,6 +10,7 @@ from .export import require_pyplot
 from .models import BarSeries, ObjectivePoint, ObjectiveSeries, TableSpec, VisualizationModelError
 from .primitives import (
     apply_bar_headroom,
+    apply_objective_vertical_headroom,
     ordered_lineage_color_map,
     plot_publication_table,
     setup_publication_objective_axis,
@@ -72,6 +73,7 @@ def plot_global_pareto(
             label=frontier.label,
         )
     setup_publication_objective_axis(axis, xlabel=x_label, ylabel=y_label, style=style)
+    apply_objective_vertical_headroom(axis)
     _axis_legend(axis, style=style)
     return figure
 
@@ -162,6 +164,7 @@ def plot_campaign_frontiers(
         label="_nolegend_",
     )
     setup_publication_objective_axis(axis, xlabel=x_label, ylabel=y_label, style=style)
+    apply_objective_vertical_headroom(axis)
     legend = axis.legend(
         loc="upper right",
         fontsize=7.5,
@@ -246,6 +249,7 @@ def plot_global_pareto_score_map(
         label=global_frontier_members.label,
     )
     setup_publication_objective_axis(axis, xlabel=x_label, ylabel=y_label, style=style)
+    apply_objective_vertical_headroom(axis)
     _axis_legend(axis, style=style)
     figure._verfeinert_colorbar = colorbar  # type: ignore[attr-defined]
     return figure
@@ -320,15 +324,17 @@ def plot_global_lineages(
         2,
         figsize=style.layouts.global_lineage,
         dpi=style.dpi,
-        gridspec_kw={"width_ratios": (1, 2), "wspace": 0.22},
+        gridspec_kw={"width_ratios": (1.35, 2), "wspace": 0.22},
     )
     left_axis, right_axis = tuple(axes_array)
     colors = ordered_lineage_color_map(lineage_order)
-    positions = list(range(len(eligible_counts.categories)))
-    eligible_values = _required_values(eligible_counts)
-    campaign_values = _required_values(campaign_frontier_counts)
-    global_values = _required_values(global_frontier_member_counts)
-    bar_colors = [colors[category] for category in eligible_counts.categories]
+    bar_categories, eligible_values, campaign_values, global_values = _lineage_bar_display_data(
+        eligible_counts,
+        campaign_frontier_counts,
+        global_frontier_member_counts,
+    )
+    positions = list(range(len(bar_categories)))
+    bar_colors = [colors[category] for category in bar_categories]
     left_axis.barh(
         positions,
         eligible_values,
@@ -355,8 +361,11 @@ def plot_global_lineages(
             zorder=12,
         )
     left_axis.set_yticks(positions)
-    left_axis.set_yticklabels(eligible_counts.categories)
+    left_axis.set_yticklabels(bar_categories)
+    left_axis.invert_yaxis()
     left_axis.set_xlabel("Candidates")
+    max_bar_value = max((*eligible_values, *campaign_values), default=0.0)
+    left_axis.set_xlim(0.0, max(1.0, max_bar_value * 1.22))
     handles, labels = left_axis.get_legend_handles_labels()
     handles.append(
         pyplot.Line2D(
@@ -366,10 +375,10 @@ def plot_global_lineages(
             marker="$1$",
             markersize=9,
             color="#202020",
-            label="Bold number = Global-frontier members",
+            label="Number = global-frontier members",
         ),
     )
-    labels.append("Bold number = Global-frontier members")
+    labels.append("Number = global-frontier members")
     left_legend = left_axis.legend(
         handles,
         labels,
@@ -404,6 +413,7 @@ def plot_global_lineages(
         label=global_frontier.label,
     )
     setup_publication_objective_axis(right_axis, xlabel=x_label, ylabel=y_label, style=style)
+    apply_objective_vertical_headroom(right_axis)
     _axis_legend(
         right_axis,
         style=style,
@@ -479,6 +489,29 @@ def _axis_legend(axis, *, style: VisualizationStyle, **legend_kwargs) -> None:
         **options,
     )
     style_publication_legend(legend, style=style)
+
+
+def _lineage_bar_display_data(
+    eligible_counts: BarSeries,
+    campaign_frontier_counts: BarSeries,
+    global_frontier_member_counts: BarSeries,
+) -> tuple[tuple[str, ...], list[float], list[float], list[float]]:
+    categories = eligible_counts.categories
+    if (
+        campaign_frontier_counts.categories != categories
+        or global_frontier_member_counts.categories != categories
+    ):
+        raise VisualizationModelError("G_H lineage count series must share categories in the same order.")
+    eligible_values = _required_values(eligible_counts)
+    campaign_values = _required_values(campaign_frontier_counts)
+    global_values = _required_values(global_frontier_member_counts)
+    display_indices = tuple(sorted(range(len(categories)), key=lambda index: (-eligible_values[index], index)))
+    return (
+        tuple(categories[index] for index in display_indices),
+        [eligible_values[index] for index in display_indices],
+        [campaign_values[index] for index in display_indices],
+        [global_values[index] for index in display_indices],
+    )
 
 
 def _is_reference_frontier(frontier: ObjectiveSeries) -> bool:
