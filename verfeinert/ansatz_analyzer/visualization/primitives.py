@@ -5,10 +5,18 @@ from __future__ import annotations
 from collections.abc import Sequence
 import colorsys
 import hashlib
+import math
 from typing import Any
 
+from .labels import PUBLICATION_EXPRESSIBILITY_LABEL, PUBLICATION_TRAINABILITY_LABEL
 from .models import BarSeries, ObjectiveSeries, TableSpec, VisualizationModelError
 from .styles import DEFAULT_STYLE, SemanticRoleStyle, VisualizationStyle
+
+PUBLICATION_LEGEND_ZORDER = 1000
+BAR_HEADROOM_FACTOR = 1.18
+OBJECTIVE_VERTICAL_HEADROOM_FRACTION = 0.22
+PUBLICATION_OBJECTIVE_VERTICAL_HEADROOM_FRACTION = 0.45
+OBJECTIVE_LEGEND_CLEARANCE_AXES_FRACTION = 0.04
 
 
 def setup_publication_objective_axis(
@@ -20,6 +28,10 @@ def setup_publication_objective_axis(
     grid: bool = True,
 ):
     """Apply shared publication objective-axis styling to an existing axis."""
+    if xlabel is None:
+        xlabel = PUBLICATION_TRAINABILITY_LABEL
+    if ylabel is None:
+        ylabel = PUBLICATION_EXPRESSIBILITY_LABEL
     if xlabel is not None:
         axis.set_xlabel(xlabel, fontsize=style.label_size)
     if ylabel is not None:
@@ -189,10 +201,96 @@ def apply_publication_legend(
     }
     options.update(legend_kwargs)
     legend = axis.legend(handles, labels, **options)
+    return style_publication_legend(legend, style=style)
+
+
+def style_publication_legend(
+    legend,
+    *,
+    style: VisualizationStyle = DEFAULT_STYLE,
+    zorder: int = PUBLICATION_LEGEND_ZORDER,
+):
+    """Apply opaque/high-zorder publication legend styling to an existing legend."""
+    if legend is None:
+        return None
+    legend.set_zorder(zorder)
     frame = legend.get_frame()
     frame.set_edgecolor(style.legend_edgecolor)
-    frame.set_alpha(style.legend_framealpha)
+    frame.set_alpha(1.0)
+    frame.set_facecolor(style.facecolor)
     return legend
+
+
+def apply_bar_headroom(
+    axis,
+    values: Sequence[float],
+    *,
+    factor: float = BAR_HEADROOM_FACTOR,
+) -> None:
+    """Reserve deterministic y-axis headroom above prepared bar values."""
+    finite_values = [float(value) for value in values if value is not None]
+    maximum = max(finite_values, default=0.0)
+    top = 1.0 if maximum <= 0.0 else maximum * float(factor)
+    axis.set_ylim(0.0, top)
+
+
+def apply_objective_vertical_headroom(
+    axis,
+    *,
+    fraction: float = OBJECTIVE_VERTICAL_HEADROOM_FRACTION,
+) -> None:
+    """Reserve upper data-space margin for objective-space publication legends."""
+    bottom, top = axis.get_ylim()
+    span = top - bottom
+    if span <= 0:
+        return
+    axis.set_ylim(bottom, top + span * float(fraction))
+
+
+def reserve_objective_legend_clearance(
+    axis,
+    legend,
+    data_y_values: Sequence[float] | None = None,
+    *,
+    axes_padding: float = OBJECTIVE_LEGEND_CLEARANCE_AXES_FRACTION,
+) -> None:
+    """Expand only the y-axis top until objective data clears an in-axis legend."""
+    if legend is None:
+        return
+    finite_y = _finite_objective_y_values(axis, data_y_values)
+    if not finite_y:
+        return
+
+    figure = axis.figure
+    canvas = getattr(figure, "canvas", None)
+    if canvas is None:
+        return
+    canvas.draw()
+    renderer = canvas.get_renderer()
+    legend_bbox = legend.get_window_extent(renderer=renderer)
+    legend_axes_bbox = legend_bbox.transformed(axis.transAxes.inverted())
+    legend_lower_axes = float(legend_axes_bbox.y0)
+    if not math.isfinite(legend_lower_axes) or legend_lower_axes >= 1.0:
+        return
+
+    target_axes_y = legend_lower_axes - float(axes_padding)
+    if target_axes_y <= 0.0:
+        target_axes_y = max(legend_lower_axes * 0.5, 0.01)
+
+    data_max = max(finite_y)
+    data_axes_y = _data_y_to_axes_fraction(axis, data_max)
+    if data_axes_y is None or data_axes_y <= target_axes_y:
+        return
+
+    bottom, top = axis.get_ylim()
+    span = top - bottom
+    if span <= 0 or data_max <= bottom:
+        return
+
+    required_top = bottom + (data_max - bottom) / target_axes_y
+    if required_top > top:
+        axis.set_ylim(bottom, required_top)
+        canvas.draw()
 
 
 def publication_table_figure_size(
@@ -288,7 +386,45 @@ def _rgb_hex(red: float, green: float, blue: float) -> str:
     return f"#{round(red * 255):02X}{round(green * 255):02X}{round(blue * 255):02X}"
 
 
+def _finite_objective_y_values(axis, data_y_values: Sequence[float] | None) -> list[float]:
+    raw_values: list[Any] = []
+    if data_y_values is not None:
+        raw_values.extend(data_y_values)
+    else:
+        for line in axis.lines:
+            raw_values.extend(line.get_ydata())
+        for collection in axis.collections:
+            if hasattr(collection, "get_offsets"):
+                raw_values.extend(offset[1] for offset in collection.get_offsets())
+
+    finite_values = []
+    for value in raw_values:
+        try:
+            resolved = float(value)
+        except (TypeError, ValueError):
+            continue
+        if math.isfinite(resolved):
+            finite_values.append(resolved)
+    return finite_values
+
+
+def _data_y_to_axes_fraction(axis, value: float) -> float | None:
+    try:
+        axes_point = axis.transAxes.inverted().transform(axis.transData.transform((0.0, float(value))))
+    except (TypeError, ValueError):
+        return None
+    y_value = float(axes_point[1])
+    return y_value if math.isfinite(y_value) else None
+
+
 __all__ = [
+    "BAR_HEADROOM_FACTOR",
+    "OBJECTIVE_LEGEND_CLEARANCE_AXES_FRACTION",
+    "OBJECTIVE_VERTICAL_HEADROOM_FRACTION",
+    "PUBLICATION_OBJECTIVE_VERTICAL_HEADROOM_FRACTION",
+    "PUBLICATION_LEGEND_ZORDER",
+    "apply_bar_headroom",
+    "apply_objective_vertical_headroom",
     "apply_publication_legend",
     "grouped_categorical_bars",
     "ordered_lineage_color_map",
@@ -296,8 +432,10 @@ __all__ = [
     "plot_publication_table",
     "publication_table_figure_size",
     "render_publication_table",
+    "reserve_objective_legend_clearance",
     "resolve_lineage_color",
     "resolve_role_style",
     "scatter_objective_series",
     "setup_publication_objective_axis",
+    "style_publication_legend",
 ]

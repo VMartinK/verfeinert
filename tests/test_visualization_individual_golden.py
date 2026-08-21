@@ -28,6 +28,7 @@ from verfeinert.ansatz_analyzer.visualization import (
     BarSeries,
     ObjectivePoint,
     ObjectiveSeries,
+    PUBLICATION_LEGEND_ZORDER,
     ordered_lineage_color_map,
     plot_individual_by_layer,
     plot_individual_by_lineage,
@@ -75,6 +76,20 @@ def _assert_size(figure, expected: tuple[float, float]) -> None:
     assert (round(float(width), 2), round(float(height), 2)) == expected
 
 
+def _assert_publication_legend(legend) -> None:
+    assert legend.get_zorder() >= PUBLICATION_LEGEND_ZORDER
+    frame = legend.get_frame()
+    assert frame.get_alpha() == 1.0
+
+
+def _assert_publication_upper_headroom(axis, data_min: float, data_max: float) -> None:
+    bottom, top = axis.get_ylim()
+    autoscale_lower = data_min - (data_max - data_min) * 0.05
+    assert bottom == pytest.approx(autoscale_lower)
+    assert top > data_max
+    assert (top - data_max) / (top - bottom) > 0.30
+
+
 def test_i1_individual_classification_structural_contract() -> None:
     reference = _series("eligible reference", (_point("r1", 0.1, 1.0), _point("r2", 0.2, 1.2)))
     reference_frontier = _series("reference frontier", (_point("rf1", 0.1, 1.0), _point("rf2", 0.3, 1.4)))
@@ -106,6 +121,8 @@ def test_i1_individual_classification_structural_contract() -> None:
         "trainability improvement",
         "new Pareto optimal",
     ]
+    _assert_publication_legend(axis.get_legend())
+    _assert_publication_upper_headroom(axis, 0.8, 1.7)
     assert axis.get_title() == ""
     pyplot.close(figure)
 
@@ -130,7 +147,12 @@ def test_i2_individual_joint_frontiers_preserves_frontier_order_and_limits() -> 
     assert axis.get_xlim() == (0.0, 1.0)
     assert axis.get_ylim() == (0.5, 2.5)
     assert _legend_labels(axis) == ["t0", "t1", "t2"]
+    _assert_publication_legend(axis.get_legend())
     assert axis.get_title() == ""
+
+    auto_figure = plot_individual_joint_frontiers(frontiers)
+    _assert_publication_upper_headroom(auto_figure.axes[0], 1.0, 2.0)
+    pyplot.close(auto_figure)
     pyplot.close(figure)
 
 
@@ -155,6 +177,8 @@ def test_i3_individual_frontier_comparison_uses_reference_and_primary_styles() -
     assert axis.lines[2].get_linewidth() == 2.05
     assert axis.get_legend()._ncols == 2
     assert _legend_labels(axis) == ["reference 0.1", "reference 0.2", "optimized 0.1", "optimized 0.2"]
+    _assert_publication_legend(axis.get_legend())
+    _assert_publication_upper_headroom(axis, 1.0, 2.0)
     assert axis.get_title() == ""
     pyplot.close(figure)
 
@@ -179,8 +203,9 @@ def test_i4_individual_by_layer_preserves_prepared_layer_order() -> None:
     assert _coords(axis.collections[1]) == [(0.1, 1.1)]
     assert len(axis.lines) == 1
     assert axis.lines[0].get_linewidth() == 1.55
-    assert axis.get_legend().get_frame().get_visible() is False
+    _assert_publication_legend(axis.get_legend())
     assert axis.get_legend()._ncols == 2
+    _assert_publication_upper_headroom(axis, 0.8, 1.5)
     assert axis.get_title() == ""
     pyplot.close(figure)
 
@@ -205,6 +230,9 @@ def test_i5_individual_by_lineage_uses_prepared_order_and_reserves_legend_strip(
     assert [text.get_text() for text in axis.get_legend().get_texts()] == list(lineage_order)
     assert axis.artists
     assert [text.get_text() for text in axis.artists[0].get_texts()] == ["reference frontier"]
+    _assert_publication_legend(axis.get_legend())
+    _assert_publication_legend(axis.artists[0])
+    _assert_publication_upper_headroom(axis, 0.8, 1.9)
     assert axis.get_title() == ""
     pyplot.close(figure)
 

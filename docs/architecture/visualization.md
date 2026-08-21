@@ -29,6 +29,11 @@ and no automatic campaign label, threshold color, or display-name rewriting.
 The default score colormap is `plasma` for scalar score encodings where a
 caller requests score-colored plots.
 
+Objective-space publication labels are centralized in the visualization layer.
+The default trainability label uses generic `T(H)` notation, while callers can
+still pass explicit axis labels. Publication legends are rendered above data
+with opaque frames using the publication facecolor.
+
 ## Boundaries
 
 Visualization code may depend on plotting libraries inside the analyzer

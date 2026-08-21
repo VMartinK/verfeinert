@@ -14,11 +14,14 @@ rank candidates, execute QNodes, rerun evolution, or read notebooks.
 visualization/
     styles/
         default.py
+    labels.py
     pareto.py
     ranking.py
     comparison.py
     lineage.py
+    individual.py
     evolution.py
+    global_analysis.py
     export.py
 ```
 
@@ -26,6 +29,9 @@ The style module centralizes fonts, figure dimensions, palettes, markers,
 legend behavior, and export defaults. The current public style constant is
 `DEFAULT_STYLE`, a campaign-neutral publication-grade default. Thesis-specific style
 names and modes are not public API.
+Publication objective labels are centralized separately and default to generic
+Hamiltonian notation for trainability. Legend helpers enforce opaque,
+high-zorder publication frames without moving scientific data.
 
 ## Dependency Policy
 
@@ -56,6 +62,8 @@ The implementation provides:
 - comparison objective-space plot data and optional score-colored plot;
 - lineage and evolution plot-data adapters;
 - guarded figure export helper.
+- prepared Individual, Evolution, and Global publication renderers for
+  semantic visualization data.
 
 The default objective-space convention is X = trainability and
 Y = expressibility, but plot functions accept metric selections. Optional

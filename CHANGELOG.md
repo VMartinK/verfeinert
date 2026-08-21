@@ -2,6 +2,25 @@
 
 All notable changes to Verfeinert will be documented in this file.
 
+## v0.3.2 - 2026-08-21 - Visualization Publication Contract Hardening
+
+### Visualization
+
+- Centralized generic publication objective labels, including Hamiltonian-agnostic
+  trainability notation using `T(H)`.
+- Hardened publication legends so objective-space legends render above data with
+  opaque publication frames.
+- Corrected evolution metric-grid labels/titles, shared legend placement,
+  generation-frontier color/alpha encoding, and two-panel comparison layout.
+- Added prepared `ObjectiveSeries.score` as a keyword-only field for campaign
+  frontier score coloring while preserving the positional constructor contract.
+- Updated global campaign-frontier, aggregate-bar, contribution, and lineage
+  publication legend/headroom semantics.
+
+Scientific metric, Pareto, cost, ranking, mutation, evolution, workflow, CX-01,
+MIXT-5G, and multithreshold trajectory semantics are unchanged. Global F/F2
+visualizations remain out of contract.
+
 ## v0.3.1 - 2026-08-20 - Correctness and Contract Hardening
 
 ### Contract corrections

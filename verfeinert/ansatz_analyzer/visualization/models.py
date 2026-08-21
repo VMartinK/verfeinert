@@ -59,6 +59,7 @@ class ObjectiveSeries:
     threshold: float | None = None
     generation: int | None = None
     source_id: str | None = None
+    score: float | None = field(default=None, kw_only=True)
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "points", tuple(_objective_point(item) for item in self.points))
@@ -67,6 +68,7 @@ class ObjectiveSeries:
         object.__setattr__(self, "threshold", _optional_float(self.threshold, "threshold"))
         object.__setattr__(self, "generation", _optional_int(self.generation, "generation"))
         object.__setattr__(self, "source_id", _optional_text(self.source_id, "source_id"))
+        object.__setattr__(self, "score", _optional_float(self.score, "score"))
 
     def to_dict(self) -> dict[str, Any]:
         """Return a JSON-safe semantic series payload."""

@@ -44,7 +44,8 @@ not compute or infer:
 Allowed visual-only work includes artist ordering, axis and layout calculation,
 bar offsets, legend composition, deterministic color assignment, dynamic table
 height from prepared row count, and colormap normalization of an already
-computed scalar such as a prepared `ObjectivePoint.score`.
+computed scalar such as a prepared `ObjectivePoint.score` or
+`ObjectiveSeries.score`.
 
 Visualization modules must not depend on notebooks, `Thesis_Data_Processing`,
 QNode execution, generated local packages, or repository-local scientific
@@ -78,6 +79,8 @@ ObjectiveSeries(
     threshold: float | None = None,
     generation: int | None = None,
     source_id: str | None = None,
+    *,
+    score: float | None = None,
 )
 
 MetricSeries(
@@ -167,6 +170,19 @@ PublicationLayouts(
 
 Style carries visual roles and palettes only. Numeric scientific thresholds are
 explicit data, not keys in `DEFAULT_STYLE`.
+
+Objective-space publication renderers use canonical visualization-only labels
+when callers do not pass explicit `x_label` or `y_label` values:
+
+```python
+PUBLICATION_TRAINABILITY_LABEL
+PUBLICATION_EXPRESSIBILITY_LABEL
+publication_objective_label(metric_name)
+```
+
+The default trainability label is Hamiltonian-agnostic and uses generic `T(H)`.
+Explicit caller labels still override the defaults. Publication legends are
+styled above plotted data with an opaque frame using the publication facecolor.
 
 ## Individual Campaign Renderers
 
@@ -268,6 +284,7 @@ plot_frontier_evolution(
     *,
     x_label: str | None = None,
     y_label: str | None = None,
+    threshold_color: str | None = None,
     style: VisualizationStyle = DEFAULT_STYLE,
 )
 
@@ -322,6 +339,15 @@ plot_evolution_ranking_table(
 `plot_generation_metric_grid` is reusable for total-population metrics,
 generation-local frontier metrics, and optimized-frontier metrics as long as
 the four prepared panels are supplied explicitly.
+Publication grids draw no per-axis titles; prepare `MetricPanelSpec.y_label`
+values such as `Mean combined score`, `Mean expressibility`,
+`Mean trainability`, and `Mean structural cost` upstream.
+
+`plot_frontier_evolution` keeps all generation frontiers in one call on the
+same cost-threshold color. Prepared generation order is rendered through
+monotonically increasing alpha, with the final prepared frontier fully opaque.
+Use `threshold_color` when the publication preparation layer has assigned a
+specific cost-threshold color.
 
 ## Global Analysis Renderers
 
@@ -407,9 +433,22 @@ plot_global_ranking_table(
 )
 ```
 
-Score-colored renderers use `ObjectivePoint.score` values supplied by the
-caller. They may visually normalize those prepared scalars for a Matplotlib
-colormap, but they do not compute the score.
+`plot_campaign_frontiers` colors non-reference campaign frontiers by the
+prepared aggregate `ObjectiveSeries.score` value using the configured score
+colormap and a `Mean combined score` colorbar. Reference/baseline frontiers stay
+dashed reference lines, and the global optimized frontier remains black.
+The legacy `score_points` keyword is still accepted for patch-release
+compatibility but is deprecated for G_C and no longer draws auxiliary score
+points.
+
+Other score-colored renderers use `ObjectivePoint.score` values supplied by the
+caller. Renderers may visually normalize prepared scalars for a Matplotlib
+colormap, but they do not compute scores.
+
+Global aggregate and contribution bar renderers reserve deterministic vertical
+headroom above the maximum prepared bar. `plot_global_lineages` explains bold
+left-panel numeric annotations as global-frontier member counts and adds a
+compact right-panel legend for rendered lineages plus the global frontier.
 
 ## save_figure And save_publication_figure
 
