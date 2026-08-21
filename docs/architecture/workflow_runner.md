@@ -150,6 +150,24 @@ continuation fails unless the caller requests a branch with a new run ID.
 
 Branch provenance records the source EvolutionRun and the branch relationship.
 
+## Workflow Checkpoints
+
+`workflow.checkpoint.enabled: true` writes an atomic
+`WorkflowCheckpoint` JSON document under
+`<output_root>/<run_id>/checkpoints/latest.json`. The checkpoint records the
+effective config, a path-independent workflow compatibility fingerprint,
+completed stages, seed/execution state, consumed/reused/produced artifact refs,
+and hashed canonical artifact refs.
+
+`workflow.resume.checkpoint` resumes from a checkpoint artifact. Resume is
+strict: the checkpoint run ID and compatibility fingerprint must match the
+requested workflow, checkpointed artifact hashes must still match on disk, and
+already completed generation/analysis stages cannot be requested again.
+Checkpoint artifact refs are routed through the same public Candidate,
+StagedPackage, AnalysisResult, ComparisonResult, and EvolutionRun entry points
+as caller-supplied artifacts. Evolution continuation still uses the
+evolver-owned EvolutionRun state-machine boundary.
+
 ## Comparison And Postprocessing
 
 Comparison uses explicitly configured sources. It validates scientific

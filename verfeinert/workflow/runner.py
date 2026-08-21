@@ -81,6 +81,12 @@ from verfeinert.core.hashing import hash_file, stable_hash
 from verfeinert.core.io import ensure_output_root, read_json
 from verfeinert.core.io.serialization import to_json_safe
 
+from .checkpoints import (
+    build_workflow_checkpoint_document,
+    read_workflow_checkpoint_json,
+    workflow_checkpoint_fingerprint,
+    write_workflow_checkpoint_json,
+)
 from .config import WorkflowConfig, WorkflowConfigError
 from .provenance import workflow_provenance
 
@@ -108,6 +114,7 @@ class WorkflowResult:
     comparison_json_paths: tuple[Path, ...] = ()
     comparison_csv_paths: tuple[Path, ...] = ()
     visualization_paths: tuple[Path, ...] = ()
+    checkpoint_path: Path | None = None
     candidate_ids: tuple[str, ...] = ()
     analysis_result_ids: tuple[str, ...] = ()
     survivor_candidate_ids: tuple[str, ...] = ()
@@ -149,6 +156,7 @@ class WorkflowResult:
                 "comparison_json_paths": [str(path) for path in self.comparison_json_paths],
                 "comparison_csv_paths": [str(path) for path in self.comparison_csv_paths],
                 "visualization_paths": [str(path) for path in self.visualization_paths],
+                "checkpoint_path": str(self.checkpoint_path) if self.checkpoint_path else None,
                 "candidate_ids": list(self.candidate_ids),
                 "analysis_result_ids": list(self.analysis_result_ids),
                 "survivor_candidate_ids": list(self.survivor_candidate_ids),
@@ -224,6 +232,15 @@ class _PostprocessingStageOutput:
 
 
 @dataclass(frozen=True)
+class _CheckpointArtifactSources:
+    candidates: tuple[str, ...] = ()
+    staged_packages: tuple[str, ...] = ()
+    analysis_results: tuple[str, ...] = ()
+    comparison_results: tuple[str, ...] = ()
+    evolution_run: str | None = None
+
+
+@dataclass(frozen=True)
 class _WorkflowStagePlan:
     scientific: tuple[str, ...]
     postprocessing: tuple[str, ...]
@@ -266,6 +283,9 @@ class WorkflowRunner:
         """Run only the requested workflow operations over compatible artifacts."""
         config = self.config
         stage_plan = _workflow_stage_plan(config)
+        resume_checkpoint = _load_resume_checkpoint(config)
+        _validate_checkpoint_stage_resume(stage_plan, resume_checkpoint)
+        checkpoint_sources = _checkpoint_artifact_sources(resume_checkpoint)
         output_root = ensure_output_root(config.output_root, input_roots=config.input_roots)
         run_root = output_root / config.run_id
         package_output_root = run_root / "candidates"
@@ -282,15 +302,24 @@ class WorkflowRunner:
         reused_artifacts: list[dict[str, Any]] = []
 
         configured = config.artifacts
-        all_candidate_sources = (*configured.candidates, *tuple(candidate_sources))
-        all_staged_sources = (*configured.staged_packages, *tuple(staged_package_sources))
-        all_analysis_sources = (*configured.analysis_results, *tuple(analysis_result_sources))
-        all_comparison_result_sources = configured.comparison_results
+        all_candidate_sources = (*checkpoint_sources.candidates, *configured.candidates, *tuple(candidate_sources))
+        all_staged_sources = (*checkpoint_sources.staged_packages, *configured.staged_packages, *tuple(staged_package_sources))
+        all_analysis_sources = (*checkpoint_sources.analysis_results, *configured.analysis_results, *tuple(analysis_result_sources))
+        all_comparison_result_sources = (*checkpoint_sources.comparison_results, *configured.comparison_results)
         resolved_evolution_source = (
             evolution_run_source
             if evolution_run_source is not None
-            else configured.evolution_run
+            else configured.evolution_run or checkpoint_sources.evolution_run
         )
+
+        if resume_checkpoint is not None:
+            record = _artifact_record(
+                "workflow_checkpoint",
+                _source_uri(config.resume.checkpoint),
+                document_id=resume_checkpoint["checkpoint_id"],
+            )
+            consumed_artifacts.append(record)
+            reused_artifacts.append(record)
 
         candidate_artifacts = _load_candidate_artifacts(all_candidate_sources)
         staged_artifacts = _load_staged_package_artifacts(all_staged_sources)
@@ -425,6 +454,44 @@ class WorkflowRunner:
         comparison_csv_paths = postprocessing_output.comparison_csv_paths
         visualization_paths = postprocessing_output.visualization_paths
 
+        checkpoint_path: Path | None = None
+        if config.checkpoint.enabled:
+            checkpoint_doc = build_workflow_checkpoint_document(
+                config=config,
+                completed_stages=tuple(dict.fromkeys(executed)),
+                stage_plan=stage_plan.to_dict(),
+                artifact_refs=_workflow_checkpoint_artifact_refs(
+                    candidate_artifacts=candidate_artifacts,
+                    staged_artifacts=staged_artifacts,
+                    analysis_result_paths=analysis_result_paths,
+                    analysis_sources=all_analysis_sources,
+                    comparison_result_sources=all_comparison_result_sources,
+                    evolution_source=evolution_path or resolved_evolution_source,
+                    ranking_json_path=ranking_json_path,
+                    ranking_csv_path=ranking_csv_path,
+                    pareto_json_path=pareto_json_path,
+                    pareto_csv_path=pareto_csv_path,
+                    analysis_csv_path=analysis_csv_path,
+                    comparison_json_paths=comparison_json_paths,
+                    comparison_csv_paths=comparison_csv_paths,
+                    visualization_paths=visualization_paths,
+                ),
+                consumed_artifacts=consumed_artifacts,
+                produced_artifacts=produced_artifacts,
+                reused_artifacts=reused_artifacts,
+            )
+            checkpoint_path = write_workflow_checkpoint_json(
+                checkpoint_doc,
+                _workflow_checkpoint_path(run_root),
+            )
+            produced_artifacts.append(
+                _artifact_record(
+                    "workflow_checkpoint",
+                    str(checkpoint_path),
+                    document_id=checkpoint_doc["checkpoint_id"],
+                ),
+            )
+
         candidate_ids = tuple(
             dict.fromkeys(
                 [artifact.document["candidate_id"] for artifact in candidate_artifacts]
@@ -458,6 +525,7 @@ class WorkflowRunner:
                 "requested_postprocessing": list(requested_postprocessing),
                 "executed_operations": list(dict.fromkeys(executed)),
                 "reused_artifact_count": len(reused_artifacts),
+                "checkpoint_written": checkpoint_path is not None,
                 "candidate_generation_executed": "generate" in executed,
                 "analysis_executed": "analyze" in executed,
                 "evolution_exported": evolution_path is not None,
@@ -503,6 +571,7 @@ class WorkflowRunner:
             comparison_json_paths=tuple(comparison_json_paths),
             comparison_csv_paths=tuple(comparison_csv_paths),
             visualization_paths=tuple(visualization_paths),
+            checkpoint_path=checkpoint_path,
             candidate_ids=candidate_ids,
             analysis_result_ids=analysis_result_ids,
             survivor_candidate_ids=survivor_candidate_ids,
@@ -1310,6 +1379,187 @@ def _workflow_stage_plan(config: WorkflowConfig) -> _WorkflowStagePlan:
         scientific=config.scientific_execution,
         postprocessing=config.postprocessing,
     )
+
+
+def _load_resume_checkpoint(config: WorkflowConfig) -> dict[str, Any] | None:
+    source = config.resume.checkpoint
+    if source is None:
+        return None
+    checkpoint = read_workflow_checkpoint_json(source)
+    if checkpoint["run_id"] != config.run_id:
+        raise WorkflowConfigError(
+            "checkpoint run_id does not match workflow.run_id: "
+            f"{checkpoint['run_id']!r} != {config.run_id!r}",
+        )
+    expected = workflow_checkpoint_fingerprint(config)
+    actual = dict(checkpoint["compatibility"]).get("workflow_fingerprint")
+    if actual != expected:
+        raise WorkflowConfigError(
+            "checkpoint is incompatible with the requested workflow configuration: "
+            f"workflow_fingerprint mismatch ({actual!r} != {expected!r}).",
+        )
+    return checkpoint
+
+
+def _validate_checkpoint_stage_resume(
+    stage_plan: _WorkflowStagePlan,
+    checkpoint: Mapping[str, Any] | None,
+) -> None:
+    if checkpoint is None:
+        return
+    completed = set(dict(checkpoint["workflow"]).get("completed_stages", ()))
+    repeated = [
+        stage
+        for stage in stage_plan.scientific
+        if stage in {"generate", "analyze"} and stage in completed
+    ]
+    if repeated:
+        raise WorkflowConfigError(
+            "checkpoint resume must not request already completed scientific "
+            f"stage(s): {', '.join(repeated)}.",
+        )
+
+
+def _checkpoint_artifact_sources(
+    checkpoint: Mapping[str, Any] | None,
+) -> _CheckpointArtifactSources:
+    if checkpoint is None:
+        return _CheckpointArtifactSources()
+    refs = dict(dict(checkpoint.get("artifacts", {})).get("refs", {}))
+    return _CheckpointArtifactSources(
+        candidates=_uris_from_ref_list(refs.get("candidates", ())),
+        staged_packages=_uris_from_ref_list(refs.get("staged_packages", ())),
+        analysis_results=_uris_from_ref_list(refs.get("analysis_results", ())),
+        comparison_results=_uris_from_ref_list(refs.get("comparison_results", ())),
+        evolution_run=_uri_from_ref(refs.get("evolution_run")),
+    )
+
+
+def _workflow_checkpoint_path(run_root: Path) -> Path:
+    return run_root / "checkpoints" / "latest.json"
+
+
+def _workflow_checkpoint_artifact_refs(
+    *,
+    candidate_artifacts: Sequence[_CandidateArtifact],
+    staged_artifacts: Sequence[Mapping[str, Any]],
+    analysis_result_paths: Sequence[Path],
+    analysis_sources: Sequence[str | Path | Mapping[str, Any]],
+    comparison_result_sources: Sequence[str | Path | Mapping[str, Any]],
+    evolution_source: str | Path | Mapping[str, Any] | None,
+    ranking_json_path: Path | None,
+    ranking_csv_path: Path | None,
+    pareto_json_path: Path | None,
+    pareto_csv_path: Path | None,
+    analysis_csv_path: Path | None,
+    comparison_json_paths: Sequence[Path],
+    comparison_csv_paths: Sequence[Path],
+    visualization_paths: Sequence[Path],
+) -> dict[str, Any]:
+    return {
+        "candidates": _unique_ref_records(
+            _artifact_record(
+                "candidate",
+                artifact.uri,
+                document_id=artifact.document["candidate_id"],
+            )
+            for artifact in candidate_artifacts
+            if artifact.uri is not None
+        ),
+        "staged_packages": _unique_ref_records(
+            _artifact_record(
+                "staged_package",
+                package.get("uri"),
+                document_id=dict(package.get("document", {})).get("package_id"),
+            )
+            for package in staged_artifacts
+            if package.get("uri") is not None
+        ),
+        "analysis_results": _unique_ref_records(
+            (
+                *_path_records("analysis_result", tuple(analysis_result_paths)),
+                *_analysis_source_records_for_checkpoint(analysis_sources),
+            ),
+        ),
+        "comparison_results": _unique_ref_records(
+            _source_records_for_checkpoint("comparison_result", comparison_result_sources),
+        ),
+        "evolution_run": (
+            _artifact_record("evolution_run", _source_uri(evolution_source))
+            if evolution_source is not None
+            else None
+        ),
+        "derived": {
+            "ranking_json": _path_record_or_none("ranking", ranking_json_path),
+            "ranking_csv": _path_record_or_none("ranking_csv", ranking_csv_path),
+            "pareto_json": _path_record_or_none("pareto", pareto_json_path),
+            "pareto_csv": _path_record_or_none("pareto_csv", pareto_csv_path),
+            "analysis_csv": _path_record_or_none("analysis_csv", analysis_csv_path),
+            "comparison_json": _path_records("comparison_result", tuple(comparison_json_paths)),
+            "comparison_csv": _path_records("comparison_csv", tuple(comparison_csv_paths)),
+            "figures": _path_records("figure", tuple(visualization_paths)),
+        },
+    }
+
+
+def _analysis_source_records_for_checkpoint(
+    sources: Sequence[str | Path | Mapping[str, Any]],
+) -> tuple[dict[str, Any], ...]:
+    records: list[dict[str, Any]] = []
+    for source in sources:
+        if isinstance(source, Mapping):
+            continue
+        path = Path(source).expanduser()
+        if path.is_dir():
+            records.extend(_path_records("analysis_result", sorted(path.glob("*.json"))))
+        else:
+            records.append(_artifact_record("analysis_result", str(path)))
+    return tuple(records)
+
+
+def _source_records_for_checkpoint(
+    kind: str,
+    sources: Sequence[str | Path | Mapping[str, Any]],
+) -> tuple[dict[str, Any], ...]:
+    return tuple(
+        _artifact_record(kind, _source_uri(source))
+        for source in sources
+        if not isinstance(source, Mapping)
+    )
+
+
+def _unique_ref_records(records: Iterable[Mapping[str, Any]]) -> tuple[dict[str, Any], ...]:
+    unique: dict[str, dict[str, Any]] = {}
+    for record in records:
+        uri = record.get("uri")
+        if not isinstance(uri, str) or not uri:
+            continue
+        unique.setdefault(uri, dict(record))
+    return tuple(unique.values())
+
+
+def _path_record_or_none(kind: str, path: Path | None) -> dict[str, Any] | None:
+    if path is None:
+        return None
+    return _artifact_record(kind, str(path))
+
+
+def _uris_from_ref_list(value: Any) -> tuple[str, ...]:
+    if not isinstance(value, Sequence) or isinstance(value, (str, bytes, bytearray)):
+        return ()
+    uris: list[str] = []
+    for item in value:
+        uri = _uri_from_ref(item)
+        if uri is not None:
+            uris.append(uri)
+    return tuple(dict.fromkeys(uris))
+
+
+def _uri_from_ref(value: Any) -> str | None:
+    if not isinstance(value, Mapping):
+        return None
+    uri = value.get("uri")
+    return uri if isinstance(uri, str) and uri else None
 
 
 def _load_candidate_artifacts(

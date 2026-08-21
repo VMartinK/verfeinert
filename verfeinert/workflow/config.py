@@ -573,22 +573,54 @@ class WorkflowResumeConfig:
     """Configuration for evolution continuation or explicit branch creation."""
 
     mode: str = "continue"
+    checkpoint: Any | None = None
 
     def __post_init__(self) -> None:
         mode = _non_empty_text(self.mode, "resume.mode").lower()
         if mode not in {"continue", "branch"}:
             raise WorkflowConfigError("resume.mode must be continue or branch.")
         object.__setattr__(self, "mode", mode)
+        object.__setattr__(self, "checkpoint", to_json_safe(self.checkpoint))
 
     @classmethod
     def from_mapping(cls, mapping: Mapping[str, Any]) -> "WorkflowResumeConfig":
         """Build resume config from parsed YAML/Python data."""
         data = dict(mapping)
-        return cls(mode=data.get("mode", "continue"))
+        return cls(
+            mode=data.get("mode", "continue"),
+            checkpoint=_first_non_none(
+                data.get("checkpoint"),
+                data.get("checkpoint_source"),
+                data.get("workflow_checkpoint"),
+            ),
+        )
 
     def to_dict(self) -> dict[str, Any]:
         """Return JSON-safe resume configuration."""
-        return {"mode": self.mode}
+        return {
+            "mode": self.mode,
+            "checkpoint": to_json_safe(self.checkpoint),
+        }
+
+
+@dataclass(frozen=True)
+class WorkflowCheckpointConfig:
+    """Configuration for durable workflow checkpoint writing."""
+
+    enabled: bool = False
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "enabled", require_bool(self.enabled, "checkpoint.enabled"))
+
+    @classmethod
+    def from_mapping(cls, mapping: Mapping[str, Any]) -> "WorkflowCheckpointConfig":
+        """Build checkpoint config from parsed YAML/Python data."""
+        data = dict(mapping)
+        return cls(enabled=data.get("enabled", False))
+
+    def to_dict(self) -> dict[str, Any]:
+        """Return JSON-safe checkpoint configuration."""
+        return {"enabled": self.enabled}
 
 
 @dataclass(frozen=True)
@@ -608,6 +640,7 @@ class WorkflowConfig:
     artifacts: WorkflowArtifactInputs = field(default_factory=WorkflowArtifactInputs)
     comparisons: tuple[WorkflowComparisonConfig, ...] = ()
     resume: WorkflowResumeConfig = field(default_factory=WorkflowResumeConfig)
+    checkpoint: WorkflowCheckpointConfig = field(default_factory=WorkflowCheckpointConfig)
     analysis_result_reuse: dict[str, Any] = field(default_factory=dict)
     execution: ExecutionConfig = field(default_factory=ExecutionConfig)
     random_seed: int | None = None
@@ -674,6 +707,8 @@ class WorkflowConfig:
         object.__setattr__(self, "comparisons", comparisons)
         if not isinstance(self.resume, WorkflowResumeConfig):
             raise WorkflowConfigError("resume must be WorkflowResumeConfig.")
+        if not isinstance(self.checkpoint, WorkflowCheckpointConfig):
+            raise WorkflowConfigError("checkpoint must be WorkflowCheckpointConfig.")
         object.__setattr__(
             self,
             "analysis_result_reuse",
@@ -700,6 +735,7 @@ class WorkflowConfig:
         scientific_execution, postprocessing, stages = _operations_from_mapping(data, campaign_type=campaign_type)
         artifacts = data.get("artifacts", workflow.get("artifacts", {}))
         resume = data.get("resume", workflow.get("resume", {}))
+        checkpoint = data.get("checkpoint", workflow.get("checkpoint", {}))
         analysis_result_reuse = _first_non_none(
             data.get("analysis_result_reuse"),
             workflow.get("analysis_result_reuse"),
@@ -731,6 +767,11 @@ class WorkflowConfig:
                 if isinstance(resume, WorkflowResumeConfig)
                 else WorkflowResumeConfig.from_mapping(dict(resume))
             ),
+            checkpoint=(
+                checkpoint
+                if isinstance(checkpoint, WorkflowCheckpointConfig)
+                else WorkflowCheckpointConfig.from_mapping(dict(checkpoint))
+            ),
             analysis_result_reuse=dict(analysis_result_reuse),
             execution=(
                 execution
@@ -760,6 +801,7 @@ class WorkflowConfig:
                 "postprocessing": list(self.postprocessing),
                 "stages": list(self.stages),
                 "resume": self.resume.to_dict(),
+                "checkpoint": self.checkpoint.to_dict(),
                 "analysis_result_reuse": dict(self.analysis_result_reuse),
             },
             "stages": list(self.stages),
@@ -768,6 +810,7 @@ class WorkflowConfig:
             "evolver": self.evolver.to_dict(),
             "artifacts": self.artifacts.to_dict(),
             "comparisons": [item.to_dict() for item in self.comparisons],
+            "checkpoint": self.checkpoint.to_dict(),
             "execution": self.execution.to_dict(),
             "metadata": dict(self.metadata),
         }
@@ -972,6 +1015,7 @@ __all__ = [
     "WorkflowArtifactInputs",
     "WorkflowComparisonConfig",
     "WorkflowComparisonSourceConfig",
+    "WorkflowCheckpointConfig",
     "WorkflowConfig",
     "WorkflowConfigError",
     "WorkflowResumeConfig",

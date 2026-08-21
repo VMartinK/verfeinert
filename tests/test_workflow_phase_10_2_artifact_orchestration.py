@@ -23,6 +23,7 @@ from verfeinert.ansatz_generator import (
     write_canonical_staged_package_json,
 )
 from verfeinert.workflow import WorkflowConfig, WorkflowConfigError, WorkflowRunner
+from verfeinert.workflow import read_workflow_checkpoint_json
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -190,6 +191,36 @@ def _write_staged_package(root: Path) -> Path:
     return result.staged_package_path
 
 
+def _evolution_summary(path: Path) -> dict:
+    document = json.loads(path.read_text(encoding="utf-8"))
+    return {
+        "status": document["run_metadata"]["status"],
+        "final_stopping_decision": document["metadata"]["workflow"]["final_stopping_decision"],
+        "generations": [
+            {
+                "generation_index": generation["generation_index"],
+                "candidate_ids": [
+                    ref["candidate_id"] for ref in generation["candidate_refs"]
+                ],
+                "analysis_candidate_ids": [
+                    ref["candidate_id"] for ref in generation["analysis_result_refs"]
+                ],
+                "survivor_ids": [
+                    ref["candidate_id"] for ref in generation["survivor_refs"]
+                ],
+                "rejected_ids": [
+                    ref["candidate_id"] for ref in generation.get("rejected_refs", [])
+                ],
+                "archive_ids": [
+                    ref["candidate_id"] for ref in generation.get("archive_refs", [])
+                ],
+                "stopping": generation["configuration"].get("stopping"),
+            }
+            for generation in document["generations"]
+        ],
+    }
+
+
 class RecordingFactory:
     def __init__(self) -> None:
         self.calls: list[tuple[str, int]] = []
@@ -251,6 +282,25 @@ class WorkflowPhase102ArtifactOrchestrationTests(unittest.TestCase):
             mapping["stages"] = ["generate", "analyze", "evolve"]
             with self.assertRaises(WorkflowConfigError):
                 WorkflowConfig.from_mapping(mapping)
+
+    def test_checkpoint_config_roundtrips_resume_source(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            mapping = _workflow_mapping(
+                Path(tmp) / "out",
+                run_id="checkpoint-config",
+                scientific_execution=("analyze",),
+            )
+            mapping["workflow"]["checkpoint"] = {"enabled": True}
+            mapping["workflow"]["resume"]["checkpoint"] = str(Path(tmp) / "checkpoint.json")
+
+            config = WorkflowConfig.from_mapping(mapping)
+            roundtripped = WorkflowConfig.from_mapping(config.to_dict())
+
+            self.assertTrue(roundtripped.checkpoint.enabled)
+            self.assertEqual(
+                roundtripped.resume.checkpoint,
+                str(Path(tmp) / "checkpoint.json"),
+            )
 
     def test_individual_generate_analyze_does_not_create_evolution_run(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -344,6 +394,166 @@ class WorkflowPhase102ArtifactOrchestrationTests(unittest.TestCase):
             self.assertIsNone(result.staged_package_path)
             self.assertEqual(result.candidate_ids, ("reference-a02-l1-parent",))
             self.assertEqual(len(result.analysis_result_paths), 1)
+
+    def test_checkpoint_after_generation_resumes_analysis_without_regeneration(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            generate_mapping = _workflow_mapping(
+                root / "out",
+                run_id="checkpoint-generate",
+                scientific_execution=("generate",),
+            )
+            generate_mapping["workflow"]["checkpoint"] = {"enabled": True}
+            generated = WorkflowRunner(WorkflowConfig.from_mapping(generate_mapping)).run()
+
+            self.assertTrue(generated.checkpoint_path.is_file())
+            checkpoint = read_workflow_checkpoint_json(generated.checkpoint_path)
+            self.assertEqual(checkpoint["workflow"]["completed_stages"], ["generate"])
+            self.assertFalse(list(generated.checkpoint_path.parent.glob("*.tmp")))
+
+            resume_mapping = _workflow_mapping(
+                root / "out",
+                run_id="checkpoint-generate",
+                scientific_execution=("analyze",),
+            )
+            resume_mapping["workflow"]["resume"]["checkpoint"] = str(generated.checkpoint_path)
+            with (
+                mock.patch.object(
+                    WorkflowRunner,
+                    "_run_generation_stage",
+                    side_effect=AssertionError("generation must not rerun"),
+                ),
+                mock.patch.object(
+                    WorkflowRunner,
+                    "_run_evolution_stage",
+                    side_effect=AssertionError("evolution must not run"),
+                ),
+            ):
+                resumed = WorkflowRunner(WorkflowConfig.from_mapping(resume_mapping)).run()
+
+            self.assertEqual(resumed.executed_operations, ("analyze",))
+            self.assertEqual(resumed.candidate_ids, ("phase102-a02-l1",))
+            self.assertEqual(len(resumed.analysis_result_paths), 1)
+            self.assertEqual(
+                {item["kind"] for item in resumed.reused_artifacts},
+                {"workflow_checkpoint"},
+            )
+
+    def test_checkpoint_resume_rejects_completed_generate_stage_request(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            generate_mapping = _workflow_mapping(
+                root / "out",
+                run_id="checkpoint-repeat-stage",
+                scientific_execution=("generate",),
+            )
+            generate_mapping["workflow"]["checkpoint"] = {"enabled": True}
+            generated = WorkflowRunner(WorkflowConfig.from_mapping(generate_mapping)).run()
+
+            resume_mapping = _workflow_mapping(
+                root / "out",
+                run_id="checkpoint-repeat-stage",
+                scientific_execution=("generate", "analyze"),
+            )
+            resume_mapping["workflow"]["resume"]["checkpoint"] = str(generated.checkpoint_path)
+            with self.assertRaisesRegex(WorkflowConfigError, "already completed"):
+                WorkflowRunner(WorkflowConfig.from_mapping(resume_mapping)).run()
+
+    def test_checkpoint_after_analysis_resumes_evolution_equivalent_to_uninterrupted(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            continuous = WorkflowRunner(
+                WorkflowConfig.from_mapping(
+                    _workflow_mapping(
+                        root / "continuous",
+                        run_id="checkpoint-equivalence",
+                        campaign_type="evolutionary",
+                        scientific_execution=("generate", "analyze", "evolve"),
+                        max_generations=2,
+                    ),
+                ),
+            ).run(candidate_factory=RecordingFactory())
+
+            staged_mapping = _workflow_mapping(
+                root / "resumed",
+                run_id="checkpoint-equivalence",
+                campaign_type="evolutionary",
+                scientific_execution=("generate", "analyze"),
+                max_generations=2,
+            )
+            staged_mapping["workflow"]["checkpoint"] = {"enabled": True}
+            staged = WorkflowRunner(WorkflowConfig.from_mapping(staged_mapping)).run()
+
+            resume_mapping = _workflow_mapping(
+                root / "resumed",
+                run_id="checkpoint-equivalence",
+                campaign_type="evolutionary",
+                scientific_execution=("evolve",),
+                max_generations=2,
+            )
+            resume_mapping["workflow"]["resume"]["checkpoint"] = str(staged.checkpoint_path)
+            resumed_factory = RecordingFactory()
+            resumed = WorkflowRunner(WorkflowConfig.from_mapping(resume_mapping)).run(
+                candidate_factory=resumed_factory,
+            )
+
+            self.assertEqual(len(resumed_factory.calls), 1)
+            self.assertEqual(
+                _evolution_summary(resumed.evolution_run_path),
+                _evolution_summary(continuous.evolution_run_path),
+            )
+
+    def test_checkpoint_resume_rejects_changed_metric_contract(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            generate_mapping = _workflow_mapping(
+                root / "out",
+                run_id="checkpoint-metric-mismatch",
+                scientific_execution=("generate",),
+            )
+            generate_mapping["workflow"]["checkpoint"] = {"enabled": True}
+            generated = WorkflowRunner(WorkflowConfig.from_mapping(generate_mapping)).run()
+
+            resume_mapping = _workflow_mapping(
+                root / "out",
+                run_id="checkpoint-metric-mismatch",
+                scientific_execution=("analyze",),
+            )
+            resume_mapping["workflow"]["resume"]["checkpoint"] = str(generated.checkpoint_path)
+            resume_mapping["analyzer"]["selected_metrics"] = ["structural_cost", "expressibility"]
+            with self.assertRaisesRegex(WorkflowConfigError, "workflow_fingerprint mismatch"):
+                WorkflowRunner(WorkflowConfig.from_mapping(resume_mapping)).run()
+
+    def test_checkpoint_resume_fails_closed_for_corruption_and_hash_mismatch(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            corrupt = _write_json(root / "bad-checkpoint.json", {"schema_version": "wrong"})
+            mapping = _workflow_mapping(
+                root / "out",
+                run_id="checkpoint-corrupt",
+                scientific_execution=("analyze",),
+            )
+            mapping["workflow"]["resume"]["checkpoint"] = str(corrupt)
+            with self.assertRaisesRegex(WorkflowConfigError, "WorkflowCheckpoint"):
+                WorkflowRunner(WorkflowConfig.from_mapping(mapping)).run()
+
+            generate_mapping = _workflow_mapping(
+                root / "hash-out",
+                run_id="checkpoint-hash",
+                scientific_execution=("generate",),
+            )
+            generate_mapping["workflow"]["checkpoint"] = {"enabled": True}
+            generated = WorkflowRunner(WorkflowConfig.from_mapping(generate_mapping)).run()
+            generated.candidate_paths[0].write_text("changed\n", encoding="utf-8")
+
+            resume_mapping = _workflow_mapping(
+                root / "hash-out",
+                run_id="checkpoint-hash",
+                scientific_execution=("analyze",),
+            )
+            resume_mapping["workflow"]["resume"]["checkpoint"] = str(generated.checkpoint_path)
+            with self.assertRaisesRegex(WorkflowConfigError, "hash mismatch"):
+                WorkflowRunner(WorkflowConfig.from_mapping(resume_mapping)).run()
 
     def test_analysis_result_ranking_reuses_artifact_without_scientific_execution(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
