@@ -546,6 +546,33 @@ See `examples/publication_visualization.py` for a compact executable example
 that renders one Individual, one Evolution, and one Global figure from
 synthetic prepared data.
 
+## Workflow Publication Profile
+
+`WorkflowRunner` can orchestrate publication renderers without changing the
+renderer contract:
+
+```yaml
+workflow:
+  postprocessing: [visualization]
+  visualization:
+    profile: publication
+    figure_set: auto
+    formats: [png, pdf, svg]
+```
+
+The default workflow visualization profile remains `generic`. The publication
+profile adapts existing canonical artifacts to semantic visualization data and
+then calls the public analyzer visualization functions. For individual runs it
+can prepare objective-space figures from computed AnalysisResult
+expressibility, trainability, structural-cost, layer, and lineage semantics.
+For evolutionary runs it can prepare generation-count figures from EvolutionRun
+refs and objective figures from linked AnalysisResult refs. Missing metrics are
+not fabricated; figures that lack required prepared values are skipped, and a
+visualization request with no supported figure fails clearly.
+
+Global publication figures require explicitly prepared multi-run data and are
+not inferred from one run-scoped workflow.
+
 ## Safe Extension Guidance
 
 When adding visualization behavior:

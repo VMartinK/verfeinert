@@ -231,6 +231,19 @@ helpers only for requested visualization operations. Plotting consumes existing
 AnalysisResult, Pareto, Ranking, ComparisonResult, or EvolutionRun artifacts
 and writes figures under caller-owned output roots.
 
+`workflow.visualization.profile` defaults to `generic`, preserving the existing
+artifact-derived Pareto/ranking/comparison/lineage figures. Setting
+`profile: publication` opts into the frozen publication renderers through
+public prepared-data adapters. The publication profile supports configured
+`figure_set` values (`individual`, `evolution`, or `auto`), optional explicit
+figure names, and `png`/`pdf`/`svg` export formats. Individual publication
+figures are prepared from computed AnalysisResult objective metrics and
+candidate semantics; evolution publication figures consume EvolutionRun
+generation refs and, when available, AnalysisResult refs. Missing objective
+metrics skip objective-space figures rather than fabricating values. Global
+publication figures remain a multi-run prepared-artifact concern instead of
+being inferred inside one run-scoped workflow.
+
 ## Output Policy
 
 All writes go below the caller-provided output root:

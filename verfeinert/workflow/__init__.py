@@ -12,6 +12,7 @@ from .config import (
     WorkflowConfigError,
     WorkflowObservabilityConfig,
     WorkflowResumeConfig,
+    WorkflowVisualizationConfig,
 )
 from .checkpoints import (
     WORKFLOW_CHECKPOINT_FINGERPRINT_VERSION,
@@ -40,6 +41,7 @@ from .manifests import (
 )
 from .provenance import workflow_provenance
 from .runner import WorkflowResult, WorkflowRunner, run_workflow
+from .visualization import write_workflow_publication_visualizations
 
 __all__ = [
     "AnalyzerStageConfig",
@@ -62,6 +64,7 @@ __all__ = [
     "WorkflowEventRecorder",
     "WorkflowObservabilityConfig",
     "WorkflowResumeConfig",
+    "WorkflowVisualizationConfig",
     "WorkflowResult",
     "WorkflowRunner",
     "read_workflow_checkpoint_json",
@@ -76,4 +79,5 @@ __all__ = [
     "write_traceability_json",
     "write_workflow_checkpoint_json",
     "write_workflow_manifest_json",
+    "write_workflow_publication_visualizations",
 ]

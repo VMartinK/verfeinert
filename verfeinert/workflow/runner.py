@@ -97,6 +97,7 @@ from .manifests import (
     write_workflow_manifest_json,
 )
 from .provenance import workflow_provenance
+from .visualization import write_workflow_publication_visualizations
 
 
 EVOLUTION_FINGERPRINT_VERSION = "verfeinert.workflow.evolution_fingerprint.v1"
@@ -2415,6 +2416,19 @@ def _write_requested_visualizations(
     evolution_source: str | Path | Mapping[str, Any] | None,
     input_roots: Sequence[str | Path],
 ) -> tuple[Path, ...]:
+    if config.visualization.profile == "publication":
+        paths = write_workflow_publication_visualizations(
+            config=config,
+            derived_root=derived_root,
+            analysis_collection=analysis_collection,
+            pareto_result=pareto_result,
+            evolution_source=evolution_source,
+            input_roots=input_roots,
+        )
+        if not paths:
+            raise WorkflowConfigError("requested visualization has no supported input artifact.")
+        return paths
+
     from verfeinert.ansatz_analyzer.visualization import (
         DEFAULT_STYLE,
         plot_comparison_objective_space,

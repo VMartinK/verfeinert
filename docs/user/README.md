@@ -182,5 +182,21 @@ Matplotlib is unavailable.
 Objective-space publication plots default to generic `T(H)` trainability and
 expressibility labels, and publication legends use opaque frames above data.
 
+Workflow visualization defaults to the generic artifact-derived profile. To
+write publication-renderer figures from workflow artifacts, request
+`postprocessing: [visualization]` and configure:
+
+```yaml
+workflow:
+  visualization:
+    profile: publication
+    figure_set: individual  # or evolution / auto
+    formats: [png, pdf, svg]
+```
+
+The publication profile consumes already-computed AnalysisResult and
+EvolutionRun artifacts. It does not compute metrics, Pareto membership,
+selection, or evolution state.
+
 Broad arbitrary external CSV import is deferred. CSV export for canonical and
 derived Verfeinert artifacts is part of the standard workflow surface.

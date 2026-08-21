@@ -85,6 +85,16 @@ POSTPROCESSING_ALIASES = {
     "plot": "visualization",
 }
 SUPPORTED_OBSERVER_ERROR_POLICIES = ("raise", "record_warning")
+SUPPORTED_VISUALIZATION_PROFILES = ("generic", "publication")
+SUPPORTED_PUBLICATION_FIGURE_SETS = ("auto", "individual", "evolution", "global")
+SUPPORTED_PUBLICATION_FIGURES = (
+    "individual_by_layer",
+    "individual_by_lineage",
+    "individual_pareto_by_lineage",
+    "evolution_candidate_counts",
+    "evolution_by_layer",
+)
+SUPPORTED_PUBLICATION_FORMATS = ("png", "pdf", "svg")
 
 
 @dataclass(frozen=True)
@@ -670,6 +680,79 @@ class WorkflowObservabilityConfig:
 
 
 @dataclass(frozen=True)
+class WorkflowVisualizationConfig:
+    """Configuration for workflow-level visualization orchestration."""
+
+    profile: str = "generic"
+    figure_set: str = "auto"
+    figures: tuple[str, ...] = ()
+    formats: tuple[str, ...] = ("png", "pdf", "svg")
+    overwrite: bool = True
+
+    def __post_init__(self) -> None:
+        profile = _non_empty_text(self.profile, "visualization.profile").lower()
+        if profile not in SUPPORTED_VISUALIZATION_PROFILES:
+            raise WorkflowConfigError(
+                f"visualization.profile must be one of {SUPPORTED_VISUALIZATION_PROFILES}.",
+            )
+        object.__setattr__(self, "profile", profile)
+        figure_set = _non_empty_text(self.figure_set, "visualization.figure_set").lower()
+        if figure_set not in SUPPORTED_PUBLICATION_FIGURE_SETS:
+            raise WorkflowConfigError(
+                f"visualization.figure_set must be one of {SUPPORTED_PUBLICATION_FIGURE_SETS}.",
+            )
+        object.__setattr__(self, "figure_set", figure_set)
+        figures = tuple(
+            _non_empty_text(figure, "visualization.figures").lower()
+            for figure in self.figures
+        )
+        unknown = [figure for figure in figures if figure not in SUPPORTED_PUBLICATION_FIGURES]
+        if unknown:
+            raise WorkflowConfigError(
+                "visualization.figures contains unsupported publication figure(s): "
+                + ", ".join(unknown),
+            )
+        object.__setattr__(self, "figures", tuple(dict.fromkeys(figures)))
+        formats = tuple(
+            _non_empty_text(fmt, "visualization.formats").lower().lstrip(".")
+            for fmt in self.formats
+        )
+        if not formats:
+            raise WorkflowConfigError("visualization.formats must not be empty.")
+        unsupported_formats = [
+            fmt for fmt in formats if fmt not in SUPPORTED_PUBLICATION_FORMATS
+        ]
+        if unsupported_formats:
+            raise WorkflowConfigError(
+                "visualization.formats must be selected from png, pdf, svg.",
+            )
+        object.__setattr__(self, "formats", tuple(dict.fromkeys(formats)))
+        object.__setattr__(self, "overwrite", require_bool(self.overwrite, "visualization.overwrite"))
+
+    @classmethod
+    def from_mapping(cls, mapping: Mapping[str, Any]) -> "WorkflowVisualizationConfig":
+        """Build visualization orchestration config from parsed data."""
+        data = dict(mapping)
+        return cls(
+            profile=data.get("profile", "generic"),
+            figure_set=data.get("figure_set", data.get("figure_profile", "auto")),
+            figures=tuple(data.get("figures", ())),
+            formats=tuple(data.get("formats", data.get("export_formats", ("png", "pdf", "svg")))),
+            overwrite=data.get("overwrite", True),
+        )
+
+    def to_dict(self) -> dict[str, Any]:
+        """Return JSON-safe visualization orchestration configuration."""
+        return {
+            "profile": self.profile,
+            "figure_set": self.figure_set,
+            "figures": list(self.figures),
+            "formats": list(self.formats),
+            "overwrite": self.overwrite,
+        }
+
+
+@dataclass(frozen=True)
 class WorkflowConfig:
     """Top-level configuration for one public workflow run."""
 
@@ -688,6 +771,7 @@ class WorkflowConfig:
     resume: WorkflowResumeConfig = field(default_factory=WorkflowResumeConfig)
     checkpoint: WorkflowCheckpointConfig = field(default_factory=WorkflowCheckpointConfig)
     observability: WorkflowObservabilityConfig = field(default_factory=WorkflowObservabilityConfig)
+    visualization: WorkflowVisualizationConfig = field(default_factory=WorkflowVisualizationConfig)
     analysis_result_reuse: dict[str, Any] = field(default_factory=dict)
     execution: ExecutionConfig = field(default_factory=ExecutionConfig)
     random_seed: int | None = None
@@ -758,6 +842,8 @@ class WorkflowConfig:
             raise WorkflowConfigError("checkpoint must be WorkflowCheckpointConfig.")
         if not isinstance(self.observability, WorkflowObservabilityConfig):
             raise WorkflowConfigError("observability must be WorkflowObservabilityConfig.")
+        if not isinstance(self.visualization, WorkflowVisualizationConfig):
+            raise WorkflowConfigError("visualization must be WorkflowVisualizationConfig.")
         object.__setattr__(
             self,
             "analysis_result_reuse",
@@ -786,6 +872,7 @@ class WorkflowConfig:
         resume = data.get("resume", workflow.get("resume", {}))
         checkpoint = data.get("checkpoint", workflow.get("checkpoint", {}))
         observability = data.get("observability", workflow.get("observability", {}))
+        visualization = data.get("visualization", workflow.get("visualization", {}))
         analysis_result_reuse = _first_non_none(
             data.get("analysis_result_reuse"),
             workflow.get("analysis_result_reuse"),
@@ -827,6 +914,11 @@ class WorkflowConfig:
                 if isinstance(observability, WorkflowObservabilityConfig)
                 else WorkflowObservabilityConfig.from_mapping(dict(observability))
             ),
+            visualization=(
+                visualization
+                if isinstance(visualization, WorkflowVisualizationConfig)
+                else WorkflowVisualizationConfig.from_mapping(dict(visualization))
+            ),
             analysis_result_reuse=dict(analysis_result_reuse),
             execution=(
                 execution
@@ -858,6 +950,7 @@ class WorkflowConfig:
                 "resume": self.resume.to_dict(),
                 "checkpoint": self.checkpoint.to_dict(),
                 "observability": self.observability.to_dict(),
+                "visualization": self.visualization.to_dict(),
                 "analysis_result_reuse": dict(self.analysis_result_reuse),
             },
             "stages": list(self.stages),
@@ -868,6 +961,7 @@ class WorkflowConfig:
             "comparisons": [item.to_dict() for item in self.comparisons],
             "checkpoint": self.checkpoint.to_dict(),
             "observability": self.observability.to_dict(),
+            "visualization": self.visualization.to_dict(),
             "execution": self.execution.to_dict(),
             "metadata": dict(self.metadata),
         }
