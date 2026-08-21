@@ -97,6 +97,11 @@ from .manifests import (
     write_workflow_manifest_json,
 )
 from .provenance import workflow_provenance
+from .reports import (
+    build_workflow_report_document,
+    write_workflow_report_json,
+    write_workflow_report_markdown,
+)
 from .visualization import write_workflow_publication_visualizations
 
 
@@ -128,6 +133,8 @@ class WorkflowResult:
     manifest_path: Path | None = None
     traceability_json_path: Path | None = None
     traceability_csv_path: Path | None = None
+    report_json_path: Path | None = None
+    report_markdown_path: Path | None = None
     candidate_ids: tuple[str, ...] = ()
     analysis_result_ids: tuple[str, ...] = ()
     survivor_candidate_ids: tuple[str, ...] = ()
@@ -180,6 +187,12 @@ class WorkflowResult:
                 "traceability_csv_path": (
                     str(self.traceability_csv_path)
                     if self.traceability_csv_path
+                    else None
+                ),
+                "report_json_path": str(self.report_json_path) if self.report_json_path else None,
+                "report_markdown_path": (
+                    str(self.report_markdown_path)
+                    if self.report_markdown_path
                     else None
                 ),
                 "candidate_ids": list(self.candidate_ids),
@@ -665,6 +678,55 @@ class WorkflowRunner:
                 _artifact_record("workflow_traceability_csv", str(traceability_csv_path)),
             ],
         )
+        report_json_path: Path | None = None
+        report_markdown_path: Path | None = None
+        report_artifact_paths = _workflow_manifest_artifact_paths(
+            generated_package=generated_package,
+            analysis_result_paths=analysis_result_paths,
+            evolution_source=evolution_trace_source,
+            ranking_json_path=ranking_json_path,
+            ranking_csv_path=ranking_csv_path,
+            pareto_json_path=pareto_json_path,
+            pareto_csv_path=pareto_csv_path,
+            analysis_csv_path=analysis_csv_path,
+            comparison_json_paths=comparison_json_paths,
+            comparison_csv_paths=comparison_csv_paths,
+            visualization_paths=visualization_paths,
+            checkpoint_path=checkpoint_path,
+            event_log_path=event_log_path,
+            traceability_json_path=traceability_json_path,
+            traceability_csv_path=traceability_csv_path,
+            report_json_path=None,
+            report_markdown_path=None,
+        )
+        if stage_plan.postprocessing_requested("report"):
+            if "report" not in executed:
+                executed.append("report")
+            report_root = run_root / "reports"
+            report_document = build_workflow_report_document(
+                config=config,
+                run_root=run_root,
+                executed_operations=tuple(dict.fromkeys(executed)),
+                candidate_ids=candidate_ids,
+                analysis_result_ids=analysis_result_ids,
+                survivor_candidate_ids=survivor_candidate_ids,
+                rejected_candidate_ids=rejected_candidate_ids,
+                analysis_collection=analysis_collection,
+                evolution_source=evolution_trace_source,
+                ranking_json_path=ranking_json_path,
+                pareto_json_path=pareto_json_path,
+                artifact_paths=report_artifact_paths,
+                warnings=warnings,
+                final_stopping_reason=final_stopping_reason,
+            )
+            report_json_path = write_workflow_report_json(report_document, report_root)
+            report_markdown_path = write_workflow_report_markdown(report_document, report_root)
+            produced_artifacts.extend(
+                [
+                    _artifact_record("workflow_report", str(report_json_path)),
+                    _artifact_record("workflow_report_markdown", str(report_markdown_path)),
+                ],
+            )
         manifest_document = build_workflow_manifest_document(
             config=config,
             run_root=run_root,
@@ -689,6 +751,8 @@ class WorkflowRunner:
                 event_log_path=event_log_path,
                 traceability_json_path=traceability_json_path,
                 traceability_csv_path=traceability_csv_path,
+                report_json_path=report_json_path,
+                report_markdown_path=report_markdown_path,
             ),
             warnings=warnings,
             final_stopping_reason=final_stopping_reason,
@@ -727,6 +791,7 @@ class WorkflowRunner:
                 "pareto_executed": pareto_json_path is not None,
                 "comparison_executed": bool(comparison_json_paths),
                 "visualization_executed": bool(visualization_paths),
+                "report_executed": report_json_path is not None,
                 "plots_generated_by_runner": bool(visualization_paths),
                 "csv_exported": any(
                     path is not None
@@ -770,6 +835,8 @@ class WorkflowRunner:
             manifest_path=manifest_path,
             traceability_json_path=traceability_json_path,
             traceability_csv_path=traceability_csv_path,
+            report_json_path=report_json_path,
+            report_markdown_path=report_markdown_path,
             candidate_ids=candidate_ids,
             analysis_result_ids=analysis_result_ids,
             survivor_candidate_ids=survivor_candidate_ids,
@@ -1795,6 +1862,8 @@ def _workflow_manifest_artifact_paths(
     event_log_path: Path | None,
     traceability_json_path: Path,
     traceability_csv_path: Path,
+    report_json_path: Path | None,
+    report_markdown_path: Path | None,
 ) -> dict[str, Any]:
     evolution_uri = _source_uri(evolution_source)
     return {
@@ -1822,6 +1891,12 @@ def _workflow_manifest_artifact_paths(
         "event_log_path": str(event_log_path) if event_log_path is not None else None,
         "traceability_json_path": str(traceability_json_path),
         "traceability_csv_path": str(traceability_csv_path),
+        "report_json_path": str(report_json_path) if report_json_path is not None else None,
+        "report_markdown_path": (
+            str(report_markdown_path)
+            if report_markdown_path is not None
+            else None
+        ),
     }
 
 

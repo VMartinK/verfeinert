@@ -49,6 +49,7 @@ SUPPORTED_POSTPROCESSING_OPERATIONS = (
     "comparison",
     "export_csv",
     "visualization",
+    "report",
 )
 SUPPORTED_WORKFLOW_STAGES = (
     "generate",
@@ -66,6 +67,8 @@ SUPPORTED_WORKFLOW_STAGES = (
     "visualize",
     "visualization",
     "plot",
+    "report",
+    "inspect",
 )
 DEFAULT_LEGACY_STAGES = ("generate", "analyze", "evolve", "rank")
 DEFAULT_SCIENTIFIC_EXECUTION = ("generate", "analyze", "evolve")
@@ -83,6 +86,8 @@ POSTPROCESSING_ALIASES = {
     "visualize": "visualization",
     "visualization": "visualization",
     "plot": "visualization",
+    "report": "report",
+    "inspect": "report",
 }
 SUPPORTED_OBSERVER_ERROR_POLICIES = ("raise", "record_warning")
 SUPPORTED_VISUALIZATION_PROFILES = ("generic", "publication")

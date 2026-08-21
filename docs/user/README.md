@@ -172,6 +172,21 @@ Display aliases are presentation metadata only. Canonical candidate IDs,
 `candidate_ref`, lineage, generation, and comparison compatibility remain
 scientific data.
 
+## Reports
+
+Add `report` to workflow postprocessing to write deterministic run summaries:
+
+```yaml
+workflow:
+  postprocessing: [ranking, pareto, report]
+```
+
+Reports are written under `<output_root>/<run_id>/reports/` as
+`workflow_report.json` and `workflow_report.md`. They summarize factual run
+state, metric availability, ranking/Pareto artifact summaries, EvolutionRun
+stopping facts, warnings, and artifact locations. They do not compute metrics
+or add scientific interpretation beyond the configured artifacts.
+
 ## Visualization
 
 Visualization uses the campaign-neutral publication-grade public `DEFAULT_STYLE`

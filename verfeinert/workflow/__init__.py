@@ -40,6 +40,13 @@ from .manifests import (
     write_workflow_manifest_json,
 )
 from .provenance import workflow_provenance
+from .reports import (
+    WORKFLOW_REPORT_SCHEMA_VERSION,
+    build_workflow_report_document,
+    render_workflow_report_markdown,
+    write_workflow_report_json,
+    write_workflow_report_markdown,
+)
 from .runner import WorkflowResult, WorkflowRunner, run_workflow
 from .visualization import write_workflow_publication_visualizations
 
@@ -52,6 +59,7 @@ __all__ = [
     "WORKFLOW_CHECKPOINT_SCHEMA_VERSION",
     "WORKFLOW_EVENT_SCHEMA_VERSION",
     "WORKFLOW_MANIFEST_SCHEMA_VERSION",
+    "WORKFLOW_REPORT_SCHEMA_VERSION",
     "WORKFLOW_TRACEABILITY_SCHEMA_VERSION",
     "WorkflowArtifactInputs",
     "WorkflowCheckpointConfig",
@@ -73,11 +81,15 @@ __all__ = [
     "validate_workflow_checkpoint_document",
     "build_traceability_document",
     "build_workflow_manifest_document",
+    "build_workflow_report_document",
     "workflow_checkpoint_fingerprint",
     "workflow_provenance",
+    "render_workflow_report_markdown",
     "write_traceability_csv",
     "write_traceability_json",
     "write_workflow_checkpoint_json",
     "write_workflow_manifest_json",
     "write_workflow_publication_visualizations",
+    "write_workflow_report_json",
+    "write_workflow_report_markdown",
 ]

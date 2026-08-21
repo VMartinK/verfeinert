@@ -224,6 +224,22 @@ Ranking and Pareto consume AnalysisResult collections. CSV exports are
 deterministic derived tables and preserve canonical candidate and analysis
 refs.
 
+`report` is an explicit deterministic postprocessing operation. When requested,
+workflow writes:
+
+```text
+<output_root>/<run_id>/reports/workflow_report.json
+<output_root>/<run_id>/reports/workflow_report.md
+```
+
+The JSON report records factual run counts, requested/completed operations,
+config hash, metric statuses and available values already present in
+AnalysisResult artifacts, ranking/Pareto summaries read from derived JSON,
+EvolutionRun generation/stopping facts, warnings, and artifact locations. The
+Markdown report is rendered from the JSON document. Reports do not compute
+metrics, classify Pareto membership, reinterpret ranking, or make unsupported
+scientific conclusions.
+
 ## Visualization
 
 Visualization is optional postprocessing. The runner imports visualization
