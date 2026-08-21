@@ -19,9 +19,9 @@ renderers
 publication export
 ```
 
-The package supports legacy plot-data adapters for analyzer artifacts and the
-v0.3.x publication renderers for prepared semantic data. Public figure APIs use
-descriptive names such as `plot_individual_classification` and
+The package supports compatibility plot-data adapters for analyzer artifacts
+and the frozen publication renderers for prepared semantic data. Public figure
+APIs use descriptive names such as `plot_individual_classification` and
 `plot_global_pareto`; notebook-local figure labels are not public API concepts.
 
 ## Scientific Boundary

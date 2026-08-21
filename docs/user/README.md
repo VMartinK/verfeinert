@@ -9,7 +9,7 @@ These guides describe reproducible researcher workflows built on public
 From a GitHub release wheel once downloaded:
 
 ```bash
-python -m pip install ./verfeinert-0.3.2-py3-none-any.whl
+python -m pip install ./verfeinert-0.4.0-py3-none-any.whl
 ```
 
 From a repository checkout:
@@ -77,6 +77,7 @@ analyzer:
 Run it with the CLI:
 
 ```bash
+verfeinert validate workflow.yaml
 verfeinert run workflow.yaml
 ```
 
@@ -88,24 +89,53 @@ from verfeinert.workflow import WorkflowConfig, WorkflowRunner
 result = WorkflowRunner(WorkflowConfig.from_mapping(config)).run()
 ```
 
+## CLI Surface
+
+The non-interactive CLI is a thin wrapper over public workflow APIs:
+
+```bash
+verfeinert validate workflow.yaml
+verfeinert run workflow.yaml
+verfeinert resume outputs/run-root-or-checkpoints/latest.json
+verfeinert inspect outputs/run-id/reports/workflow_report.json
+```
+
+`validate` checks config normalization without running science. `run` executes
+the requested workflow operations. `resume` accepts a checkpoint JSON path or a
+run directory containing `checkpoints/latest.json`. `inspect` renders workflow
+reports or checkpoint summaries for humans.
+
 ## Evolutionary Campaign
 
 An evolutionary campaign keeps the same public workflow API and adds `evolve`
-plus a public candidate factory or provided candidate records:
+plus a declarative mutation policy:
 
-```python
-from verfeinert.ansatz_generator import InsertGateMutationFactory
-from verfeinert.workflow import WorkflowConfig, WorkflowRunner
-
-result = WorkflowRunner(WorkflowConfig.from_mapping(config)).run(
-    candidate_records=initial_records,
-    candidate_factory=InsertGateMutationFactory(),
-)
+```yaml
+workflow:
+  campaign_type: evolutionary
+  scientific_execution: [generate, analyze, evolve]
+evolver:
+  selection_mode: fitness
+  metric_name: structural_cost
+  direction: minimize
+  keep: 1
+  max_generations: 3
+  mutation_policy:
+    policy_id: demo-insert-schedule
+    variants_per_parent: 1
+    candidate_factory: {type: canonical}
+    recipes:
+      - recipe_id: crx_insert
+        mutation_type: insert
+        parameters:
+          gate: crx
+          edge: [0, 1]
 ```
 
 The workflow owns orchestration only. The generator owns candidate construction,
 the analyzer owns metric execution/materialization, and the evolver owns
-selection, mutation requests, generation state, resume, and branch semantics.
+selection, mutation requests, generation state, stopping, and checkpointable
+EvolutionRun state.
 
 ## Artifact Reuse
 
@@ -144,17 +174,50 @@ configuration, structural-cost normalization, objectives, directions,
 thresholds, and ranking score definitions are checked where relevant. Output
 paths and display aliases are ignored for compatibility.
 
+## Checkpoints, Manifests, And Traceability
+
+Enable workflow checkpointing with:
+
+```yaml
+workflow:
+  checkpoint:
+    enabled: true
+```
+
+The checkpoint is written to
+`<output_root>/<run_id>/checkpoints/latest.json`. Resume is strict: run ID,
+workflow compatibility fingerprint, scientifically relevant configuration, and
+artifact hashes must match. Completed `generate` and `analyze` stages are not
+rerun during checkpoint resume.
+
+Every successful workflow writes:
+
+```text
+<output_root>/<run_id>/manifest/workflow_manifest.json
+<output_root>/<run_id>/manifest/workflow_traceability.json
+<output_root>/<run_id>/manifest/workflow_traceability.csv
+```
+
+The manifest records config, seed policy, execution mode/workers,
+materialization, constraints, consumed/reused/produced artifacts, warnings, and
+final stopping reason when evolution ran. Traceability rows connect candidate
+IDs, structural and lineage hashes, AnalysisResult IDs, available metric
+values, selection roles, and stopping facts.
+
 ## Official Examples
 
 - `cx01_reproduction.md`: CX-01 individual reproduction workflow with a fast
-  smoke profile and documented full scientific settings.
+  smoke profile, documented full scientific settings, and a declarative
+  full-lite CLI config.
 - `mixt5g_reproduction.md`: MIXT-5G evolutionary reproduction with a bounded
-  smoke profile and documented full schedule.
+  smoke profile, documented full schedule, and a declarative full-lite CLI
+  config.
 
-Both examples write artifacts only under caller-provided output roots. Smoke
-profiles are CI-friendly and structural-cost oriented. Full scientific profiles
-are explicit opt-in workflows because expressibility/trainability execution can
-be expensive and may construct QNodes.
+Both examples write artifacts only under caller-provided output roots. The
+full-lite configs are CI-friendly and compute selected metrics with tiny
+materialized budgets from config/CLI only. Thesis-scale full scientific
+profiles are explicit opt-in workflows because expressibility/trainability
+execution can be expensive and may construct many QNodes.
 
 ## Define A Third Campaign
 
@@ -165,7 +228,7 @@ copying CX-01 or MIXT-5G internals:
 2. declare `scientific_execution`;
 3. declare independent `postprocessing`;
 4. provide generated candidates, persisted artifacts, or `family: provided`;
-5. provide public mutation policies/factories when evolution is needed;
+5. provide declarative mutation policies when evolution is needed;
 6. keep campaign-specific data preparation outside the framework core.
 
 Display aliases are presentation metadata only. Canonical candidate IDs,

@@ -88,5 +88,9 @@ All artifacts are written below the configured output root:
 - candidate JSON files;
 - `staged_package.json`;
 - analyzer result JSON files;
-- ranking JSON/CSV;
-- comparison report.
+- ranking and Pareto JSON/CSV when configured;
+- workflow checkpoint when enabled;
+- workflow manifest and traceability JSON/CSV;
+- deterministic workflow report JSON/Markdown;
+- publication figures when visualization is requested;
+- comparison report from the example script profiles.

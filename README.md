@@ -43,7 +43,7 @@ verfeinert
 From a GitHub release wheel once downloaded:
 
 ```bash
-python -m pip install ./verfeinert-0.3.2-py3-none-any.whl
+python -m pip install ./verfeinert-0.4.0-py3-none-any.whl
 ```
 
 From a repository checkout:
@@ -72,10 +72,20 @@ dependencies. Matplotlib is required only for plotting and figure export:
 python -m pip install -e ".[dev,visualization]"
 ```
 
-Scientific analyzer and workflow runs in v0.3.x support sequential execution.
-Core multiprocessing executor primitives exist, but scientific multiprocessing
-integration is deferred and rejected for candidate science in this release
-line.
+Scientific analyzer and workflow analysis stages support sequential execution
+by default and explicit candidate-level multiprocessing through:
+
+```yaml
+execution:
+  mode: multiprocessing
+  parallelize_candidates: true
+  worker_count: 2
+```
+
+Multiprocessing is fail-closed. If workers cannot honor the requested
+configuration because of pickling, startup failure, worker exceptions, or an
+order-dependent metric RNG policy, the run fails rather than silently falling
+back to sequential execution.
 
 ## Validate
 
@@ -91,23 +101,26 @@ check.
 ## Examples
 
 ```bash
-python examples/CX01_reproduction/scripts/run_cx01_reproduction.py \
-  --profile smoke \
-  --output-root outputs/cx01-smoke
+verfeinert run examples/CX01_reproduction/config/cx01_full_lite_workflow.yaml \
+  --output-root outputs/cx01-full-lite
 
-python examples/MIXT5G_reproduction/scripts/run_mixt5g_reproduction.py \
-  --profile smoke \
-  --output-root outputs/mixt5g-smoke
+verfeinert run examples/MIXT5G_reproduction/config/mixt5g_full_lite_workflow.yaml \
+  --output-root outputs/mixt5g-full-lite
 ```
 
 Generated artifacts must be written under caller-provided output roots and
 should not be committed.
 
-CX-01 is an `individual` campaign: it generates and analyzes configured
-candidates, then runs ranking postprocessing without evolution. MIXT-5G is an
-`evolutionary` campaign: it initializes a population, uses a generic insert-gate
-candidate factory and configured mutation schedule, and writes a
-resume-compatible EvolutionRun.
+CX-01 is an `individual` workflow: it generates and analyzes configured
+candidates, then runs ranking/Pareto/export/report/visualization
+postprocessing without evolution. MIXT-5G is an `evolutionary` workflow: it
+initializes a population, applies a declarative generic mutation schedule,
+analyzes each generation, selects survivors, and writes a resume-compatible
+EvolutionRun.
+
+The historical script/notebook endpoints remain researcher conveniences for
+the reference profiles, but the full-lite release validation path is config and
+CLI only.
 
 ## Analyzer Scientific Execution
 
@@ -188,7 +201,15 @@ analyzer:
 Run it through the thin CLI:
 
 ```bash
+verfeinert validate workflow.yaml
 verfeinert run workflow.yaml
+```
+
+Resume from a workflow checkpoint or run directory:
+
+```bash
+verfeinert resume outputs/minimal-individual/minimal-individual
+verfeinert inspect outputs/minimal-individual/minimal-individual/reports/workflow_report.json
 ```
 
 The same workflow can be run through Python:
@@ -264,23 +285,42 @@ Legacy `stages` declarations are normalized into the same internal plan. If
 both legacy and structured workflow declarations are supplied, conflicting
 requests fail during configuration validation.
 
-Evolutionary campaigns can use the public factory boundary:
+Evolutionary workflows can define mutation policies declaratively:
 
-```python
-from verfeinert.ansatz_generator import InsertGateMutationFactory
-from verfeinert.workflow import WorkflowConfig, WorkflowRunner
-
-result = WorkflowRunner(WorkflowConfig.from_mapping(config)).run(
-    candidate_records=initial_records,
-    candidate_factory=InsertGateMutationFactory(),
-)
+```yaml
+workflow:
+  campaign_type: evolutionary
+  scientific_execution: [generate, analyze, evolve]
+evolver:
+  selection_mode: fitness
+  metric_name: structural_cost
+  direction: minimize
+  keep: 1
+  max_generations: 3
+  mutation_policy:
+    policy_id: demo-insert-schedule
+    variants_per_parent: 1
+    candidate_factory: {type: canonical}
+    recipes:
+      - recipe_id: crx_insert
+        mutation_type: insert
+        parameters:
+          gate: crx
+          edge: [0, 1]
 ```
 
 To define a third campaign, compose the same public pieces: canonical workflow
-configuration, candidate records or `family: provided`, public mutation
-policies/factories such as `InsertGateMutationFactory`, and `WorkflowRunner`.
-Do not copy CX-01 or MIXT-5G internals unless you are reproducing those
-specific studies.
+configuration, Sanz19 or provided candidate records, declarative mutation
+policy, analyzer materialization/permissions, ranking/Pareto/report/export
+postprocessing, and `WorkflowRunner` or the CLI. Do not copy CX-01 or MIXT-5G
+internals unless you are reproducing those specific studies.
+
+Every successful workflow writes deterministic manifest and traceability
+artifacts under `<output_root>/<run_id>/manifest/`. Add `report` to
+`workflow.postprocessing` to write machine-readable and Markdown run reports
+under `<output_root>/<run_id>/reports/`. Add
+`workflow.checkpoint.enabled: true` to write
+`<output_root>/<run_id>/checkpoints/latest.json` for strict resume.
 
 ## External Validation
 
@@ -290,7 +330,18 @@ python scripts/validate_external_install.py \
 ```
 
 This creates a temporary virtual environment, installs the package, checks
-public imports and packaged schemas, and runs both smoke reproduction examples.
+public imports and packaged schemas, runs both declarative full-lite workflows
+through the installed console script, and verifies that imports resolve from
+site-packages rather than the repository checkout.
+
+## Limits
+
+- Global F/F2 visualization remains out of contract.
+- Arbitrary external CSV ingestion is not a canonical workflow entry point.
+- Materialization currently supports the documented PennyLane/default.qubit
+  capability boundary; unsupported gates or parameter modes fail closed.
+- Workflow visualization consumes computed artifacts and never recomputes
+  metrics, ranking, Pareto membership, or evolution state.
 
 ## License
 
