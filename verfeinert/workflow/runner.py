@@ -77,7 +77,6 @@ from verfeinert.ansatz_generator import (
 from verfeinert.core.hashing import hash_file, stable_hash
 from verfeinert.core.io import ensure_output_root, read_json
 from verfeinert.core.io.serialization import to_json_safe
-from verfeinert.core.config import SCIENTIFIC_MULTIPROCESSING_DEFERRED_MESSAGE
 
 from .config import WorkflowConfig, WorkflowConfigError
 from .provenance import workflow_provenance
@@ -212,7 +211,6 @@ class WorkflowRunner:
     ) -> WorkflowResult:
         """Run only the requested workflow operations over compatible artifacts."""
         config = self.config
-        _reject_unsupported_scientific_multiprocessing(config)
         output_root = ensure_output_root(config.output_root, input_roots=config.input_roots)
         run_root = output_root / config.run_id
         package_output_root = run_root / "candidates"
@@ -2324,12 +2322,6 @@ def run_workflow(
         evolution_run_source=evolution_run_source,
         candidate_factory=candidate_factory,
     )
-
-
-def _reject_unsupported_scientific_multiprocessing(config: WorkflowConfig) -> None:
-    if config.execution.mode == "sequential" or not config.scientific_execution:
-        return
-    raise WorkflowConfigError(SCIENTIFIC_MULTIPROCESSING_DEFERRED_MESSAGE)
 
 
 __all__ = [

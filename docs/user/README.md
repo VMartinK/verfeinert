@@ -34,10 +34,12 @@ NumPy, PennyLane, PyYAML, and JSON Schema support are standard runtime
 dependencies because Verfeinert includes analyzer-owned scientific execution.
 Matplotlib is required only for visualization calls.
 
-Scientific analyzer and workflow runs in v0.3.x support sequential execution.
-Core multiprocessing executor primitives exist for future integration, but
-`execution.mode: multiprocessing` is rejected for candidate science in this
-release line.
+Scientific analyzer and workflow analysis stages support sequential execution
+by default and explicit candidate-level multiprocessing through
+`execution.mode: multiprocessing`, `parallelize_candidates: true`, and a
+positive `worker_count`. Multiprocessing is fail-closed: unpicklable callables,
+worker failures, or order-dependent `global_sequential` RNG policy are rejected
+rather than run sequentially in disguise.
 
 ## Minimal Individual Campaign
 

@@ -7,14 +7,44 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from .config import AnalyzerConfig
+from verfeinert.core.execution import ExecutionError, build_executor
+
+from .config import AnalyzerConfig, AnalyzerConfigError, EXPENSIVE_METRICS
 from .io import load_candidate_views, write_analysis_result_json
 from .materialization import CircuitMaterializationError, MaterializedCircuit, StateCallableProvider
 from .metrics.runtime import failed_metric, skipped_metric
-from .metrics.structural_cost import compute_structural_costs
-from .models import AnalysisResultRecord, CandidateView, CostRecord, MetricRecord
+from .metrics.structural_cost import StructuralCostAnalysis, compute_structural_costs
+from .models import AnalysisContext, AnalysisResultRecord, CandidateView, CostRecord, MetricRecord
 from .results import build_analysis_context, build_analysis_result_record
 from .validation import validate_analysis_result_document
+
+
+class AnalysisPipelineExecutionError(RuntimeError):
+    """Raised when analyzer execution cannot complete truthfully."""
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        reason: str,
+        execution: Mapping[str, Any],
+        failures: tuple[dict[str, Any], ...] = (),
+        error: Mapping[str, Any] | None = None,
+    ) -> None:
+        super().__init__(message)
+        self.reason = reason
+        self.execution = dict(execution)
+        self.failures = failures
+        self.error = dict(error or {})
+
+    def to_dict(self) -> dict[str, Any]:
+        """Return JSON-safe failure metadata without traceback internals."""
+        return {
+            "reason": self.reason,
+            "execution": dict(self.execution),
+            "failures": list(self.failures),
+            "error": dict(self.error),
+        }
 
 
 class AnalysisPipeline:
@@ -33,6 +63,7 @@ class AnalysisPipeline:
     ) -> list[AnalysisResultRecord]:
         """Analyze Candidate or StagedPackage JSON and return result records."""
         candidates = load_candidate_views(source)
+        _validate_parallel_execution_contract(self.config)
         context = build_analysis_context(self.config)
         structural_by_candidate = {}
         if "structural_cost" in self.config.selected_metrics:
@@ -43,39 +74,31 @@ class AnalysisPipeline:
                     config=self.config.structural_cost,
                 )
             }
+        metric_callables = {} if metric_callables is None else metric_callables
+        if self.config.execution.mode == "multiprocessing":
+            records = self._run_parallel_candidates(
+                candidates,
+                context=context,
+                structural_by_candidate=structural_by_candidate,
+                metric_callables=metric_callables,
+            )
+            for record in records:
+                validate_analysis_result_document(record.to_dict())
+            return records
+
         metric_runtime_state: dict[str, Any] = {}
         state_callable_provider = StateCallableProvider(self.config.materialization)
         records = []
         for candidate in candidates:
-            metrics: list[MetricRecord] = []
-            cost = CostRecord()
-            structural = structural_by_candidate.get(candidate.candidate_id)
-            if structural is not None:
-                metrics.append(structural.metric)
-                cost = structural.cost
-            metrics.extend(
-                self._optional_metric_records(
-                    candidate,
-                    metric_callables=metric_callables or {},
+            records.append(
+                _analyze_candidate_record(
+                    config=self.config,
+                    context=context,
+                    candidate=candidate,
+                    structural=structural_by_candidate.get(candidate.candidate_id),
+                    metric_callables=metric_callables,
                     metric_runtime_state=metric_runtime_state,
                     state_callable_provider=state_callable_provider,
-                ),
-            )
-            records.append(
-                build_analysis_result_record(
-                    candidate=candidate,
-                    context=context,
-                    metrics=tuple(metrics),
-                    cost=cost,
-                    metadata={
-                        "foundation_slice": True,
-                        "derived_analyses": [
-                            "pareto_front",
-                            "ranking",
-                        ],
-                        "candidate_semantics": _candidate_semantics(candidate),
-                    },
-                    execution_flags=_execution_flags(metrics),
                 ),
             )
         for record in records:
@@ -254,6 +277,64 @@ class AnalysisPipeline:
             },
         )
 
+    def _run_parallel_candidates(
+        self,
+        candidates: tuple[CandidateView, ...] | list[CandidateView],
+        *,
+        context: AnalysisContext,
+        structural_by_candidate: Mapping[str, StructuralCostAnalysis],
+        metric_callables: Mapping[str, Any],
+    ) -> list[AnalysisResultRecord]:
+        executor = build_executor(self.config.execution)
+        work_items = [
+            _CandidateAnalysisWorkItem(
+                config=self.config,
+                context=context,
+                candidate=candidate,
+                structural=structural_by_candidate.get(candidate.candidate_id),
+                metric_callables=metric_callables,
+            )
+            for candidate in candidates
+        ]
+        try:
+            outputs = executor.map(_analyze_candidate_work_item, work_items)
+        except ExecutionError as exc:
+            raise AnalysisPipelineExecutionError(
+                "analyzer multiprocessing failed without sequential fallback: "
+                f"{exc.error_type or type(exc).__name__}: {exc.error_message or exc}",
+                reason=exc.reason,
+                execution=self.config.execution.to_dict(),
+                error=exc.to_dict(),
+            ) from exc
+
+        failures = tuple(
+            output.to_dict()
+            for output in outputs
+            if isinstance(output, _CandidateAnalysisFailure)
+        )
+        if failures:
+            first = failures[0]
+            raise AnalysisPipelineExecutionError(
+                "analyzer candidate worker failed without sequential fallback: "
+                f"candidate_id={first['candidate_id']!r}, "
+                f"{first['error_type']}: {first['error_message']}",
+                reason="candidate_worker_failed",
+                execution=self.config.execution.to_dict(),
+                failures=failures,
+            )
+        records: list[AnalysisResultRecord] = []
+        for output in outputs:
+            if not isinstance(output, AnalysisResultRecord):
+                raise AnalysisPipelineExecutionError(
+                    "analyzer worker returned an unsupported payload without "
+                    "sequential fallback.",
+                    reason="unsupported_worker_result",
+                    execution=self.config.execution.to_dict(),
+                    error={"payload_type": type(output).__name__},
+                )
+            records.append(output)
+        return records
+
 
 @dataclass(frozen=True)
 class _StateCallableResolution:
@@ -267,6 +348,92 @@ class _StateCallableResolution:
     @property
     def uses_automatic_materialization(self) -> bool:
         return self.materialized is not None
+
+
+@dataclass(frozen=True)
+class _CandidateAnalysisWorkItem:
+    config: AnalyzerConfig
+    context: AnalysisContext
+    candidate: CandidateView
+    structural: StructuralCostAnalysis | None
+    metric_callables: Mapping[str, Any]
+
+
+@dataclass(frozen=True)
+class _CandidateAnalysisFailure:
+    candidate_id: str
+    error_type: str
+    error_message: str
+    reason: str = "candidate_worker_failed"
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "candidate_id": self.candidate_id,
+            "reason": self.reason,
+            "error_type": self.error_type,
+            "error_message": self.error_message,
+        }
+
+
+def _analyze_candidate_work_item(
+    item: _CandidateAnalysisWorkItem,
+) -> AnalysisResultRecord | _CandidateAnalysisFailure:
+    try:
+        return _analyze_candidate_record(
+            config=item.config,
+            context=item.context,
+            candidate=item.candidate,
+            structural=item.structural,
+            metric_callables=item.metric_callables,
+            metric_runtime_state={},
+            state_callable_provider=StateCallableProvider(item.config.materialization),
+        )
+    except Exception as exc:
+        return _CandidateAnalysisFailure(
+            candidate_id=item.candidate.candidate_id,
+            error_type=type(exc).__name__,
+            error_message=str(exc),
+        )
+
+
+def _analyze_candidate_record(
+    *,
+    config: AnalyzerConfig,
+    context: AnalysisContext,
+    candidate: CandidateView,
+    structural: StructuralCostAnalysis | None,
+    metric_callables: Mapping[str, Any],
+    metric_runtime_state: dict[str, Any],
+    state_callable_provider: StateCallableProvider,
+) -> AnalysisResultRecord:
+    metrics: list[MetricRecord] = []
+    cost = CostRecord()
+    if structural is not None:
+        metrics.append(structural.metric)
+        cost = structural.cost
+    metrics.extend(
+        AnalysisPipeline(config)._optional_metric_records(
+            candidate,
+            metric_callables=metric_callables,
+            metric_runtime_state=metric_runtime_state,
+            state_callable_provider=state_callable_provider,
+        ),
+    )
+    return build_analysis_result_record(
+        candidate=candidate,
+        context=context,
+        metrics=tuple(metrics),
+        cost=cost,
+        metadata={
+            "foundation_slice": True,
+            "derived_analyses": [
+                "pareto_front",
+                "ranking",
+            ],
+            "candidate_semantics": _candidate_semantics(candidate),
+        },
+        execution_flags=_execution_flags(metrics),
+    )
 
 
 def _skipped_optional_metric(
@@ -392,6 +559,22 @@ def _metric_config(
     return payload
 
 
+def _validate_parallel_execution_contract(config: AnalyzerConfig) -> None:
+    if config.execution.mode != "multiprocessing":
+        return
+    for metric_name in config.selected_metrics:
+        if metric_name not in EXPENSIVE_METRICS:
+            continue
+        value = config.metric_configs.get(metric_name, {})
+        payload = dict(value) if isinstance(value, Mapping) else {}
+        if payload.get("rng_policy", "per_circuit") == "global_sequential":
+            raise AnalyzerConfigError(
+                "execution.mode='multiprocessing' cannot honor "
+                f"{metric_name}.rng_policy='global_sequential'; use "
+                "rng_policy='per_circuit' or execution.mode='sequential'.",
+            )
+
+
 def _callable_for_metric(
     metric_name: str,
     candidate_id: str,
@@ -427,6 +610,7 @@ def _execution_flags(metrics: list[MetricRecord]) -> dict[str, bool]:
 
 __all__ = [
     "AnalysisPipeline",
+    "AnalysisPipelineExecutionError",
     "analyze_and_write",
     "analyze_candidates",
 ]

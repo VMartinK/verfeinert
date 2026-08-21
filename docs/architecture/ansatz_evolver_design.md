@@ -82,9 +82,11 @@ This layout preserves a reference-based model: population, mutation,
 selection, evaluation refs, and exporters are separate from analyzer metric
 execution.
 
-In v0.3.x, `EvolverConfig.execution` is sequential-only for public evolver
-state construction. Core multiprocessing primitives exist, but evolver/workflow
-scientific integration is deferred to v0.4.0.
+`EvolverConfig.execution` is sequential-only for direct public evolver state
+construction because the evolver does not execute analyzer metrics or own
+QNode/materialization work. Workflow analysis stages may use analyzer-owned
+candidate-level multiprocessing while the evolver continues to exchange
+canonical candidate and AnalysisResult references.
 
 ## Population Representation
 

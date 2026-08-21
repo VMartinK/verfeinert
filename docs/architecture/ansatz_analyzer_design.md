@@ -74,10 +74,12 @@ implicit experiment roots.
 metadata-only structural cost. Expensive metric execution requires explicit
 configuration and permissions.
 
-In v0.3.x, analyzer scientific execution supports only
-`execution.mode="sequential"`. `verfeinert.core` exposes multiprocessing
-executor primitives, but analyzer integration is deferred and rejected at the
-public configuration boundary.
+Analyzer scientific execution consumes `ExecutionConfig`. Sequential execution
+remains the default; candidate-level multiprocessing maps analysis work through
+`verfeinert.core.execution`, preserves input order, and fails closed on
+pickling or worker failures instead of falling back to sequential execution.
+Order-dependent `global_sequential` metric RNG policy is rejected under
+multiprocessing; use per-candidate RNG for parallel metric execution.
 
 `results.py` assembles canonical AnalysisResult records and provenance,
 including metric execution flags, software version, Git commit when available,

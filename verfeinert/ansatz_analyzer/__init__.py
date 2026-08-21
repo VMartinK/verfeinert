@@ -63,7 +63,12 @@ from .ranking import (
     RankingResult,
     rank_analysis_results,
 )
-from .pipeline import AnalysisPipeline, analyze_and_write, analyze_candidates
+from .pipeline import (
+    AnalysisPipeline,
+    AnalysisPipelineExecutionError,
+    analyze_and_write,
+    analyze_candidates,
+)
 from .results import build_analysis_context, build_analysis_result_record
 from .validation import (
     AnalyzerValidationError,
@@ -76,6 +81,7 @@ from .validation import (
 __all__ = [
     "AnalysisContext",
     "AnalysisPipeline",
+    "AnalysisPipelineExecutionError",
     "AnalysisResultCollection",
     "AnalysisResultCollectionError",
     "AnalysisResultRecord",
