@@ -5,6 +5,7 @@ from __future__ import annotations
 from collections.abc import Sequence
 import colorsys
 import hashlib
+import math
 from typing import Any
 
 from .labels import PUBLICATION_EXPRESSIBILITY_LABEL, PUBLICATION_TRAINABILITY_LABEL
@@ -15,6 +16,7 @@ PUBLICATION_LEGEND_ZORDER = 1000
 BAR_HEADROOM_FACTOR = 1.18
 OBJECTIVE_VERTICAL_HEADROOM_FRACTION = 0.22
 PUBLICATION_OBJECTIVE_VERTICAL_HEADROOM_FRACTION = 0.45
+OBJECTIVE_LEGEND_CLEARANCE_AXES_FRACTION = 0.04
 
 
 def setup_publication_objective_axis(
@@ -245,6 +247,52 @@ def apply_objective_vertical_headroom(
     axis.set_ylim(bottom, top + span * float(fraction))
 
 
+def reserve_objective_legend_clearance(
+    axis,
+    legend,
+    data_y_values: Sequence[float] | None = None,
+    *,
+    axes_padding: float = OBJECTIVE_LEGEND_CLEARANCE_AXES_FRACTION,
+) -> None:
+    """Expand only the y-axis top until objective data clears an in-axis legend."""
+    if legend is None:
+        return
+    finite_y = _finite_objective_y_values(axis, data_y_values)
+    if not finite_y:
+        return
+
+    figure = axis.figure
+    canvas = getattr(figure, "canvas", None)
+    if canvas is None:
+        return
+    canvas.draw()
+    renderer = canvas.get_renderer()
+    legend_bbox = legend.get_window_extent(renderer=renderer)
+    legend_axes_bbox = legend_bbox.transformed(axis.transAxes.inverted())
+    legend_lower_axes = float(legend_axes_bbox.y0)
+    if not math.isfinite(legend_lower_axes) or legend_lower_axes >= 1.0:
+        return
+
+    target_axes_y = legend_lower_axes - float(axes_padding)
+    if target_axes_y <= 0.0:
+        target_axes_y = max(legend_lower_axes * 0.5, 0.01)
+
+    data_max = max(finite_y)
+    data_axes_y = _data_y_to_axes_fraction(axis, data_max)
+    if data_axes_y is None or data_axes_y <= target_axes_y:
+        return
+
+    bottom, top = axis.get_ylim()
+    span = top - bottom
+    if span <= 0 or data_max <= bottom:
+        return
+
+    required_top = bottom + (data_max - bottom) / target_axes_y
+    if required_top > top:
+        axis.set_ylim(bottom, required_top)
+        canvas.draw()
+
+
 def publication_table_figure_size(
     table: TableSpec,
     *,
@@ -338,8 +386,40 @@ def _rgb_hex(red: float, green: float, blue: float) -> str:
     return f"#{round(red * 255):02X}{round(green * 255):02X}{round(blue * 255):02X}"
 
 
+def _finite_objective_y_values(axis, data_y_values: Sequence[float] | None) -> list[float]:
+    raw_values: list[Any] = []
+    if data_y_values is not None:
+        raw_values.extend(data_y_values)
+    else:
+        for line in axis.lines:
+            raw_values.extend(line.get_ydata())
+        for collection in axis.collections:
+            if hasattr(collection, "get_offsets"):
+                raw_values.extend(offset[1] for offset in collection.get_offsets())
+
+    finite_values = []
+    for value in raw_values:
+        try:
+            resolved = float(value)
+        except (TypeError, ValueError):
+            continue
+        if math.isfinite(resolved):
+            finite_values.append(resolved)
+    return finite_values
+
+
+def _data_y_to_axes_fraction(axis, value: float) -> float | None:
+    try:
+        axes_point = axis.transAxes.inverted().transform(axis.transData.transform((0.0, float(value))))
+    except (TypeError, ValueError):
+        return None
+    y_value = float(axes_point[1])
+    return y_value if math.isfinite(y_value) else None
+
+
 __all__ = [
     "BAR_HEADROOM_FACTOR",
+    "OBJECTIVE_LEGEND_CLEARANCE_AXES_FRACTION",
     "OBJECTIVE_VERTICAL_HEADROOM_FRACTION",
     "PUBLICATION_OBJECTIVE_VERTICAL_HEADROOM_FRACTION",
     "PUBLICATION_LEGEND_ZORDER",
@@ -352,6 +432,7 @@ __all__ = [
     "plot_publication_table",
     "publication_table_figure_size",
     "render_publication_table",
+    "reserve_objective_legend_clearance",
     "resolve_lineage_color",
     "resolve_role_style",
     "scatter_objective_series",

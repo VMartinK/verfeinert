@@ -97,6 +97,30 @@ def _assert_publication_upper_headroom(axis, data_min: float, data_max: float) -
     assert (top - data_max) / (top - bottom) > 0.30
 
 
+def _assert_legend_clearance(axis, data_min: float, data_max: float) -> None:
+    bottom, top = axis.get_ylim()
+    autoscale_lower = data_min - (data_max - data_min) * 0.05
+    assert bottom == pytest.approx(autoscale_lower)
+    assert top > data_max
+    legend_lower = _legend_lower_axes(axis)
+    data_axes_y = _data_y_axes(axis, data_max)
+    assert legend_lower - data_axes_y >= 0.035
+
+
+def _legend_lower_axes(axis) -> float:
+    figure = axis.figure
+    figure.canvas.draw()
+    legend = axis.get_legend()
+    assert legend is not None
+    renderer = figure.canvas.get_renderer()
+    legend_box = legend.get_window_extent(renderer=renderer)
+    return float(legend_box.transformed(axis.transAxes.inverted()).y0)
+
+
+def _data_y_axes(axis, data_max: float) -> float:
+    return float(axis.transAxes.inverted().transform(axis.transData.transform((0.0, data_max)))[1])
+
+
 def _assert_legend_inside_figure(figure, axis) -> None:
     figure.canvas.draw()
     legend = axis.get_legend()
@@ -192,6 +216,8 @@ def test_e5_frontier_evolution_uses_threshold_color_and_generation_alpha() -> No
 
     _assert_size(figure, (8.0, 4.5))
     assert len(axis.lines) == 3
+    assert [list(line.get_xdata()) for line in axis.lines] == [[0.1, 0.2], [0.3, 0.5], [0.4, 0.6]]
+    assert [list(line.get_ydata()) for line in axis.lines] == [[1.0, 1.1], [1.4, 1.8], [1.5, 1.9]]
     assert list(axis.lines[1].get_xdata()) == [0.3, 0.5]
     assert list(axis.lines[1].get_ydata()) == [1.4, 1.8]
     assert [to_hex(line.get_color()) for line in axis.lines] == ["#123456", "#123456", "#123456"]
@@ -202,7 +228,7 @@ def test_e5_frontier_evolution_uses_threshold_color_and_generation_alpha() -> No
     assert axis.get_xlabel() == PUBLICATION_TRAINABILITY_LABEL
     assert axis.get_ylabel() == PUBLICATION_EXPRESSIBILITY_LABEL
     _assert_publication_legend(axis.get_legend())
-    _assert_publication_upper_headroom(axis, 1.0, 1.9)
+    _assert_legend_clearance(axis, 1.0, 1.9)
     assert axis.get_title() == ""
 
     other = plot_frontier_evolution(frontiers, 0.2, threshold_color="#654321")
@@ -237,7 +263,15 @@ def test_e6_frontier_generation_comparison_uses_preclassified_improvement_points
         for axis in figure.axes
     ] == [1, 1]
     assert figure._suptitle is None
-    assert [text.get_text() for text in figure.texts if text.get_text()] == []
+    figure_texts = [text.get_text() for text in figure.texts if text.get_text()]
+    assert figure_texts.count(PUBLICATION_TRAINABILITY_LABEL) == 1
+    assert figure_texts.count(PUBLICATION_EXPRESSIBILITY_LABEL) == 1
+    assert "T(H)" in PUBLICATION_TRAINABILITY_LABEL
+    assert "H_X" not in PUBLICATION_TRAINABILITY_LABEL
+    assert "Previous frontier" not in figure_texts
+    assert "Generation 2" not in figure_texts
+    assert [axis.get_xlabel() for axis in figure.axes] == ["", ""]
+    assert [axis.get_ylabel() for axis in figure.axes] == ["", ""]
     left_position = left_axis.get_position()
     right_position = right_axis.get_position()
     assert round(left_position.width, 6) == round(right_position.width, 6)
@@ -245,7 +279,7 @@ def test_e6_frontier_generation_comparison_uses_preclassified_improvement_points
     assert round(left_position.y0, 6) == round(right_position.y0, 6)
     assert round(left_position.y1, 6) == round(right_position.y1, 6)
     gap = right_position.x0 - left_position.x1
-    assert 0.10 < gap < 0.13
+    assert 0.08 < gap < 0.12
     separators = [artist for artist in figure.artists if artist.get_gid() == "verfeinert-panel-separator"]
     assert len(separators) == 1
     separator_x = separators[0].get_xdata()[0]
@@ -268,8 +302,8 @@ def test_e6_frontier_generation_comparison_uses_preclassified_improvement_points
     _assert_publication_legend(right_axis.get_legend())
     _assert_legend_inside_figure(figure, left_axis)
     _assert_legend_inside_figure(figure, right_axis)
-    _assert_publication_upper_headroom(left_axis, 0.9, 1.2)
-    _assert_publication_upper_headroom(right_axis, 0.9, 1.8)
+    _assert_legend_clearance(left_axis, 0.9, 1.2)
+    _assert_legend_clearance(right_axis, 0.9, 1.8)
     pyplot.close(figure)
 
 
@@ -309,9 +343,11 @@ def test_e8_evolution_by_layer_preserves_layer_semantics_and_final_frontiers() -
     assert _coords(axis.collections[0]) == [(0.2, 1.2)]
     assert _coords(axis.collections[1]) == [(0.1, 1.0), (0.3, 1.4)]
     assert len(axis.lines) == 1
+    assert list(axis.lines[0].get_xdata()) == [0.4, 0.5]
+    assert list(axis.lines[0].get_ydata()) == [1.5, 1.8]
     assert axis.lines[0].get_linewidth() == 1.55
     _assert_publication_legend(axis.get_legend())
-    _assert_publication_upper_headroom(axis, 1.0, 1.8)
+    _assert_legend_clearance(axis, 1.0, 1.8)
     pyplot.close(figure)
 
 

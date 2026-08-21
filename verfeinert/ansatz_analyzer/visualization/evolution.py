@@ -8,12 +8,14 @@ from typing import Any
 
 from ..collections import AnalysisResultCollection, cost_value, metric_value
 from .export import require_pyplot
+from .labels import PUBLICATION_EXPRESSIBILITY_LABEL, PUBLICATION_TRAINABILITY_LABEL
 from .models import BarSeries, MetricSeries, ObjectivePoint, ObjectiveSeries, TableSpec, VisualizationModelError
 from .primitives import (
     PUBLICATION_OBJECTIVE_VERTICAL_HEADROOM_FRACTION,
     apply_objective_vertical_headroom,
     ordered_lineage_color_map,
     plot_publication_table,
+    reserve_objective_legend_clearance,
     setup_publication_objective_axis,
     style_publication_legend,
 )
@@ -131,8 +133,8 @@ def plot_frontier_evolution(
             label=frontier.label,
         )
     setup_publication_objective_axis(axis, xlabel=x_label, ylabel=y_label, style=style)
-    apply_objective_vertical_headroom(axis, fraction=PUBLICATION_OBJECTIVE_VERTICAL_HEADROOM_FRACTION)
-    _axis_legend(axis, style=style)
+    legend = _axis_legend(axis, style=style)
+    reserve_objective_legend_clearance(axis, legend, _objective_y_values(resolved))
     return figure
 
 
@@ -155,14 +157,18 @@ def plot_frontier_generation_comparison(
     grid = figure.add_gridspec(
         1,
         2,
-        left=0.105,
-        right=0.97,
-        bottom=0.17,
+        left=0.12,
+        right=0.965,
+        bottom=0.20,
         top=0.82,
-        wspace=0.30,
+        wspace=0.26,
         width_ratios=(1, 1),
     )
     axes = (figure.add_subplot(grid[0, 0]), figure.add_subplot(grid[0, 1]))
+    shared_x_label = PUBLICATION_TRAINABILITY_LABEL if x_label is None else x_label
+    shared_y_label = PUBLICATION_EXPRESSIBILITY_LABEL if y_label is None else y_label
+    figure.supxlabel(shared_x_label, fontsize=style.label_size, y=0.055)
+    figure.supylabel(shared_y_label, fontsize=style.label_size, x=0.035)
     panel_titles = ("Previous frontier", "Current frontier" if generation is None else f"Generation {generation}")
     for axis, title in zip(axes, panel_titles):
         _set_single_center_title(axis, title, style=style)
@@ -176,7 +182,7 @@ def plot_frontier_generation_comparison(
                 zorder=3,
                 label=reference_frontier.label,
             )
-        setup_publication_objective_axis(axis, xlabel=x_label, ylabel=y_label, style=style)
+        setup_publication_objective_axis(axis, xlabel="", ylabel="", style=style)
     axes[0].plot(
         _x(previous_frontier),
         _y(previous_frontier),
@@ -196,9 +202,13 @@ def plot_frontier_generation_comparison(
         label=current_frontier.label,
     )
     _scatter_improvement_points(axes[1], improvement_points, style=style)
-    for axis in axes:
-        apply_objective_vertical_headroom(axis, fraction=PUBLICATION_OBJECTIVE_VERTICAL_HEADROOM_FRACTION)
-        _axis_legend(axis, style=style)
+    reference_series = (reference_frontier,) if reference_frontier is not None else ()
+    left_series = (previous_frontier, *reference_series)
+    right_series = (current_frontier, improvement_points, *reference_series)
+    left_legend = _axis_legend(axes[0], style=style)
+    reserve_objective_legend_clearance(axes[0], left_legend, _objective_y_values(left_series))
+    right_legend = _axis_legend(axes[1], style=style)
+    reserve_objective_legend_clearance(axes[1], right_legend, _objective_y_values(right_series))
     _add_panel_separator(figure, axes, pyplot=pyplot, style=style)
     return figure
 
@@ -281,8 +291,8 @@ def plot_evolution_by_layer(
             label=frontier.label,
         )
     setup_publication_objective_axis(axis, xlabel=x_label, ylabel=y_label, style=style)
-    apply_objective_vertical_headroom(axis, fraction=PUBLICATION_OBJECTIVE_VERTICAL_HEADROOM_FRACTION)
-    _axis_legend(axis, style=style)
+    legend = _axis_legend(axis, style=style)
+    reserve_objective_legend_clearance(axis, legend, _objective_y_values((candidates, *final_frontiers)))
     return figure
 
 
@@ -369,10 +379,10 @@ def _space_metric_grid_horizontally(figure, axes: tuple[Any, ...]) -> None:
     figure.align_ylabels(axes)
 
 
-def _axis_legend(axis, *, style: VisualizationStyle) -> None:
+def _axis_legend(axis, *, style: VisualizationStyle):
     handles, labels = axis.get_legend_handles_labels()
     if not handles:
-        return
+        return None
     legend = axis.legend(
         handles,
         labels,
@@ -383,7 +393,7 @@ def _axis_legend(axis, *, style: VisualizationStyle) -> None:
         fancybox=style.legend_fancybox,
         fontsize=style.legend_size,
     )
-    style_publication_legend(legend, style=style)
+    return style_publication_legend(legend, style=style)
 
 
 def _generation_alpha(index: int, count: int) -> float:
@@ -444,6 +454,10 @@ def _x(series: ObjectiveSeries) -> list[float]:
 
 def _y(series: ObjectiveSeries) -> list[float]:
     return [point.y for point in series.points]
+
+
+def _objective_y_values(serieses: Sequence[ObjectiveSeries]) -> tuple[float, ...]:
+    return tuple(point.y for series in serieses for point in series.points)
 
 
 def _cycle(values: Sequence[str], index: int) -> str:
