@@ -19,6 +19,21 @@ PennyLane materialization bridge with tiny expressibility/trainability settings.
 Full expressibility/trainability reproduction remains opt-in because the
 reference scientific settings are expensive.
 
+## Declarative Full-Lite CLI
+
+`config/cx01_full_lite_workflow.yaml` is a no-wrapper, no-notebook workflow
+config. It uses public Sanz19 generation, analyzer-owned PennyLane
+materialization with tiny expressibility/trainability budgets, ranking, Pareto,
+CSV exports, publication figures, checkpointing, manifest/traceability, and a
+deterministic report.
+
+```bash
+verfeinert run examples/CX01_reproduction/config/cx01_full_lite_workflow.yaml --output-root outputs/cx01-full-lite
+```
+
+This path remains an `individual` workflow and therefore does not produce an
+EvolutionRun.
+
 The `full` profile uses the historical topology-aware L1 mutation expansion:
 A01 is disconnected, A05/A06 are all-to-all, A10/A13/A14/A15/A18/A19 are
 rings, and the remaining templates use linear/brickwork edges. The example

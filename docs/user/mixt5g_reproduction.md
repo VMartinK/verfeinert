@@ -1,10 +1,11 @@
 # MIXT-5G Reproduction Example
 
-The MIXT-5G reproduction example lives in `examples/MIXT5G_reproduction/`. It preserves the reference strict-Pareto evolution plan while using Verfeinert public APIs and keeping campaign-specific candidate factories in the example.
+The MIXT-5G reproduction example lives in `examples/MIXT5G_reproduction/`. It preserves the reference strict-Pareto evolution plan while using Verfeinert public APIs. The full-lite CLI config runs without campaign-specific Python.
 
 ## Files
 
 - `config/mixt5g_reproduction.yaml`
+- `config/mixt5g_full_lite_workflow.yaml`
 - `scripts/run_mixt5g_reproduction.py`
 - `notebooks/mixt5g_reproduction_workflow.ipynb`
 - `comparison/reference_summary.json`
@@ -29,6 +30,19 @@ The example wrapper compiles compact profile/schedule data into a generic
 `evolver.mutation_policy`; it does not run a separate campaign engine. The
 EvolutionRun JSON records all generation snapshots, parent references,
 analysis-result references, survivor references, and workflow provenance.
+
+## Declarative CLI Workflow
+
+For installed-package validation or no-Python reproduction, run:
+
+```bash
+verfeinert run examples/MIXT5G_reproduction/config/mixt5g_full_lite_workflow.yaml --output-root outputs/mixt5g-full-lite
+```
+
+The full-lite config computes structural cost, expressibility, and trainability
+through analyzer-owned materialization with tiny budgets, then writes a
+multi-generation EvolutionRun, ranking, Pareto, CSV, publication figures,
+checkpoint, manifest/traceability, and report artifacts.
 
 ## Profiles
 

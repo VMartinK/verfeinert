@@ -1,0 +1,90 @@
+run:
+  run_id: cx01-full-lite-declarative
+  created_at: "2026-08-21T00:00:00Z"
+  random_seed: 12345
+
+paths:
+  output_root: outputs
+
+workflow:
+  campaign_type: individual
+  scientific_execution: [generate, analyze]
+  postprocessing: [ranking, pareto, export_csv, visualization, report]
+  checkpoint:
+    enabled: true
+  observability:
+    event_log:
+      enabled: true
+
+generation:
+  family: sanz19
+  template_ids: [A02, A09]
+  layers: [1]
+  n_qubits: 4
+  candidate_id_prefix: cx01lite
+  source_label: cx01_declarative_full_lite
+  metadata:
+    reproduction: cx01
+    profile: full_lite
+    declarative_workflow: true
+
+analyzer:
+  selected_metrics: [structural_cost, expressibility, trainability]
+  permissions:
+    allow_expensive_metrics: true
+    allow_qnode_execution: true
+  materialization:
+    enabled: true
+    backend: pennylane
+    device: default.qubit
+    interface: autograd
+    diff_method: best
+  structural_cost:
+    reference_id: cx01-full-lite-reference
+    reference_bounds:
+      parameter_count:
+        min: 1
+        max: 48
+      depth:
+        min: 1
+        max: 96
+      two_qubit_operation_count:
+        min: 0
+        max: 24
+    component_weights:
+      parameter_count: 1
+      depth: 1
+      two_qubit_operation_count: 1
+    allow_operation_count_as_depth_proxy: true
+  metric_configs:
+    expressibility:
+      n_pairs: 3
+      n_bins: 3
+      rng_seed: 12345
+    trainability:
+      n_repeats: 2
+      rng_seed: 12345
+  ranking:
+    score_components:
+      expressibility: 1
+      trainability: 1
+    combination: product
+    ascending: false
+  pareto:
+    objectives:
+      - metric_name: expressibility
+        direction: maximize
+      - metric_name: trainability
+        direction: maximize
+    cost_thresholds: [1.0]
+
+visualization:
+  profile: publication
+  figure_set: individual
+  formats: [png]
+  overwrite: true
+
+metadata:
+  example: cx01_reproduction
+  profile: full_lite
+  declarative_workflow: true

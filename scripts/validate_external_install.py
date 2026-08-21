@@ -16,11 +16,19 @@ from typing import Any, Sequence
 
 PUBLIC_IMPORT_CHECK = r"""
 import json
+import sys
+from pathlib import Path
+import verfeinert
 from verfeinert.core import load_schema, schema_names
 from verfeinert.ansatz_generator import build_sanz19_candidate_record, export_candidate_json
 from verfeinert.ansatz_analyzer import validate_candidate_document
 from verfeinert.ansatz_evolver import CandidateRef
 from verfeinert.workflow import WorkflowConfig
+
+source_root = Path(sys.argv[1]).resolve(strict=False) if len(sys.argv) > 1 else None
+package_file = Path(getattr(verfeinert, "__file__")).resolve(strict=False)
+if source_root is not None and (package_file == source_root or source_root in package_file.parents):
+    raise AssertionError(f"verfeinert resolved from source checkout: {package_file}")
 
 record = build_sanz19_candidate_record("A02", 1, n_qubits=2)
 candidate = export_candidate_json(record, candidate_id="external-validation-candidate")
@@ -34,7 +42,79 @@ print(json.dumps({
     "schema_count": len(schema_names()),
     "candidate_schema": load_schema("candidate")["$id"],
     "candidate_id": ref.candidate_id,
+    "package_file": str(package_file),
     "workflow_run_id": workflow.run_id,
+}, sort_keys=True))
+"""
+
+EXTERNAL_WORKFLOW_CHECK = r"""
+import json
+import sys
+from pathlib import Path
+
+from verfeinert.ansatz_analyzer import validate_analysis_result_document
+from verfeinert.ansatz_evolver import validate_evolution_run_document
+
+
+run_root = Path(sys.argv[1])
+campaign_type = sys.argv[2]
+minimum_generations = int(sys.argv[3])
+
+required = [
+    "manifest/workflow_manifest.json",
+    "manifest/workflow_traceability.csv",
+    "reports/workflow_report.json",
+    "reports/workflow_report.md",
+    "checkpoints/latest.json",
+]
+missing = [item for item in required if not (run_root / item).is_file()]
+if missing:
+    raise AssertionError(f"missing workflow artifacts: {missing}")
+
+analysis_documents = []
+for path in sorted((run_root / "analysis").glob("**/*.json")):
+    document = json.loads(path.read_text(encoding="utf-8"))
+    if document.get("schema_version") == "verfeinert.analysis_result.v1":
+        analysis_documents.append(validate_analysis_result_document(document))
+if not analysis_documents:
+    raise AssertionError("no AnalysisResult artifacts found")
+
+computed_metric_count = 0
+for document in analysis_documents:
+    metrics = {metric["name"]: metric for metric in document.get("metrics", ())}
+    for metric_name in ("expressibility", "trainability"):
+        metric = metrics.get(metric_name)
+        if metric is None:
+            continue
+        if metric.get("status") != "computed":
+            raise AssertionError(f"{metric_name} did not compute for {document['analysis_result_id']}")
+        if "no state callable provided" in json.dumps(metric, sort_keys=True).lower():
+            raise AssertionError(f"{metric_name} fell back without materialization")
+        computed_metric_count += 1
+if computed_metric_count == 0:
+    raise AssertionError("no materialized scientific metrics were computed")
+
+figures = sorted(run_root.glob("derived_outputs/**/figures/**/*.png"))
+if not figures:
+    raise AssertionError("no publication figures were exported")
+
+generation_count = None
+if campaign_type == "evolutionary":
+    evolution_paths = sorted(run_root.glob("evolution/**/evolution_run.json"))
+    if not evolution_paths:
+        raise AssertionError("no EvolutionRun artifact found")
+    evolution = validate_evolution_run_document(json.loads(evolution_paths[0].read_text(encoding="utf-8")))
+    generation_count = len(evolution.get("generations", ()))
+    if generation_count < minimum_generations:
+        raise AssertionError(f"expected at least {minimum_generations} generations, got {generation_count}")
+
+print(json.dumps({
+    "run_root": str(run_root),
+    "campaign_type": campaign_type,
+    "analysis_result_count": len(analysis_documents),
+    "computed_metric_count": computed_metric_count,
+    "figure_count": len(figures),
+    "generation_count": generation_count,
 }, sort_keys=True))
 """
 
@@ -98,12 +178,13 @@ def build_install_command(
     source_root: str | Path,
 ) -> tuple[str, ...]:
     """Build the package install command for a validation venv."""
+    source = Path(source_root).resolve(strict=False)
     return (
         str(python_executable),
         "-m",
         "pip",
         "install",
-        str(Path(source_root).resolve(strict=False)),
+        f"{source}[visualization]",
     )
 
 
@@ -119,33 +200,60 @@ def build_validation_steps(
     output = Path(output_root).resolve(strict=False)
     work = Path(work_root).resolve(strict=False)
     python = str(python_executable)
+    verfeinert_cli = str(_script_from_python(python_executable, "verfeinert"))
+    cx01_config = source / "examples" / "CX01_reproduction" / "config" / "cx01_full_lite_workflow.yaml"
+    mixt5g_config = source / "examples" / "MIXT5G_reproduction" / "config" / "mixt5g_full_lite_workflow.yaml"
+    cx01_output = output / "cx01_reproduction"
+    mixt5g_output = output / "mixt5g_reproduction"
     return (
         ValidationStep(
             name="public-imports-and-packaged-schemas",
-            command=(python, "-c", PUBLIC_IMPORT_CHECK),
+            command=(python, "-c", PUBLIC_IMPORT_CHECK, str(source)),
             cwd=work,
         ),
         ValidationStep(
-            name="cx01-smoke-example",
+            name="cx01-full-lite-cli-workflow",
             command=(
-                python,
-                str(source / "examples" / "CX01_reproduction" / "scripts" / "run_cx01_reproduction.py"),
-                "--profile",
-                "smoke",
+                verfeinert_cli,
+                "run",
+                str(cx01_config),
                 "--output-root",
-                str(output / "cx01_reproduction"),
+                str(cx01_output),
             ),
             cwd=work,
         ),
         ValidationStep(
-            name="mixt5g-smoke-example",
+            name="cx01-full-lite-output-check",
             command=(
                 python,
-                str(source / "examples" / "MIXT5G_reproduction" / "scripts" / "run_mixt5g_reproduction.py"),
-                "--profile",
-                "smoke",
+                "-c",
+                EXTERNAL_WORKFLOW_CHECK,
+                str(cx01_output / "cx01-full-lite-declarative"),
+                "individual",
+                "0",
+            ),
+            cwd=work,
+        ),
+        ValidationStep(
+            name="mixt5g-full-lite-cli-workflow",
+            command=(
+                verfeinert_cli,
+                "run",
+                str(mixt5g_config),
                 "--output-root",
-                str(output / "mixt5g_reproduction"),
+                str(mixt5g_output),
+            ),
+            cwd=work,
+        ),
+        ValidationStep(
+            name="mixt5g-full-lite-output-check",
+            command=(
+                python,
+                "-c",
+                EXTERNAL_WORKFLOW_CHECK,
+                str(mixt5g_output / "mixt5g-full-lite-declarative"),
+                "evolutionary",
+                "3",
             ),
             cwd=work,
         ),
@@ -233,6 +341,12 @@ def _create_venv(venv_root: Path, *, system_site_packages: bool) -> None:
         command.append("--system-site-packages")
     command.append(str(venv_root))
     subprocess.run(command, check=True)
+
+
+def _script_from_python(python_executable: str | Path, script_name: str) -> Path:
+    scripts_root = Path(python_executable).parent
+    suffix = ".exe" if os.name == "nt" else ""
+    return scripts_root / f"{script_name}{suffix}"
 
 
 def _run_step(step: ValidationStep) -> ValidationStepResult:

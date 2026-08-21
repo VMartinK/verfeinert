@@ -70,6 +70,7 @@ from verfeinert.ansatz_evolver.selection import (
 )
 from verfeinert.ansatz_generator import (
     CandidateJsonExportConfig,
+    CanonicalMutationFactory,
     GeneratorValidationError,
     StagedPackageJsonExportConfig,
     build_sanz19_candidate_records,
@@ -1138,6 +1139,7 @@ class WorkflowRunner:
         config = self.config
         if config.campaign_type == "individual":
             raise WorkflowConfigError("individual campaigns must not execute evolution.")
+        candidate_factory = _workflow_candidate_factory(config, candidate_factory)
         state, generated_during_evolution = self._run_evolution(
             analysis_collection=analysis_collection,
             candidate_artifacts=candidate_artifacts,
@@ -3104,6 +3106,26 @@ def _should_extend_evolution(
             "evolution continuation requires a candidate_factory for new generations.",
         )
     return True
+
+
+def _workflow_candidate_factory(config: WorkflowConfig, candidate_factory: Any | None) -> Any | None:
+    if candidate_factory is not None or not config.evolver.mutation_policy:
+        return candidate_factory
+    factory_config = dict(config.evolver.mutation_policy.get("candidate_factory", {}))
+    factory_type = str(factory_config.get("type", factory_config.get("name", "canonical"))).strip().lower()
+    if factory_type not in {"canonical", "canonical_mutation"}:
+        raise WorkflowConfigError(
+            "evolver.mutation_policy.candidate_factory.type must be canonical.",
+        )
+    return CanonicalMutationFactory(
+        source_label="verfeinert.workflow.canonical_mutation_factory",
+        created_at=config.created_at,
+        constraints=config.generation.constraints,
+        metadata={
+            "workflow_run_id": config.run_id,
+            "workflow_candidate_factory": "canonical",
+        },
+    )
 
 
 def _mutation_policy_for_generation(

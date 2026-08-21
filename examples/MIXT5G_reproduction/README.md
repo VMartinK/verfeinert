@@ -9,6 +9,24 @@ with a public insert-gate candidate factory. It keeps lineage, references,
 resume-compatible EvolutionRun JSON, and ranking outputs intact without
 executing expensive expressibility or trainability workloads.
 
+## Declarative Full-Lite CLI
+
+`config/mixt5g_full_lite_workflow.yaml` is a no-wrapper, no-notebook workflow
+config. It uses public Sanz19 generation, a declarative generic mutation policy,
+the workflow-owned canonical generator mutation factory, analyzer-owned
+PennyLane materialization with tiny expressibility/trainability budgets,
+multi-generation evolution, ranking, Pareto, CSV exports, publication figures,
+checkpointing, manifest/traceability, and a deterministic report.
+
+```bash
+verfeinert run examples/MIXT5G_reproduction/config/mixt5g_full_lite_workflow.yaml --output-root outputs/mixt5g-full-lite
+```
+
+The historical strict-Pareto-feedback threshold trajectories remain preserved
+in the `full` reference profile below. The full-lite CLI workflow uses
+deterministic fitness selection so CI and external-install validation exercise a
+small multi-generation path reliably.
+
 The `full` profile is an explicit opt-in reproduction coordinator. It builds the
 30 configured generation-0 Sanz19 parents, then runs three independent public
 `WorkflowRunner` trajectories for structural-cost thresholds `1.0`, `0.2`, and

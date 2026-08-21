@@ -5,6 +5,7 @@ The CX-01 reproduction example lives in `examples/CX01_reproduction/`. It is a r
 ## Files
 
 - `config/cx01_reproduction.yaml`
+- `config/cx01_full_lite_workflow.yaml`
 - `scripts/run_cx01_reproduction.py`
 - `notebooks/cx01_reproduction_workflow.ipynb`
 - `comparison/reference_summary.json`
@@ -29,6 +30,19 @@ The candidate preparation is intentionally example-local. It encodes CX-01
 reproduction inputs without adding campaign-specific branches to `verfeinert`.
 The migrated example does not request `evolve` and does not produce an
 EvolutionRun.
+
+## Declarative CLI Workflow
+
+For installed-package validation or no-Python reproduction, run:
+
+```bash
+verfeinert run examples/CX01_reproduction/config/cx01_full_lite_workflow.yaml --output-root outputs/cx01-full-lite
+```
+
+The full-lite config computes structural cost, expressibility, and trainability
+through analyzer-owned materialization with tiny budgets, then writes ranking,
+Pareto, CSV, publication figures, checkpoint, manifest/traceability, and report
+artifacts.
 
 ## Profiles
 
