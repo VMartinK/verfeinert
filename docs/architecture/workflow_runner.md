@@ -39,6 +39,25 @@ or notebook execution.
 Legacy `stages` declarations are normalized into the same conceptual model.
 Conflicting legacy and structured declarations fail during validation.
 
+## Stage Execution
+
+`WorkflowRunner.run()` builds one normalized stage plan from `WorkflowConfig`
+and dispatches it through explicit stage executors:
+
+- generation writes canonical Candidate/StagedPackage artifacts;
+- analysis builds analyzer configuration and runs/reuses AnalysisResult
+  artifacts;
+- evolution writes EvolutionRun artifacts through evolver-owned state
+  transitions;
+- postprocessing writes ranking, Pareto, comparison, CSV, and visualization
+  artifacts.
+
+Each executor receives only the artifacts and configuration needed for its
+stage. Downstream stages are not inferred from missing inputs: for example,
+`analyze` does not generate candidates, and postprocessing over persisted
+AnalysisResult artifacts does not run analyzer or evolver stages. Scientific
+work remains delegated to the owning public module.
+
 ## WorkflowResult
 
 `WorkflowResult` is a JSON-safe artifact manifest. It records:
@@ -167,8 +186,9 @@ reused artifacts.
 ## Provenance
 
 Workflow provenance records the runner, software version, Git commit when
-available, config snapshot, requested operations, executed operations, artifact
-reuse, campaign type, resume/branch relationship, and truth flags such as
+available, config snapshot, normalized stage plan, requested operations,
+executed operations, artifact reuse, campaign type, resume/branch relationship,
+and truth flags such as
 `notebooks_executed = false` and
 `campaign_specific_logic_in_framework = false`.
 

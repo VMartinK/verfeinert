@@ -190,6 +190,57 @@ class _AnalysisRunOutput:
     generated_paths: tuple[Path, ...] = ()
 
 
+@dataclass(frozen=True)
+class _GenerationStageOutput:
+    generated_package: Any
+    candidate_artifacts: tuple[_CandidateArtifact, ...]
+    staged_artifacts: tuple[dict[str, Any], ...]
+
+
+@dataclass(frozen=True)
+class _AnalysisStageOutput:
+    analysis_result_paths: tuple[Path, ...]
+    analysis_collection: AnalysisResultCollection | None
+
+
+@dataclass(frozen=True)
+class _EvolutionStageOutput:
+    evolution_path: Path | None = None
+    generation_record: GenerationRecord | None = None
+    survivor_candidate_ids: tuple[str, ...] = ()
+    rejected_candidate_ids: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True)
+class _PostprocessingStageOutput:
+    ranking_json_path: Path | None = None
+    ranking_csv_path: Path | None = None
+    pareto_json_path: Path | None = None
+    pareto_csv_path: Path | None = None
+    analysis_csv_path: Path | None = None
+    comparison_json_paths: tuple[Path, ...] = ()
+    comparison_csv_paths: tuple[Path, ...] = ()
+    visualization_paths: tuple[Path, ...] = ()
+
+
+@dataclass(frozen=True)
+class _WorkflowStagePlan:
+    scientific: tuple[str, ...]
+    postprocessing: tuple[str, ...]
+
+    def scientific_requested(self, stage: str) -> bool:
+        return stage in self.scientific
+
+    def postprocessing_requested(self, stage: str) -> bool:
+        return stage in self.postprocessing
+
+    def to_dict(self) -> dict[str, list[str]]:
+        return {
+            "scientific": list(self.scientific),
+            "postprocessing": list(self.postprocessing),
+        }
+
+
 class WorkflowRunner:
     """Coordinate JSON-first Verfeinert workflows through public APIs."""
 
@@ -214,6 +265,7 @@ class WorkflowRunner:
     ) -> WorkflowResult:
         """Run only the requested workflow operations over compatible artifacts."""
         config = self.config
+        stage_plan = _workflow_stage_plan(config)
         output_root = ensure_output_root(config.output_root, input_roots=config.input_roots)
         run_root = output_root / config.run_id
         package_output_root = run_root / "candidates"
@@ -221,8 +273,8 @@ class WorkflowRunner:
         evolution_root = run_root / "evolution"
         derived_root = run_root / "derived_outputs"
 
-        requested_scientific = config.scientific_execution
-        requested_postprocessing = config.postprocessing
+        requested_scientific = stage_plan.scientific
+        requested_postprocessing = stage_plan.postprocessing
         executed: list[str] = []
         warnings: list[str] = []
         produced_artifacts: list[dict[str, Any]] = []
@@ -266,75 +318,37 @@ class WorkflowRunner:
             reused_artifacts.append(record)
 
         generated_package = None
-        if "generate" in requested_scientific:
-            records = tuple(candidate_records) if candidate_records is not None else tuple(self._generate_records())
-            if not records:
-                raise WorkflowConfigError("Workflow generation produced no candidate records.")
-            generated_package = write_staged_package_json(
-                records,
-                config=self._staged_package_config(package_output_root),
+        if stage_plan.scientific_requested("generate"):
+            generation_output = self._run_generation_stage(
+                candidate_records=candidate_records,
+                package_output_root=package_output_root,
+                produced_artifacts=produced_artifacts,
             )
-            if generated_package.package_root is None or generated_package.staged_package_path is None:
-                raise RuntimeError("Staged package exporter did not return paths.")
+            generated_package = generation_output.generated_package
             executed.append("generate")
-            produced_artifacts.extend(
-                _staged_package_records(
-                    generated_package.staged_package_path,
-                    generated_package.candidate_paths,
-                ),
-            )
-            candidate_artifacts = [
-                _CandidateArtifact(document, str(path))
-                for document, path in zip(
-                    generated_package.candidates,
-                    generated_package.candidate_paths,
-                    strict=True,
-                )
-            ]
-            staged_artifacts = [
-                {
-                    "document": generated_package.package,
-                    "uri": str(generated_package.staged_package_path),
-                }
-            ]
+            candidate_artifacts = list(generation_output.candidate_artifacts)
+            staged_artifacts = list(generation_output.staged_artifacts)
         elif candidate_records is not None:
             raise WorkflowConfigError("candidate_records require the generate operation.")
 
         analysis_result_paths: tuple[Path, ...] = ()
         analysis_collection: AnalysisResultCollection | None = None
-        if "analyze" in requested_scientific:
-            analysis_sources_for_pipeline = _analysis_input_sources(
+        if stage_plan.scientific_requested("analyze"):
+            analysis_output = self._run_analysis_stage(
                 generated_package=generated_package,
+                candidate_artifacts=candidate_artifacts,
                 candidate_sources=all_candidate_sources,
                 staged_package_sources=all_staged_sources,
-            )
-            if not analysis_sources_for_pipeline:
-                raise WorkflowConfigError("requested analysis has no Candidate/StagedPackage input.")
-            analyzer_config = self._analyzer_config(
-                _input_roots_for_sources(analysis_sources_for_pipeline, fallback=config.input_roots),
-                analysis_root,
-            )
-            analysis_run = self._run_analysis(
-                candidates=tuple(artifact.document for artifact in candidate_artifacts),
-                input_sources=analysis_sources_for_pipeline,
-                analyzer_config=analyzer_config,
-                metric_callables=metric_callables,
+                analysis_sources=all_analysis_sources,
+                analysis_root=analysis_root,
                 package_output_root=package_output_root,
-                package_id=f"{config.run_id}-analysis-reuse-miss-package",
-                reuse_artifacts=(
-                    _load_analysis_result_artifacts(all_analysis_sources)
-                    if _analysis_result_reuse_enabled(config)
-                    else ()
-                ),
+                metric_callables=metric_callables,
                 consumed_artifacts=consumed_artifacts,
                 reused_artifacts=reused_artifacts,
                 produced_artifacts=produced_artifacts,
             )
-            analysis_result_paths = analysis_run.paths
-            analysis_collection = AnalysisResultCollection.from_records(
-                analysis_run.documents,
-                collection_id=f"{config.run_id}:analysis",
-            )
+            analysis_result_paths = analysis_output.analysis_result_paths
+            analysis_collection = analysis_output.analysis_collection
             executed.append("analyze")
         elif all_analysis_sources:
             analysis_collection = AnalysisResultCollection.from_sources(
@@ -349,10 +363,8 @@ class WorkflowRunner:
         generation_record: GenerationRecord | None = None
         survivor_candidate_ids: tuple[str, ...] = ()
         rejected_candidate_ids: tuple[str, ...] = ()
-        if "evolve" in requested_scientific:
-            if config.campaign_type == "individual":
-                raise WorkflowConfigError("individual campaigns must not execute evolution.")
-            state, generated_during_evolution = self._run_evolution(
+        if stage_plan.scientific_requested("evolve"):
+            evolution_output = self._run_evolution_stage(
                 analysis_collection=analysis_collection,
                 candidate_artifacts=candidate_artifacts,
                 evolution_source=resolved_evolution_source,
@@ -370,24 +382,12 @@ class WorkflowRunner:
                 reused_artifacts=reused_artifacts,
                 executed=executed,
                 produced_artifacts=produced_artifacts,
+                evolution_root=evolution_root,
             )
-            evolution_path = write_evolution_run_json(
-                state,
-                output_root=evolution_root,
-                input_roots=_evolution_input_roots(config, generated_during_evolution, analysis_root),
-            )
-            produced_artifacts.append(_artifact_record("evolution_run", str(evolution_path)))
-            generation_record = state.generations[-1] if state.generations else None
-            survivor_candidate_ids = (
-                tuple(ref.candidate_id for ref in generation_record.survivor_refs)
-                if generation_record is not None
-                else ()
-            )
-            rejected_candidate_ids = (
-                tuple(ref.candidate_id for ref in generation_record.rejected_refs)
-                if generation_record is not None
-                else ()
-            )
+            evolution_path = evolution_output.evolution_path
+            generation_record = evolution_output.generation_record
+            survivor_candidate_ids = evolution_output.survivor_candidate_ids
+            rejected_candidate_ids = evolution_output.rejected_candidate_ids
             if "evolve" not in executed:
                 executed.append("evolve")
         elif resolved_evolution_source is not None:
@@ -403,156 +403,27 @@ class WorkflowRunner:
             else:
                 raise WorkflowConfigError("requested postprocessing has no AnalysisResult input.")
 
-        ranking_json_path: Path | None = None
-        ranking_csv_path: Path | None = None
-        pareto_json_path: Path | None = None
-        pareto_csv_path: Path | None = None
-        analysis_csv_path: Path | None = None
-        comparison_json_paths: list[Path] = []
-        comparison_csv_paths: list[Path] = []
-        visualization_paths: list[Path] = []
-        ranking_result = None
-        pareto_result = None
-        computed_comparison_results: list[ComparisonResult] = []
-        if "ranking" in requested_postprocessing:
-            collection = _require_collection(analysis_collection)
-            ranking_config = config.analyzer.ranking or RankingConfig(
-                score_components={"cost.structural_cost": 1.0},
-                combination="weighted_sum",
-                ascending=True,
-            )
-            ranking_result = rank_analysis_results(collection, config=ranking_config)
-            if not ranking_result.ranked_candidate_ids and len(collection):
-                raise WorkflowConfigError(
-                    "requested ranking metric is missing or unavailable: "
-                    + "; ".join(ranking_result.warnings),
-                )
-            ranking_json = write_ranking_json(
-                ranking_result,
-                output_root=derived_root,
-                run_id=config.run_id,
-                input_roots=_postprocessing_input_roots(config, analysis_result_paths, all_analysis_sources),
-            )
-            ranking_csv = write_ranking_csv(
-                ranking_result,
-                output_root=derived_root,
-                run_id=config.run_id,
-                input_roots=_postprocessing_input_roots(config, analysis_result_paths, all_analysis_sources),
-            )
-            ranking_json_path = ranking_json.path
-            ranking_csv_path = ranking_csv.path
-            warnings.extend(ranking_result.warnings)
-            executed.append("ranking")
-            produced_artifacts.extend([ranking_json.to_dict(), ranking_csv.to_dict()])
-        if "pareto" in requested_postprocessing:
-            collection = _require_collection(analysis_collection)
-            pareto_config = config.analyzer.pareto or ParetoConfig()
-            pareto_result = compute_pareto_classifications(collection, config=pareto_config)
-            if not pareto_result.frontier_candidate_ids and len(collection) and pareto_result.warnings:
-                raise WorkflowConfigError(
-                    "requested Pareto objective is missing or unavailable: "
-                    + "; ".join(pareto_result.warnings),
-                )
-            pareto_json = write_pareto_json(
-                pareto_result,
-                output_root=derived_root,
-                run_id=config.run_id,
-                input_roots=_postprocessing_input_roots(config, analysis_result_paths, all_analysis_sources),
-            )
-            pareto_json_path = pareto_json.path
-            produced_artifacts.append(pareto_json.to_dict())
-            warnings.extend(pareto_result.warnings)
-            executed.append("pareto")
-            if "export_csv" in requested_postprocessing:
-                pareto_csv = write_pareto_csv(
-                    pareto_result,
-                    output_root=derived_root,
-                    run_id=config.run_id,
-                    input_roots=_postprocessing_input_roots(config, analysis_result_paths, all_analysis_sources),
-                )
-                pareto_csv_path = pareto_csv.path
-                produced_artifacts.append(pareto_csv.to_dict())
-        if "comparison" in requested_postprocessing:
-            if not config.comparisons:
-                raise WorkflowConfigError("requested comparison requires explicit comparison sources.")
-            for comparison_config in config.comparisons:
-                sources = tuple(
-                    ComparisonSource.from_sources(
-                        source.source_id,
-                        source.analysis_results,
-                        role=source.role,
-                        label=source.label,
-                        metadata=source.metadata,
-                    )
-                    for source in comparison_config.sources
-                )
-                comparison = compare_analysis_collections(
-                    sources,
-                    config=comparison_config.config,
-                )
-                computed_comparison_results.append(comparison)
-                comparison_json = write_comparison_json(
-                    comparison,
-                    output_root=derived_root,
-                    run_id=config.run_id,
-                    input_roots=_comparison_input_roots(config, comparison_config),
-                )
-                comparison_json_paths.append(comparison_json.path)
-                produced_artifacts.append(comparison_json.to_dict())
-                if "export_csv" in requested_postprocessing:
-                    comparison_csv = write_comparison_csv(
-                        comparison,
-                        output_root=derived_root,
-                        run_id=config.run_id,
-                        input_roots=_comparison_input_roots(config, comparison_config),
-                    )
-                    comparison_csv_paths.append(comparison_csv.path)
-                    produced_artifacts.append(comparison_csv.to_dict())
-            executed.append("comparison")
-        if "export_csv" in requested_postprocessing:
-            if loaded_comparison_results and "comparison" not in requested_postprocessing:
-                for comparison in loaded_comparison_results:
-                    comparison_csv = write_comparison_csv(
-                        comparison,
-                        output_root=derived_root,
-                        run_id=config.run_id,
-                        input_roots=_comparison_result_input_roots(config, all_comparison_result_sources),
-                    )
-                    comparison_csv_paths.append(comparison_csv.path)
-                    produced_artifacts.append(comparison_csv.to_dict())
-            elif (
-                "ranking" not in requested_postprocessing
-                and "pareto" not in requested_postprocessing
-                and "comparison" not in requested_postprocessing
-            ):
-                collection = _require_collection(analysis_collection)
-                analysis_csv = write_analysis_results_csv(
-                    collection,
-                    output_root=derived_root,
-                    run_id=config.run_id,
-                    input_roots=_postprocessing_input_roots(config, analysis_result_paths, all_analysis_sources),
-                )
-                analysis_csv_path = analysis_csv.path
-                produced_artifacts.append(analysis_csv.to_dict())
-            executed.append("export_csv")
-        if "visualization" in requested_postprocessing:
-            visualization_paths.extend(
-                _write_requested_visualizations(
-                    config=config,
-                    derived_root=derived_root,
-                    analysis_collection=analysis_collection,
-                    ranking_result=ranking_result,
-                    pareto_result=pareto_result,
-                    comparison_results=(
-                        tuple(computed_comparison_results)
-                        or tuple(loaded_comparison_results)
-                    ),
-                    evolution_source=evolution_path or resolved_evolution_source,
-                    input_roots=_postprocessing_input_roots(config, analysis_result_paths, all_analysis_sources),
-                ),
-            )
-            produced_artifacts.extend(_path_records("figure", visualization_paths))
-            executed.append("visualization")
+        postprocessing_output = self._run_postprocessing_stage(
+            stage_plan=stage_plan,
+            analysis_collection=analysis_collection,
+            analysis_result_paths=analysis_result_paths,
+            analysis_sources=all_analysis_sources,
+            comparison_result_sources=all_comparison_result_sources,
+            loaded_comparison_results=loaded_comparison_results,
+            evolution_source=evolution_path or resolved_evolution_source,
+            derived_root=derived_root,
+            warnings=warnings,
+            executed=executed,
+            produced_artifacts=produced_artifacts,
+        )
+        ranking_json_path = postprocessing_output.ranking_json_path
+        ranking_csv_path = postprocessing_output.ranking_csv_path
+        pareto_json_path = postprocessing_output.pareto_json_path
+        pareto_csv_path = postprocessing_output.pareto_csv_path
+        analysis_csv_path = postprocessing_output.analysis_csv_path
+        comparison_json_paths = postprocessing_output.comparison_json_paths
+        comparison_csv_paths = postprocessing_output.comparison_csv_paths
+        visualization_paths = postprocessing_output.visualization_paths
 
         candidate_ids = tuple(
             dict.fromkeys(
@@ -582,6 +453,7 @@ class WorkflowRunner:
                     evolution_run=resolved_evolution_source is not None,
                 ),
                 "campaign_type": config.campaign_type,
+                "stage_plan": stage_plan.to_dict(),
                 "requested_scientific_execution": list(requested_scientific),
                 "requested_postprocessing": list(requested_postprocessing),
                 "executed_operations": list(dict.fromkeys(executed)),
@@ -646,6 +518,48 @@ class WorkflowRunner:
             consumed_artifacts=tuple(consumed_artifacts),
             produced_artifacts=tuple(produced_artifacts),
             reused_artifacts=tuple(reused_artifacts),
+        )
+
+    def _run_generation_stage(
+        self,
+        *,
+        candidate_records: Sequence[Mapping[str, Any] | Any] | None,
+        package_output_root: Path,
+        produced_artifacts: list[dict[str, Any]],
+    ) -> _GenerationStageOutput:
+        records = tuple(candidate_records) if candidate_records is not None else tuple(self._generate_records())
+        if not records:
+            raise WorkflowConfigError("Workflow generation produced no candidate records.")
+        generated_package = write_staged_package_json(
+            records,
+            config=self._staged_package_config(package_output_root),
+        )
+        if generated_package.package_root is None or generated_package.staged_package_path is None:
+            raise RuntimeError("Staged package exporter did not return paths.")
+        produced_artifacts.extend(
+            _staged_package_records(
+                generated_package.staged_package_path,
+                generated_package.candidate_paths,
+            ),
+        )
+        candidate_artifacts = tuple(
+            _CandidateArtifact(document, str(path))
+            for document, path in zip(
+                generated_package.candidates,
+                generated_package.candidate_paths,
+                strict=True,
+            )
+        )
+        staged_artifacts = (
+            {
+                "document": generated_package.package,
+                "uri": str(generated_package.staged_package_path),
+            },
+        )
+        return _GenerationStageOutput(
+            generated_package=generated_package,
+            candidate_artifacts=candidate_artifacts,
+            staged_artifacts=staged_artifacts,
         )
 
     def _generate_records(self) -> list[dict[str, Any]]:
@@ -734,6 +648,57 @@ class WorkflowRunner:
             materialization=config.analyzer.materialization,
         )
 
+    def _run_analysis_stage(
+        self,
+        *,
+        generated_package,
+        candidate_artifacts: Sequence[_CandidateArtifact],
+        candidate_sources: Sequence[str | Path | Mapping[str, Any]],
+        staged_package_sources: Sequence[str | Path | Mapping[str, Any]],
+        analysis_sources: Sequence[str | Path | Mapping[str, Any]],
+        analysis_root: Path,
+        package_output_root: Path,
+        metric_callables: Mapping[str, Any] | None,
+        consumed_artifacts: list[dict[str, Any]],
+        reused_artifacts: list[dict[str, Any]],
+        produced_artifacts: list[dict[str, Any]],
+    ) -> _AnalysisStageOutput:
+        config = self.config
+        analysis_sources_for_pipeline = _analysis_input_sources(
+            generated_package=generated_package,
+            candidate_sources=candidate_sources,
+            staged_package_sources=staged_package_sources,
+        )
+        if not analysis_sources_for_pipeline:
+            raise WorkflowConfigError("requested analysis has no Candidate/StagedPackage input.")
+        analyzer_config = self._analyzer_config(
+            _input_roots_for_sources(analysis_sources_for_pipeline, fallback=config.input_roots),
+            analysis_root,
+        )
+        analysis_run = self._run_analysis(
+            candidates=tuple(artifact.document for artifact in candidate_artifacts),
+            input_sources=analysis_sources_for_pipeline,
+            analyzer_config=analyzer_config,
+            metric_callables=metric_callables,
+            package_output_root=package_output_root,
+            package_id=f"{config.run_id}-analysis-reuse-miss-package",
+            reuse_artifacts=(
+                _load_analysis_result_artifacts(analysis_sources)
+                if _analysis_result_reuse_enabled(config)
+                else ()
+            ),
+            consumed_artifacts=consumed_artifacts,
+            reused_artifacts=reused_artifacts,
+            produced_artifacts=produced_artifacts,
+        )
+        return _AnalysisStageOutput(
+            analysis_result_paths=analysis_run.paths,
+            analysis_collection=AnalysisResultCollection.from_records(
+                analysis_run.documents,
+                collection_id=f"{config.run_id}:analysis",
+            ),
+        )
+
     def _run_analysis(
         self,
         *,
@@ -816,6 +781,248 @@ class WorkflowRunner:
             documents=documents,
             paths=paths,
             generated_paths=tuple(generated_paths),
+        )
+
+    def _run_evolution_stage(
+        self,
+        *,
+        analysis_collection: AnalysisResultCollection | None,
+        candidate_artifacts: Sequence[_CandidateArtifact],
+        evolution_source: str | Path | Mapping[str, Any] | None,
+        candidate_factory: Any | None,
+        reference_analysis_results: Sequence[Mapping[str, Any]],
+        analysis_result_paths: Sequence[Path],
+        analysis_reuse_artifacts: Sequence[_AnalysisResultArtifact],
+        analysis_root: Path,
+        package_output_root: Path,
+        consumed_artifacts: list[dict[str, Any]],
+        reused_artifacts: list[dict[str, Any]],
+        executed: list[str],
+        produced_artifacts: list[dict[str, Any]],
+        evolution_root: Path,
+    ) -> _EvolutionStageOutput:
+        config = self.config
+        if config.campaign_type == "individual":
+            raise WorkflowConfigError("individual campaigns must not execute evolution.")
+        state, generated_during_evolution = self._run_evolution(
+            analysis_collection=analysis_collection,
+            candidate_artifacts=candidate_artifacts,
+            evolution_source=evolution_source,
+            candidate_factory=candidate_factory,
+            reference_analysis_results=reference_analysis_results,
+            analysis_result_paths=analysis_result_paths,
+            analysis_reuse_artifacts=analysis_reuse_artifacts,
+            analysis_root=analysis_root,
+            package_output_root=package_output_root,
+            consumed_artifacts=consumed_artifacts,
+            reused_artifacts=reused_artifacts,
+            executed=executed,
+            produced_artifacts=produced_artifacts,
+        )
+        evolution_path = write_evolution_run_json(
+            state,
+            output_root=evolution_root,
+            input_roots=_evolution_input_roots(config, generated_during_evolution, analysis_root),
+        )
+        produced_artifacts.append(_artifact_record("evolution_run", str(evolution_path)))
+        generation_record = state.generations[-1] if state.generations else None
+        survivor_candidate_ids = (
+            tuple(ref.candidate_id for ref in generation_record.survivor_refs)
+            if generation_record is not None
+            else ()
+        )
+        rejected_candidate_ids = (
+            tuple(ref.candidate_id for ref in generation_record.rejected_refs)
+            if generation_record is not None
+            else ()
+        )
+        return _EvolutionStageOutput(
+            evolution_path=evolution_path,
+            generation_record=generation_record,
+            survivor_candidate_ids=survivor_candidate_ids,
+            rejected_candidate_ids=rejected_candidate_ids,
+        )
+
+    def _run_postprocessing_stage(
+        self,
+        *,
+        stage_plan: _WorkflowStagePlan,
+        analysis_collection: AnalysisResultCollection | None,
+        analysis_result_paths: Sequence[Path],
+        analysis_sources: Sequence[str | Path | Mapping[str, Any]],
+        comparison_result_sources: Sequence[str | Path | Mapping[str, Any]],
+        loaded_comparison_results: Sequence[ComparisonResult],
+        evolution_source: str | Path | Mapping[str, Any] | None,
+        derived_root: Path,
+        warnings: list[str],
+        executed: list[str],
+        produced_artifacts: list[dict[str, Any]],
+    ) -> _PostprocessingStageOutput:
+        config = self.config
+        ranking_json_path: Path | None = None
+        ranking_csv_path: Path | None = None
+        pareto_json_path: Path | None = None
+        pareto_csv_path: Path | None = None
+        analysis_csv_path: Path | None = None
+        comparison_json_paths: list[Path] = []
+        comparison_csv_paths: list[Path] = []
+        visualization_paths: list[Path] = []
+        ranking_result = None
+        pareto_result = None
+        computed_comparison_results: list[ComparisonResult] = []
+
+        if stage_plan.postprocessing_requested("ranking"):
+            collection = _require_collection(analysis_collection)
+            ranking_config = config.analyzer.ranking or RankingConfig(
+                score_components={"cost.structural_cost": 1.0},
+                combination="weighted_sum",
+                ascending=True,
+            )
+            ranking_result = rank_analysis_results(collection, config=ranking_config)
+            if not ranking_result.ranked_candidate_ids and len(collection):
+                raise WorkflowConfigError(
+                    "requested ranking metric is missing or unavailable: "
+                    + "; ".join(ranking_result.warnings),
+                )
+            ranking_json = write_ranking_json(
+                ranking_result,
+                output_root=derived_root,
+                run_id=config.run_id,
+                input_roots=_postprocessing_input_roots(config, analysis_result_paths, analysis_sources),
+            )
+            ranking_csv = write_ranking_csv(
+                ranking_result,
+                output_root=derived_root,
+                run_id=config.run_id,
+                input_roots=_postprocessing_input_roots(config, analysis_result_paths, analysis_sources),
+            )
+            ranking_json_path = ranking_json.path
+            ranking_csv_path = ranking_csv.path
+            warnings.extend(ranking_result.warnings)
+            executed.append("ranking")
+            produced_artifacts.extend([ranking_json.to_dict(), ranking_csv.to_dict()])
+
+        if stage_plan.postprocessing_requested("pareto"):
+            collection = _require_collection(analysis_collection)
+            pareto_config = config.analyzer.pareto or ParetoConfig()
+            pareto_result = compute_pareto_classifications(collection, config=pareto_config)
+            if not pareto_result.frontier_candidate_ids and len(collection) and pareto_result.warnings:
+                raise WorkflowConfigError(
+                    "requested Pareto objective is missing or unavailable: "
+                    + "; ".join(pareto_result.warnings),
+                )
+            pareto_json = write_pareto_json(
+                pareto_result,
+                output_root=derived_root,
+                run_id=config.run_id,
+                input_roots=_postprocessing_input_roots(config, analysis_result_paths, analysis_sources),
+            )
+            pareto_json_path = pareto_json.path
+            produced_artifacts.append(pareto_json.to_dict())
+            warnings.extend(pareto_result.warnings)
+            executed.append("pareto")
+            if stage_plan.postprocessing_requested("export_csv"):
+                pareto_csv = write_pareto_csv(
+                    pareto_result,
+                    output_root=derived_root,
+                    run_id=config.run_id,
+                    input_roots=_postprocessing_input_roots(config, analysis_result_paths, analysis_sources),
+                )
+                pareto_csv_path = pareto_csv.path
+                produced_artifacts.append(pareto_csv.to_dict())
+
+        if stage_plan.postprocessing_requested("comparison"):
+            if not config.comparisons:
+                raise WorkflowConfigError("requested comparison requires explicit comparison sources.")
+            for comparison_config in config.comparisons:
+                sources = tuple(
+                    ComparisonSource.from_sources(
+                        source.source_id,
+                        source.analysis_results,
+                        role=source.role,
+                        label=source.label,
+                        metadata=source.metadata,
+                    )
+                    for source in comparison_config.sources
+                )
+                comparison = compare_analysis_collections(
+                    sources,
+                    config=comparison_config.config,
+                )
+                computed_comparison_results.append(comparison)
+                comparison_json = write_comparison_json(
+                    comparison,
+                    output_root=derived_root,
+                    run_id=config.run_id,
+                    input_roots=_comparison_input_roots(config, comparison_config),
+                )
+                comparison_json_paths.append(comparison_json.path)
+                produced_artifacts.append(comparison_json.to_dict())
+                if stage_plan.postprocessing_requested("export_csv"):
+                    comparison_csv = write_comparison_csv(
+                        comparison,
+                        output_root=derived_root,
+                        run_id=config.run_id,
+                        input_roots=_comparison_input_roots(config, comparison_config),
+                    )
+                    comparison_csv_paths.append(comparison_csv.path)
+                    produced_artifacts.append(comparison_csv.to_dict())
+            executed.append("comparison")
+
+        if stage_plan.postprocessing_requested("export_csv"):
+            if loaded_comparison_results and not stage_plan.postprocessing_requested("comparison"):
+                for comparison in loaded_comparison_results:
+                    comparison_csv = write_comparison_csv(
+                        comparison,
+                        output_root=derived_root,
+                        run_id=config.run_id,
+                        input_roots=_comparison_result_input_roots(config, comparison_result_sources),
+                    )
+                    comparison_csv_paths.append(comparison_csv.path)
+                    produced_artifacts.append(comparison_csv.to_dict())
+            elif not any(
+                stage_plan.postprocessing_requested(operation)
+                for operation in ("ranking", "pareto", "comparison")
+            ):
+                collection = _require_collection(analysis_collection)
+                analysis_csv = write_analysis_results_csv(
+                    collection,
+                    output_root=derived_root,
+                    run_id=config.run_id,
+                    input_roots=_postprocessing_input_roots(config, analysis_result_paths, analysis_sources),
+                )
+                analysis_csv_path = analysis_csv.path
+                produced_artifacts.append(analysis_csv.to_dict())
+            executed.append("export_csv")
+
+        if stage_plan.postprocessing_requested("visualization"):
+            visualization_paths.extend(
+                _write_requested_visualizations(
+                    config=config,
+                    derived_root=derived_root,
+                    analysis_collection=analysis_collection,
+                    ranking_result=ranking_result,
+                    pareto_result=pareto_result,
+                    comparison_results=(
+                        tuple(computed_comparison_results)
+                        or tuple(loaded_comparison_results)
+                    ),
+                    evolution_source=evolution_source,
+                    input_roots=_postprocessing_input_roots(config, analysis_result_paths, analysis_sources),
+                ),
+            )
+            produced_artifacts.extend(_path_records("figure", visualization_paths))
+            executed.append("visualization")
+
+        return _PostprocessingStageOutput(
+            ranking_json_path=ranking_json_path,
+            ranking_csv_path=ranking_csv_path,
+            pareto_json_path=pareto_json_path,
+            pareto_csv_path=pareto_csv_path,
+            analysis_csv_path=analysis_csv_path,
+            comparison_json_paths=tuple(comparison_json_paths),
+            comparison_csv_paths=tuple(comparison_csv_paths),
+            visualization_paths=tuple(visualization_paths),
         )
 
     def _run_evolution(
@@ -1096,6 +1303,13 @@ class WorkflowRunner:
             reference_results=reference_analysis_results,
             policy_id=config.policy_id,
         )
+
+
+def _workflow_stage_plan(config: WorkflowConfig) -> _WorkflowStagePlan:
+    return _WorkflowStagePlan(
+        scientific=config.scientific_execution,
+        postprocessing=config.postprocessing,
+    )
 
 
 def _load_candidate_artifacts(
