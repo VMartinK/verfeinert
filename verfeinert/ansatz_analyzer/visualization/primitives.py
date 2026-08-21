@@ -14,6 +14,7 @@ from .styles import DEFAULT_STYLE, SemanticRoleStyle, VisualizationStyle
 PUBLICATION_LEGEND_ZORDER = 1000
 BAR_HEADROOM_FACTOR = 1.18
 OBJECTIVE_VERTICAL_HEADROOM_FRACTION = 0.22
+PUBLICATION_OBJECTIVE_VERTICAL_HEADROOM_FRACTION = 0.45
 
 
 def setup_publication_objective_axis(
@@ -340,6 +341,7 @@ def _rgb_hex(red: float, green: float, blue: float) -> str:
 __all__ = [
     "BAR_HEADROOM_FACTOR",
     "OBJECTIVE_VERTICAL_HEADROOM_FRACTION",
+    "PUBLICATION_OBJECTIVE_VERTICAL_HEADROOM_FRACTION",
     "PUBLICATION_LEGEND_ZORDER",
     "apply_bar_headroom",
     "apply_objective_vertical_headroom",

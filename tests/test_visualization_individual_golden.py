@@ -82,10 +82,12 @@ def _assert_publication_legend(legend) -> None:
     assert frame.get_alpha() == 1.0
 
 
-def _assert_upper_headroom(axis, data_max: float) -> None:
+def _assert_publication_upper_headroom(axis, data_min: float, data_max: float) -> None:
     bottom, top = axis.get_ylim()
+    autoscale_lower = data_min - (data_max - data_min) * 0.05
+    assert bottom == pytest.approx(autoscale_lower)
     assert top > data_max
-    assert (top - data_max) / (top - bottom) > 0.10
+    assert (top - data_max) / (top - bottom) > 0.30
 
 
 def test_i1_individual_classification_structural_contract() -> None:
@@ -120,7 +122,7 @@ def test_i1_individual_classification_structural_contract() -> None:
         "new Pareto optimal",
     ]
     _assert_publication_legend(axis.get_legend())
-    _assert_upper_headroom(axis, 1.7)
+    _assert_publication_upper_headroom(axis, 0.8, 1.7)
     assert axis.get_title() == ""
     pyplot.close(figure)
 
@@ -149,7 +151,7 @@ def test_i2_individual_joint_frontiers_preserves_frontier_order_and_limits() -> 
     assert axis.get_title() == ""
 
     auto_figure = plot_individual_joint_frontiers(frontiers)
-    _assert_upper_headroom(auto_figure.axes[0], 2.0)
+    _assert_publication_upper_headroom(auto_figure.axes[0], 1.0, 2.0)
     pyplot.close(auto_figure)
     pyplot.close(figure)
 
@@ -176,7 +178,7 @@ def test_i3_individual_frontier_comparison_uses_reference_and_primary_styles() -
     assert axis.get_legend()._ncols == 2
     assert _legend_labels(axis) == ["reference 0.1", "reference 0.2", "optimized 0.1", "optimized 0.2"]
     _assert_publication_legend(axis.get_legend())
-    _assert_upper_headroom(axis, 2.0)
+    _assert_publication_upper_headroom(axis, 1.0, 2.0)
     assert axis.get_title() == ""
     pyplot.close(figure)
 
@@ -203,6 +205,7 @@ def test_i4_individual_by_layer_preserves_prepared_layer_order() -> None:
     assert axis.lines[0].get_linewidth() == 1.55
     _assert_publication_legend(axis.get_legend())
     assert axis.get_legend()._ncols == 2
+    _assert_publication_upper_headroom(axis, 0.8, 1.5)
     assert axis.get_title() == ""
     pyplot.close(figure)
 
@@ -229,6 +232,7 @@ def test_i5_individual_by_lineage_uses_prepared_order_and_reserves_legend_strip(
     assert [text.get_text() for text in axis.artists[0].get_texts()] == ["reference frontier"]
     _assert_publication_legend(axis.get_legend())
     _assert_publication_legend(axis.artists[0])
+    _assert_publication_upper_headroom(axis, 0.8, 1.9)
     assert axis.get_title() == ""
     pyplot.close(figure)
 

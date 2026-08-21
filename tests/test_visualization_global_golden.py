@@ -98,6 +98,14 @@ def _assert_upper_headroom(axis, data_max: float) -> None:
     assert (top - data_max) / (top - bottom) > 0.10
 
 
+def _assert_publication_upper_headroom(axis, data_min: float, data_max: float) -> None:
+    bottom, top = axis.get_ylim()
+    autoscale_lower = data_min - (data_max - data_min) * 0.05
+    assert bottom == pytest.approx(autoscale_lower)
+    assert top > data_max
+    assert (top - data_max) / (top - bottom) > 0.30
+
+
 def test_objective_series_preserves_positional_contract_and_keyword_score() -> None:
     points = (_point("legacy", 0.1, 1.0),)
 
@@ -162,7 +170,7 @@ def test_g_b_global_pareto_overview_draws_layers_and_global_frontiers_only() -> 
     assert axis.lines[0].get_markersize() == 4.2
     assert axis.lines[0].get_linewidth() == 2.0
     _assert_publication_legend(axis.get_legend())
-    _assert_upper_headroom(axis, 2.0)
+    _assert_publication_upper_headroom(axis, 1.0, 2.0)
     pyplot.close(figure)
 
 

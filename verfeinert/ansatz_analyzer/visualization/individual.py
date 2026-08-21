@@ -8,6 +8,7 @@ from typing import Any
 from .export import require_pyplot
 from .models import BarSeries, ObjectivePoint, ObjectiveSeries, VisualizationModelError
 from .primitives import (
+    PUBLICATION_OBJECTIVE_VERTICAL_HEADROOM_FRACTION,
     apply_objective_vertical_headroom,
     ordered_lineage_color_map,
     setup_publication_objective_axis,
@@ -107,7 +108,7 @@ def plot_individual_classification(
         )
 
     setup_publication_objective_axis(axis, xlabel=x_label, ylabel=y_label, style=style)
-    apply_objective_vertical_headroom(axis)
+    apply_objective_vertical_headroom(axis, fraction=PUBLICATION_OBJECTIVE_VERTICAL_HEADROOM_FRACTION)
     _apply_legend(
         axis,
         legend_handles,
@@ -153,7 +154,7 @@ def plot_individual_joint_frontiers(
         )
     _finish_objective_axis(axis, x_label=x_label, y_label=y_label, xlim=xlim, ylim=ylim, style=style)
     if ylim is None:
-        apply_objective_vertical_headroom(axis)
+        apply_objective_vertical_headroom(axis, fraction=PUBLICATION_OBJECTIVE_VERTICAL_HEADROOM_FRACTION)
     _legend_from_axis(axis, style=style, bbox_to_anchor=(0.985, 0.985))
     return figure
 
@@ -195,7 +196,7 @@ def plot_individual_frontier_comparison(
             label=frontier.label,
         )
     setup_publication_objective_axis(axis, xlabel=x_label, ylabel=y_label, style=style)
-    apply_objective_vertical_headroom(axis)
+    apply_objective_vertical_headroom(axis, fraction=PUBLICATION_OBJECTIVE_VERTICAL_HEADROOM_FRACTION)
     _legend_from_axis(
         axis,
         style=style,
@@ -244,6 +245,7 @@ def plot_individual_by_layer(
             label=frontier.label,
         )
     setup_publication_objective_axis(axis, xlabel=x_label, ylabel=y_label, style=style)
+    apply_objective_vertical_headroom(axis, fraction=PUBLICATION_OBJECTIVE_VERTICAL_HEADROOM_FRACTION)
     _legend_from_axis(axis, style=style, ncol=2)
     return figure
 
@@ -303,6 +305,8 @@ def plot_individual_by_lineage(
 
     _finish_objective_axis(axis, x_label=x_label, y_label=y_label, xlim=xlim, ylim=ylim, style=style)
     _reserve_x_legend_strip(axis, 0.34)
+    if ylim is None:
+        apply_objective_vertical_headroom(axis, fraction=PUBLICATION_OBJECTIVE_VERTICAL_HEADROOM_FRACTION)
     if reference_handles:
         reference_legend = axis.legend(
             reference_handles,

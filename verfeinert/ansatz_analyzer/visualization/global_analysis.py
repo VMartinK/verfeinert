@@ -9,6 +9,7 @@ from typing import Any
 from .export import require_pyplot
 from .models import BarSeries, ObjectivePoint, ObjectiveSeries, TableSpec, VisualizationModelError
 from .primitives import (
+    PUBLICATION_OBJECTIVE_VERTICAL_HEADROOM_FRACTION,
     apply_bar_headroom,
     apply_objective_vertical_headroom,
     ordered_lineage_color_map,
@@ -73,7 +74,7 @@ def plot_global_pareto(
             label=frontier.label,
         )
     setup_publication_objective_axis(axis, xlabel=x_label, ylabel=y_label, style=style)
-    apply_objective_vertical_headroom(axis)
+    apply_objective_vertical_headroom(axis, fraction=PUBLICATION_OBJECTIVE_VERTICAL_HEADROOM_FRACTION)
     _axis_legend(axis, style=style)
     return figure
 
