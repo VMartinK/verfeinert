@@ -40,16 +40,19 @@ from verfeinert.ansatz_evolver import (
     CandidateRef,
     EvolutionEvent,
     EvolutionRunState,
+    EvolutionStateMachine,
+    EvolutionStateMachineError,
     GenerationRecord,
     StoppingDecision,
     StoppingPolicy,
     StoppingState,
+    build_analyzed_generation_record,
     evaluate_stopping_conditions,
+    evolution_execution_metadata,
     produce_candidate_from_request,
     read_evolution_run_json,
     write_evolution_run_json,
 )
-from verfeinert.ansatz_evolver.evaluation import ingest_analysis_results
 from verfeinert.ansatz_evolver.mutation import (
     MutationPolicy,
     MutationRecipe,
@@ -1647,59 +1650,29 @@ def _generation_record(
     extra_events: Sequence[EvolutionEvent] = (),
     stopping_decision: StoppingDecision | None = None,
 ) -> GenerationRecord:
-    ingestion = ingest_analysis_results(
-        candidate_refs,
-        collection.documents,
-        uri_by_analysis_result_id=analysis_uris,
-    )
-    if ingestion.missing_candidate_ids or ingestion.unexpected_candidate_ids:
-        raise WorkflowConfigError(
-            "analysis results do not match evolution candidates: "
-            f"missing={list(ingestion.missing_candidate_ids)}, "
-            f"unexpected={list(ingestion.unexpected_candidate_ids)}",
-        )
-    configuration = {
+    generation_configuration = {
         "workflow_run_id": run_id,
-        "selection": selection.configuration,
         **dict(extra_configuration or {}),
     }
-    events = [
-        EvolutionEvent(
-            event_type="workflow_generation_analyzed",
-            status="completed",
-            metadata={
-                "candidate_count": len(tuple(candidate_refs)),
-                "analysis_result_count": len(collection.documents),
-            },
-        ),
-        EvolutionEvent(
-            event_type="workflow_selection_completed",
-            policy_id=selection.policy_id,
-            status="completed",
-        ),
-        *tuple(extra_events),
-    ]
-    if stopping_decision is not None:
-        configuration["stopping"] = stopping_decision.to_dict()
-        events.append(
-            EvolutionEvent(
-                event_type="workflow_stopping_decision",
-                status=stopping_decision.status,
-                reason=stopping_decision.reason,
-                metadata=stopping_decision.to_dict(),
-            ),
+    try:
+        return build_analyzed_generation_record(
+            generation_index=generation_index,
+            candidate_refs=candidate_refs,
+            analysis_result_documents=collection.documents,
+            selection=selection,
+            analysis_uris=analysis_uris,
+            parent_refs=parent_refs,
+            generation_configuration=generation_configuration,
+            extra_events=extra_events,
+            stopping_decision=stopping_decision,
+            analysis_event_type="workflow_generation_analyzed",
+            selection_event_type="workflow_selection_completed",
+            stopping_event_type="workflow_stopping_decision",
         )
-    return GenerationRecord(
-        generation_index=generation_index,
-        candidate_refs=tuple(candidate_refs),
-        parent_refs=tuple(parent_refs),
-        survivor_refs=selection.survivor_refs,
-        rejected_refs=selection.rejected_refs,
-        archive_refs=selection.archive_refs,
-        analysis_result_refs=ingestion.analysis_result_refs,
-        configuration=configuration,
-        events=tuple(events),
-    )
+    except EvolutionStateMachineError as exc:
+        raise WorkflowConfigError(
+            str(exc),
+        ) from exc
 
 
 def _new_evolution_state(
@@ -1719,11 +1692,9 @@ def _new_evolution_state(
         },
         **dict(config.metadata),
     }
-    return EvolutionRunState(
+    machine = EvolutionStateMachine.start(
         evolution_run_id=evolution_run_id,
-        status="running",
         configuration=_evolution_configuration(config),
-        generations=tuple(generations),
         provenance={
             "created_at": config.created_at or _created_at_from_generations(generations),
             "source": "verfeinert.workflow",
@@ -1732,8 +1703,10 @@ def _new_evolution_state(
         metadata=metadata,
         created_at=config.created_at or _created_at_from_generations(generations),
         git_commit=None,
-        execution_metadata=_evolution_execution_metadata(generations),
     )
+    for generation in generations:
+        machine = machine.append_generation(generation)
+    return machine.run_state
 
 
 def _state_with_generation(
@@ -1741,17 +1714,19 @@ def _state_with_generation(
     state: EvolutionRunState,
     generation: GenerationRecord,
 ) -> EvolutionRunState:
-    return EvolutionRunState(
+    run_state = EvolutionRunState(
         evolution_run_id=state.evolution_run_id,
-        status="running",
+        status=state.status,
         configuration=_evolution_configuration(config),
-        generations=(*state.generations, generation),
+        generations=state.generations,
         provenance=state.provenance,
         metadata=state.metadata,
         created_at=state.created_at,
+        software_version=state.software_version,
         git_commit=state.git_commit,
-        execution_metadata=_evolution_execution_metadata((*state.generations, generation)),
+        execution_metadata=_evolution_execution_metadata(state.generations),
     )
+    return EvolutionStateMachine.from_run_state(run_state).append_generation(generation).run_state
 
 
 def _final_stopping_decision(config: WorkflowConfig, state: EvolutionRunState) -> dict[str, Any]:
@@ -1792,17 +1767,19 @@ def _state_completed(config: WorkflowConfig, state: EvolutionRunState) -> Evolut
     workflow_metadata = dict(metadata.get("workflow", {}))
     workflow_metadata["final_stopping_decision"] = final_decision
     metadata["workflow"] = workflow_metadata
-    return EvolutionRunState(
+    run_state = EvolutionRunState(
         evolution_run_id=state.evolution_run_id,
-        status="completed",
+        status=state.status,
         configuration=_evolution_configuration(config),
         generations=state.generations,
         provenance=state.provenance,
-        metadata=metadata,
+        metadata=state.metadata,
         created_at=state.created_at,
+        software_version=state.software_version,
         git_commit=state.git_commit,
         execution_metadata=_evolution_execution_metadata(state.generations),
     )
+    return EvolutionStateMachine.from_run_state(run_state).complete(metadata=metadata).run_state
 
 
 def _state_for_resume_or_branch(
@@ -2250,15 +2227,7 @@ def _source_evolution_fingerprint(document: Mapping[str, Any]) -> str:
 def _evolution_execution_metadata(
     generations: Sequence[GenerationRecord],
 ) -> dict[str, Any]:
-    return {
-        "analysis_requested": any(generation.analysis_result_refs for generation in generations),
-        "analysis_results_ingested": any(generation.analysis_result_refs for generation in generations),
-        "selection_executed": any(
-            generation.survivor_refs or generation.rejected_refs
-            for generation in generations
-        ),
-        "generation_count": len(generations),
-    }
+    return evolution_execution_metadata(generations)
 
 
 def _created_at_from_generations(generations: Sequence[GenerationRecord]) -> str:

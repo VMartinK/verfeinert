@@ -88,6 +88,23 @@ QNode/materialization work. Workflow analysis stages may use analyzer-owned
 candidate-level multiprocessing while the evolver continues to exchange
 canonical candidate and AnalysisResult references.
 
+## State Machine
+
+`EvolutionStateMachine` owns legal generation lifecycle transitions for
+`EvolutionRunState`. It exposes explicit states for initialization, planned
+generation work, generated candidates, pending/complete analysis, completed
+selection, checkpointed generations, and terminal completed/failed/cancelled
+runs. Invalid ordering, wrong generation indices, and attempts to transition
+from terminal states fail before a new EvolutionRun document is produced.
+
+`build_analyzed_generation_record` is the public boundary for materializing a
+selection-complete generation. It links candidate refs to AnalysisResult refs
+with `ingest_analysis_results`, records survivor/rejected/archive refs from
+the selection result, stores stopping decisions in generation configuration,
+and emits generation events without importing analyzer internals or computing
+metrics. Workflow drives these public transitions and continues to own artifact
+routing, candidate document storage, and analyzer execution.
+
 ## Population Representation
 
 The canonical population model is reference-based.
