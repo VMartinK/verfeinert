@@ -20,6 +20,7 @@ from verfeinert.ansatz_evolver.exporters import (
 )
 from verfeinert.ansatz_evolver.policies import (
     StoppingPolicy,
+    StoppingState,
     evaluate_stopping_conditions,
 )
 from verfeinert.ansatz_evolver.selection import (
@@ -164,6 +165,171 @@ class EvolverSelectionExportTests(unittest.TestCase):
                 survivor_count=1,
             ).reason,
             "max_generations_reached",
+        )
+
+    def test_stopping_conditions_cover_failure_cancellation_and_empty_results(self) -> None:
+        policy = StoppingPolicy(max_generations=5)
+
+        cases = (
+            (
+                {"failed": True, "candidate_count": 1, "analysis_result_count": 1, "survivor_count": 1},
+                "failure_reported",
+                "failed",
+            ),
+            (
+                {"cancelled": True, "candidate_count": 1, "analysis_result_count": 1, "survivor_count": 1},
+                "cancelled",
+                "cancelled",
+            ),
+            (
+                {"candidate_count": 1, "analysis_result_count": 0, "survivor_count": 0},
+                "no_analysis_results",
+                "failed",
+            ),
+            (
+                {"candidate_count": 1, "analysis_result_count": 1, "survivor_count": 0},
+                "no_survivors",
+                "completed",
+            ),
+            (
+                {
+                    "candidate_count": 1,
+                    "analysis_result_count": 1,
+                    "survivor_count": 1,
+                    "execution_budget_exhausted": True,
+                },
+                "execution_budget_exhausted",
+                "completed",
+            ),
+        )
+
+        for kwargs, reason, status in cases:
+            with self.subTest(reason=reason):
+                decision = evaluate_stopping_conditions(
+                    generation_index=0,
+                    policy=policy,
+                    **kwargs,
+                )
+                self.assertTrue(decision.should_stop)
+                self.assertEqual(decision.reason, reason)
+                self.assertEqual(decision.status, status)
+                self.assertEqual(decision.metadata["generation_index"], 0)
+
+    def test_patience_none_preserves_immediate_no_improvement_compatibility(self) -> None:
+        decision = evaluate_stopping_conditions(
+            generation_index=0,
+            policy=StoppingPolicy(max_generations=5, patience=None),
+            candidate_count=1,
+            analysis_result_count=1,
+            survivor_count=1,
+            strict_improvement=False,
+        )
+
+        self.assertTrue(decision.should_stop)
+        self.assertEqual(decision.reason, "no_strict_improvement")
+        self.assertFalse(decision.metadata["patience_enabled"])
+
+    def test_patience_zero_stops_on_first_non_improvement(self) -> None:
+        decision = evaluate_stopping_conditions(
+            generation_index=0,
+            policy=StoppingPolicy(max_generations=5, patience=0),
+            candidate_count=1,
+            analysis_result_count=1,
+            survivor_count=1,
+            strict_improvement=False,
+        )
+
+        self.assertTrue(decision.should_stop)
+        self.assertEqual(decision.reason, "patience_exhausted")
+        self.assertEqual(
+            decision.metadata["stopping_state"]["consecutive_no_improvement"],
+            1,
+        )
+
+    def test_patience_allows_configured_consecutive_non_improvements(self) -> None:
+        policy = StoppingPolicy(max_generations=5, patience=1)
+        first = evaluate_stopping_conditions(
+            generation_index=0,
+            policy=policy,
+            candidate_count=1,
+            analysis_result_count=1,
+            survivor_count=1,
+            strict_improvement=False,
+        )
+        second = evaluate_stopping_conditions(
+            generation_index=1,
+            policy=policy,
+            candidate_count=1,
+            analysis_result_count=1,
+            survivor_count=1,
+            strict_improvement=False,
+            patience_state=first.metadata["stopping_state"],
+        )
+
+        self.assertFalse(first.should_stop)
+        self.assertEqual(first.reason, "continue")
+        self.assertEqual(first.metadata["stopping_state"]["consecutive_no_improvement"], 1)
+        self.assertTrue(second.should_stop)
+        self.assertEqual(second.reason, "patience_exhausted")
+        self.assertEqual(second.metadata["stopping_state"]["consecutive_no_improvement"], 2)
+
+    def test_improvement_resets_patience_state(self) -> None:
+        policy = StoppingPolicy(max_generations=5, patience=2)
+        first = evaluate_stopping_conditions(
+            generation_index=0,
+            policy=policy,
+            candidate_count=1,
+            analysis_result_count=1,
+            survivor_count=1,
+            strict_improvement=False,
+        )
+        reset = evaluate_stopping_conditions(
+            generation_index=1,
+            policy=policy,
+            candidate_count=1,
+            analysis_result_count=1,
+            survivor_count=1,
+            strict_improvement=True,
+            patience_state=first.metadata["stopping_state"],
+        )
+
+        self.assertFalse(reset.should_stop)
+        self.assertEqual(reset.metadata["stopping_state"]["consecutive_no_improvement"], 0)
+        self.assertEqual(reset.metadata["stopping_state"]["last_improvement_generation"], 1)
+
+    def test_independent_threshold_patience_state_serializes_for_resume(self) -> None:
+        policy = StoppingPolicy(max_generations=5, patience=0)
+        first = evaluate_stopping_conditions(
+            generation_index=0,
+            policy=policy,
+            candidate_count=2,
+            analysis_result_count=2,
+            survivor_count=1,
+            strict_improvement=False,
+            threshold_improvements={"cost-0.2": False, "cost-1.0": True},
+        )
+        resumed_state = StoppingState.from_mapping(first.metadata["stopping_state"])
+        second = evaluate_stopping_conditions(
+            generation_index=1,
+            policy=policy,
+            candidate_count=2,
+            analysis_result_count=2,
+            survivor_count=1,
+            strict_improvement=False,
+            threshold_improvements={"cost-0.2": False, "cost-1.0": False},
+            patience_state=resumed_state,
+        )
+
+        self.assertFalse(first.should_stop)
+        threshold_states = first.metadata["stopping_state"]["threshold_states"]
+        self.assertTrue(threshold_states["cost-0.2"]["exhausted"])
+        self.assertFalse(threshold_states["cost-1.0"]["exhausted"])
+        self.assertEqual(resumed_state.to_dict(), first.metadata["stopping_state"])
+        self.assertTrue(second.should_stop)
+        self.assertEqual(second.reason, "patience_exhausted")
+        self.assertEqual(
+            second.metadata["exhausted_thresholds"],
+            ["cost-0.2", "cost-1.0"],
         )
 
     def test_pipeline_state_exports_valid_evolution_run(self) -> None:

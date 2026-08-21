@@ -245,6 +245,22 @@ and future conditions include:
 Each stopping decision must record whether the run completed, failed,
 cancelled, or stopped by configured policy.
 
+`StoppingPolicy.patience` is opt-in. `patience=None` preserves v0.3.x
+compatibility: a reported no-improvement condition stops immediately with
+`no_strict_improvement`. An explicit integer enables stateful governed
+patience. With `patience=N`, exactly `N` consecutive non-improving generations
+are allowed and the next non-improving generation stops with
+`patience_exhausted`; therefore `patience=0` stops on the first
+non-improving generation. Any qualifying improvement resets the consecutive
+no-improvement counter to zero and records the improvement generation.
+
+Independent threshold trajectories may carry their own threshold patience
+state. When threshold-specific state is supplied, each threshold updates
+deterministically from its own improvement flag; a threshold-governed decision
+is patience-exhausted only when all active threshold trajectories are
+exhausted. The serialized stopping state is JSON-safe and can be stored in
+EvolutionRun generation configuration for resume/audit.
+
 ## Reproducibility
 
 Evolution configuration must record:

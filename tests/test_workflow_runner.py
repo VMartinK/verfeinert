@@ -82,6 +82,14 @@ class WorkflowRunnerTests(unittest.TestCase):
             generation = evolution["generations"][0]
             self.assertEqual(generation["candidate_refs"][0]["candidate_id"], "runner-a02-l1")
             self.assertEqual(generation["analysis_result_refs"][0]["candidate_id"], "runner-a02-l1")
+            self.assertEqual(
+                generation["configuration"]["stopping"]["metadata"]["stopping_policy"],
+                {"max_generations": 1, "patience": None},
+            )
+            final_decision = evolution["metadata"]["workflow"]["final_stopping_decision"]
+            self.assertTrue(final_decision["should_stop"])
+            self.assertEqual(final_decision["reason"], "max_generations_reached")
+            self.assertEqual(final_decision["metadata"]["generation_index"], 0)
 
     def test_invalid_configuration_is_rejected(self) -> None:
         with TemporaryDirectory() as temp_dir:

@@ -22,6 +22,13 @@ from .models import (
     EvolutionRunState,
     GenerationRecord,
 )
+from .policies import (
+    StoppingDecision,
+    StoppingPolicy,
+    StoppingState,
+    ThresholdPatienceState,
+    evaluate_stopping_conditions,
+)
 from .pipeline import EvolutionPipelineState
 from .exporters import export_evolution_run_json, write_evolution_run_json
 from .validation import (
@@ -46,7 +53,12 @@ __all__ = [
     "MutationPolicy",
     "MutationRecipe",
     "MutationRequest",
+    "StoppingDecision",
+    "StoppingPolicy",
+    "StoppingState",
+    "ThresholdPatienceState",
     "build_mutation_requests",
+    "evaluate_stopping_conditions",
     "expand_mutation_requests",
     "export_evolution_run_json",
     "produce_candidate_from_request",

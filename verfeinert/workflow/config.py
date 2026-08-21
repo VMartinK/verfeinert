@@ -263,6 +263,7 @@ class EvolutionStageConfig:
     thresholds: dict[str, float] = field(default_factory=dict)
     threshold_direction: str = "at_most"
     max_generations: int = 1
+    patience: int | None = None
     mutation_policy: dict[str, Any] = field(default_factory=dict)
     offspring_deduplication: dict[str, Any] = field(default_factory=dict)
     initial_parent_policy: str = "default"
@@ -294,6 +295,11 @@ class EvolutionStageConfig:
             "max_generations",
             require_positive_int(self.max_generations, "evolver.max_generations"),
         )
+        object.__setattr__(
+            self,
+            "patience",
+            require_non_negative_int_or_none(self.patience, "evolver.patience"),
+        )
         object.__setattr__(self, "mutation_policy", to_json_safe(dict(self.mutation_policy)))
         object.__setattr__(
             self,
@@ -323,6 +329,12 @@ class EvolutionStageConfig:
             thresholds=dict(data.get("thresholds", {})),
             threshold_direction=data.get("threshold_direction", "at_most"),
             max_generations=data.get("max_generations", 1),
+            patience=_first_non_none(
+                data.get("patience"),
+                dict(data.get("stopping_policy", {})).get("patience")
+                if isinstance(data.get("stopping_policy", {}), Mapping)
+                else None,
+            ),
             mutation_policy=dict(data.get("mutation_policy", {})),
             offspring_deduplication=dict(data.get("offspring_deduplication", {})),
             initial_parent_policy=data.get("initial_parent_policy", "default"),
@@ -342,6 +354,7 @@ class EvolutionStageConfig:
             "thresholds": dict(self.thresholds),
             "threshold_direction": self.threshold_direction,
             "max_generations": self.max_generations,
+            "patience": self.patience,
             "mutation_policy": dict(self.mutation_policy),
             "offspring_deduplication": dict(self.offspring_deduplication),
             "initial_parent_policy": self.initial_parent_policy,

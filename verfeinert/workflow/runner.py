@@ -41,6 +41,10 @@ from verfeinert.ansatz_evolver import (
     EvolutionEvent,
     EvolutionRunState,
     GenerationRecord,
+    StoppingDecision,
+    StoppingPolicy,
+    StoppingState,
+    evaluate_stopping_conditions,
     produce_candidate_from_request,
     read_evolution_run_json,
     write_evolution_run_json,
@@ -871,6 +875,15 @@ class WorkflowRunner:
                     for document in collection.documents
                 },
             )
+            stopping_decision = _stopping_decision_for_generation(
+                config=config,
+                state=None,
+                generation_index=0,
+                candidate_count=len(candidate_refs),
+                analysis_result_count=len(collection.documents),
+                survivor_count=len(selection.survivor_refs),
+                strict_improvement=bool(selection.survivor_refs),
+            )
             generation = _generation_record(
                 generation_index=0,
                 candidate_refs=candidate_refs,
@@ -883,6 +896,7 @@ class WorkflowRunner:
                 ),
                 parent_refs=(),
                 run_id=config.run_id,
+                stopping_decision=stopping_decision,
             )
             state = _new_evolution_state(
                 config=config,
@@ -974,6 +988,20 @@ class WorkflowRunner:
                 CandidateRef.from_candidate_document(candidate, candidate_uri=candidate_uri_lookup.get(candidate["candidate_id"]))
                 for candidate in package.candidates
             )
+            stopping_decision = _stopping_decision_for_generation(
+                config=config,
+                state=state,
+                generation_index=next_generation,
+                candidate_count=len(child_refs),
+                analysis_result_count=len(child_collection.documents),
+                survivor_count=len(selection.survivor_refs),
+                strict_improvement=bool(selection.survivor_refs),
+                duplicate_only=(
+                    dedup_report is not None
+                    and dedup_report.input_count > 0
+                    and dedup_report.kept_count == 0
+                ),
+            )
             generation = _generation_record(
                 generation_index=next_generation,
                 candidate_refs=child_refs,
@@ -998,6 +1026,7 @@ class WorkflowRunner:
                     if dedup_report is not None
                     else ()
                 ),
+                stopping_decision=stopping_decision,
             )
             state = _state_with_generation(config, state, generation)
 
@@ -1574,6 +1603,7 @@ def _generation_record(
     run_id: str,
     extra_configuration: Mapping[str, Any] | None = None,
     extra_events: Sequence[EvolutionEvent] = (),
+    stopping_decision: StoppingDecision | None = None,
 ) -> GenerationRecord:
     ingestion = ingest_analysis_results(
         candidate_refs,
@@ -1586,6 +1616,37 @@ def _generation_record(
             f"missing={list(ingestion.missing_candidate_ids)}, "
             f"unexpected={list(ingestion.unexpected_candidate_ids)}",
         )
+    configuration = {
+        "workflow_run_id": run_id,
+        "selection": selection.configuration,
+        **dict(extra_configuration or {}),
+    }
+    events = [
+        EvolutionEvent(
+            event_type="workflow_generation_analyzed",
+            status="completed",
+            metadata={
+                "candidate_count": len(tuple(candidate_refs)),
+                "analysis_result_count": len(collection.documents),
+            },
+        ),
+        EvolutionEvent(
+            event_type="workflow_selection_completed",
+            policy_id=selection.policy_id,
+            status="completed",
+        ),
+        *tuple(extra_events),
+    ]
+    if stopping_decision is not None:
+        configuration["stopping"] = stopping_decision.to_dict()
+        events.append(
+            EvolutionEvent(
+                event_type="workflow_stopping_decision",
+                status=stopping_decision.status,
+                reason=stopping_decision.reason,
+                metadata=stopping_decision.to_dict(),
+            ),
+        )
     return GenerationRecord(
         generation_index=generation_index,
         candidate_refs=tuple(candidate_refs),
@@ -1594,27 +1655,8 @@ def _generation_record(
         rejected_refs=selection.rejected_refs,
         archive_refs=selection.archive_refs,
         analysis_result_refs=ingestion.analysis_result_refs,
-        configuration={
-            "workflow_run_id": run_id,
-            "selection": selection.configuration,
-            **dict(extra_configuration or {}),
-        },
-        events=(
-            EvolutionEvent(
-                event_type="workflow_generation_analyzed",
-                status="completed",
-                metadata={
-                    "candidate_count": len(tuple(candidate_refs)),
-                    "analysis_result_count": len(collection.documents),
-                },
-            ),
-            EvolutionEvent(
-                event_type="workflow_selection_completed",
-                policy_id=selection.policy_id,
-                status="completed",
-            ),
-            *tuple(extra_events),
-        ),
+        configuration=configuration,
+        events=tuple(events),
     )
 
 
@@ -1670,14 +1712,51 @@ def _state_with_generation(
     )
 
 
+def _final_stopping_decision(config: WorkflowConfig, state: EvolutionRunState) -> dict[str, Any]:
+    latest = state.generations[-1] if state.generations else None
+    latest_decision = _stopping_decision_from_generation(latest)
+    if latest_decision is not None and bool(latest_decision.get("should_stop", False)):
+        return latest_decision
+    if latest is not None and len(state.generations) >= config.evolver.max_generations:
+        decision = StoppingDecision(
+            should_stop=True,
+            reason="max_generations_reached",
+            status="completed",
+            metadata={
+                "generation_index": latest.generation_index,
+                "generation_count": len(state.generations),
+                "stopping_policy": _stopping_policy(config).to_dict(),
+                "stopping_state": _stopping_state_from_state(state).to_dict(),
+            },
+        )
+        return decision.to_dict()
+    decision = StoppingDecision(
+        should_stop=True,
+        reason="no_mutation_continuation_requested",
+        status="completed",
+        metadata={
+            "generation_index": latest.generation_index if latest is not None else None,
+            "generation_count": len(state.generations),
+            "stopping_policy": _stopping_policy(config).to_dict(),
+            "stopping_state": _stopping_state_from_state(state).to_dict(),
+        },
+    )
+    return decision.to_dict()
+
+
 def _state_completed(config: WorkflowConfig, state: EvolutionRunState) -> EvolutionRunState:
+    final_decision = _final_stopping_decision(config, state)
+    metadata = dict(state.metadata)
+    workflow_metadata = dict(metadata.get("workflow", {}))
+    workflow_metadata["final_stopping_decision"] = final_decision
+    metadata["workflow"] = workflow_metadata
     return EvolutionRunState(
         evolution_run_id=state.evolution_run_id,
         status="completed",
         configuration=_evolution_configuration(config),
         generations=state.generations,
         provenance=state.provenance,
-        metadata=state.metadata,
+        metadata=metadata,
         created_at=state.created_at,
         git_commit=state.git_commit,
         execution_metadata=_evolution_execution_metadata(state.generations),
@@ -1928,11 +2007,64 @@ def _deduplicate_offspring(
     ], report
 
 
+def _stopping_policy(config: WorkflowConfig) -> StoppingPolicy:
+    return StoppingPolicy(
+        max_generations=config.evolver.max_generations,
+        patience=config.evolver.patience,
+    )
+
+
+def _stopping_state_from_state(state: EvolutionRunState | None) -> StoppingState:
+    if state is None or not state.generations:
+        return StoppingState()
+    latest = state.generations[-1]
+    stopping = dict(latest.configuration.get("stopping", {}))
+    metadata = dict(stopping.get("metadata", {}))
+    return StoppingState.from_mapping(metadata.get("stopping_state"))
+
+
+def _stopping_decision_from_generation(generation: GenerationRecord | None) -> dict[str, Any] | None:
+    if generation is None:
+        return None
+    stopping = generation.configuration.get("stopping")
+    if isinstance(stopping, Mapping):
+        return dict(stopping)
+    return None
+
+
+def _stopping_decision_for_generation(
+    *,
+    config: WorkflowConfig,
+    state: EvolutionRunState | None,
+    generation_index: int,
+    candidate_count: int,
+    analysis_result_count: int,
+    survivor_count: int,
+    strict_improvement: bool,
+    duplicate_only: bool = False,
+) -> StoppingDecision:
+    return evaluate_stopping_conditions(
+        generation_index=generation_index,
+        policy=_stopping_policy(config),
+        candidate_count=candidate_count,
+        analysis_result_count=analysis_result_count,
+        survivor_count=survivor_count,
+        duplicate_only=duplicate_only,
+        strict_improvement=strict_improvement,
+        patience_state=_stopping_state_from_state(state),
+    )
+
+
 def _should_extend_evolution(
     config: WorkflowConfig,
     state: EvolutionRunState,
     candidate_factory: Any | None,
 ) -> bool:
+    latest_decision = _stopping_decision_from_generation(
+        state.generations[-1] if state.generations else None,
+    )
+    if latest_decision is not None and bool(latest_decision.get("should_stop", False)):
+        return False
     if len(state.generations) >= config.evolver.max_generations:
         return False
     if not config.evolver.mutation_policy and candidate_factory is None:
@@ -1992,6 +2124,7 @@ def _evolution_configuration(config: WorkflowConfig) -> dict[str, Any]:
     selection_policy = config.evolver.to_dict()
     mutation_policy = dict(selection_policy.pop("mutation_policy", {}))
     max_generations = selection_policy.pop("max_generations")
+    patience = selection_policy.pop("patience")
     selection_policy.pop("metadata", None)
     return {
         "random_seed": config.random_seed,
@@ -2001,29 +2134,34 @@ def _evolution_configuration(config: WorkflowConfig) -> dict[str, Any]:
             "requested_metrics": list(config.analyzer.selected_metrics),
         },
         "selection_policy": selection_policy,
-        "stopping_policy": {"max_generations": max_generations},
+        "stopping_policy": {
+            "max_generations": max_generations,
+            "patience": patience,
+        },
     }
 
 
 def _evolution_fingerprint(config: WorkflowConfig) -> str:
     selection_policy = config.evolver.to_dict()
     selection_policy.pop("max_generations", None)
+    patience = selection_policy.pop("patience")
     selection_policy.pop("metadata", None)
-    return stable_hash(
-        {
-            "fingerprint_version": EVOLUTION_FINGERPRINT_VERSION,
-            "campaign_type": config.campaign_type,
-            "random_seed": config.random_seed,
-            "execution": config.execution.to_dict(),
-            "mutation_policy": selection_policy.pop("mutation_policy", {}),
-            "selection_policy": selection_policy,
-            "analyzer": {
-                "selected_metrics": list(config.analyzer.selected_metrics),
-                "structural_cost": config.analyzer.structural_cost.to_dict(),
-                "metric_configs": config.analyzer.metric_configs,
-            },
+    payload = {
+        "fingerprint_version": EVOLUTION_FINGERPRINT_VERSION,
+        "campaign_type": config.campaign_type,
+        "random_seed": config.random_seed,
+        "execution": config.execution.to_dict(),
+        "mutation_policy": selection_policy.pop("mutation_policy", {}),
+        "selection_policy": selection_policy,
+        "analyzer": {
+            "selected_metrics": list(config.analyzer.selected_metrics),
+            "structural_cost": config.analyzer.structural_cost.to_dict(),
+            "metric_configs": config.analyzer.metric_configs,
         },
-    )
+    }
+    if patience is not None:
+        payload["stopping_policy"] = {"patience": patience}
+    return stable_hash(payload)
 
 
 def _source_evolution_fingerprint(document: Mapping[str, Any]) -> str:
