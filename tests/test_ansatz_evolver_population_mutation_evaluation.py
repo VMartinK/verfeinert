@@ -26,6 +26,7 @@ from verfeinert.ansatz_evolver.population import (
 )
 from verfeinert.ansatz_generator import (
     CandidateJsonExportConfig,
+    CanonicalMutationFactory,
     build_sanz19_candidate_record,
     export_candidate_json,
     remove_first_gate_on_wire,
@@ -170,6 +171,40 @@ class EvolverPopulationMutationEvaluationTests(unittest.TestCase):
         self.assertEqual(child["lineage"]["parent_candidate_id"], "parent-001")
         self.assertEqual(child["lineage"]["generation"], 1)
         self.assertEqual(child["lineage"]["mutation"]["type"], "remove")
+
+    def test_canonical_mutation_factory_children_are_structural_dedup_ready(self) -> None:
+        parent_candidate = _candidate_json("parent-001")
+        parent_ref = CandidateRef.from_candidate_document(
+            parent_candidate,
+            metadata={"root_candidate_id": "parent-001"},
+        )
+        policy = MutationPolicy(
+            "policy-noop-swap",
+            (
+                MutationRecipe(
+                    "recipe-noop-swap",
+                    "swap",
+                    parameters={"target_index": 0, "swap_with_index": 0},
+                ),
+            ),
+            variants_per_parent=2,
+        )
+        requests = build_mutation_requests((parent_ref,), generation_index=1, policy=policy)
+        factory = CanonicalMutationFactory(created_at=CREATED_AT)
+
+        children = tuple(
+            produce_candidate_from_request(request, parent_candidate, factory)
+            for request in requests
+        )
+        refs = tuple(CandidateRef.from_candidate_document(child) for child in children)
+        kept, report = deduplicate_candidate_refs(refs)
+
+        self.assertEqual(len({child["candidate_id"] for child in children}), 2)
+        self.assertEqual(len({child["identity"]["structural_hash"] for child in children}), 1)
+        self.assertEqual(children[0]["metadata"]["mutation_status"], "skipped_noop")
+        self.assertEqual([ref.candidate_id for ref in kept], [children[0]["candidate_id"]])
+        self.assertEqual(report.duplicate_count, 1)
+        self.assertEqual(report.removed_candidate_ids, (children[1]["candidate_id"],))
 
     def test_analysis_request_and_ingestion_link_results_to_candidates(self) -> None:
         candidate = _candidate_json()

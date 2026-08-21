@@ -129,6 +129,12 @@ If a caller wants to use a custom candidate factory, the factory must accept
 JSON-safe mutation requests and return validated Candidate JSON documents or a
 validated StagedPackage JSON document.
 
+The public generator factory for the standard mutation vocabulary is
+`CanonicalMutationFactory`. It covers `insert`, `replace`, `remove`, `swap`,
+`reorder`, and `layer_propagation` while preserving evolver-owned mutation
+intent and generator-owned operation editing. `InsertGateMutationFactory`
+remains available for existing insert-only integrations.
+
 ## Mutation Model
 
 A mutation policy is declarative configuration. It includes or can include:

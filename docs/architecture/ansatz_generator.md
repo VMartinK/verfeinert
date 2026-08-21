@@ -21,6 +21,8 @@ The generator provides:
 - Sanz19 reference-template candidate construction;
 - deterministic structural and lineage identity;
 - pure structural mutation primitives;
+- public canonical mutation factories for insert, replace, remove, swap,
+  reorder, and layer propagation;
 - metadata-only candidate compilation;
 - staged metadata packages under caller-provided output roots;
 - optional callable-source generation without import or execution.
@@ -51,6 +53,20 @@ gates, allowed inserted gates, and directed or undirected two-qubit edges.
 
 `LineageRecord` and `CandidateRecord` are small provenance and representation
 records suitable for later analyzer, evolver, and visualization use.
+
+## Mutation Factories
+
+`InsertGateMutationFactory` remains the compatibility factory for configured
+insert-gate mutations. `CanonicalMutationFactory` is the campaign-neutral
+factory for evolver mutation requests. It accepts JSON-safe mutation requests
+for `insert`, `replace`, `remove`, `swap`, `reorder`, and
+`layer_propagation`, edits canonical Candidate JSON through generator-owned
+operation logic, records explicit `mutation_status` / `no_op_status`
+metadata, preserves root/parent/generation lineage, and validates any supplied
+`ConstraintSet` before returning a child Candidate.
+
+The evolver owns mutation intent and scheduling; the generator owns concrete
+operation edits and structural validity.
 
 ## Candidate Lifecycle
 
