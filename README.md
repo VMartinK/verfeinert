@@ -43,7 +43,7 @@ verfeinert
 From a GitHub release wheel once downloaded:
 
 ```bash
-python -m pip install ./verfeinert-0.3.1-py3-none-any.whl
+python -m pip install ./verfeinert-0.3.2-py3-none-any.whl
 ```
 
 From a repository checkout:
@@ -256,7 +256,9 @@ separate fields in the resulting `ComparisonResult`.
 Visualization is optional and consumes persisted or derived artifacts. It uses
 campaign-neutral publication-grade `DEFAULT_STYLE`; display aliases are explicit
 presentation metadata and
-never change canonical candidate IDs.
+never change canonical candidate IDs. Objective-space publication plots default
+to generic `T(H)` trainability and expressibility labels with opaque legends
+above plotted data.
 
 Legacy `stages` declarations are normalized into the same internal plan. If
 both legacy and structured workflow declarations are supplied, conflicting

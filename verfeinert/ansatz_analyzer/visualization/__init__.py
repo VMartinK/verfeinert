@@ -34,9 +34,17 @@ from .individual import (
     plot_individual_pareto_by_lineage,
 )
 from .lineage import lineage_plot_data, plot_lineage_summary
+from .labels import (
+    PUBLICATION_EXPRESSIBILITY_LABEL,
+    PUBLICATION_TRAINABILITY_LABEL,
+    publication_objective_label,
+)
 from .models import BarSeries, MetricSeries, ObjectivePoint, ObjectiveSeries, TableSpec, VisualizationModelError
 from .pareto import pareto_plot_data, plot_pareto_front
 from .primitives import (
+    BAR_HEADROOM_FACTOR,
+    PUBLICATION_LEGEND_ZORDER,
+    apply_bar_headroom,
     apply_publication_legend,
     grouped_categorical_bars,
     ordered_lineage_color_map,
@@ -48,6 +56,7 @@ from .primitives import (
     resolve_role_style,
     scatter_objective_series,
     setup_publication_objective_axis,
+    style_publication_legend,
 )
 from .ranking import plot_ranking_scores, ranking_plot_data
 from .styles import DEFAULT_STYLE, PublicationLayouts, SemanticRoleStyle, VisualizationStyle
@@ -61,12 +70,17 @@ __all__ = [
     "MetricPanelSpec",
     "ObjectivePoint",
     "ObjectiveSeries",
+    "PUBLICATION_EXPRESSIBILITY_LABEL",
+    "PUBLICATION_LEGEND_ZORDER",
+    "PUBLICATION_TRAINABILITY_LABEL",
     "PublicationLayouts",
     "SemanticRoleStyle",
     "TableSpec",
     "VisualizationDependencyError",
     "VisualizationModelError",
     "VisualizationStyle",
+    "BAR_HEADROOM_FACTOR",
+    "apply_bar_headroom",
     "apply_publication_legend",
     "comparison_plot_data",
     "evolution_plot_data",
@@ -99,6 +113,7 @@ __all__ = [
     "plot_individual_pareto_by_lineage",
     "plot_lineage_summary",
     "plot_pareto_front",
+    "publication_objective_label",
     "plot_publication_table",
     "plot_ranking_scores",
     "publication_table_figure_size",
@@ -110,4 +125,5 @@ __all__ = [
     "save_publication_figure",
     "scatter_objective_series",
     "setup_publication_objective_axis",
+    "style_publication_legend",
 ]

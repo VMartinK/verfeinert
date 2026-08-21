@@ -9,7 +9,12 @@ from typing import Any
 from ..collections import AnalysisResultCollection, cost_value, metric_value
 from .export import require_pyplot
 from .models import BarSeries, MetricSeries, ObjectivePoint, ObjectiveSeries, TableSpec, VisualizationModelError
-from .primitives import ordered_lineage_color_map, plot_publication_table, setup_publication_objective_axis
+from .primitives import (
+    ordered_lineage_color_map,
+    plot_publication_table,
+    setup_publication_objective_axis,
+    style_publication_legend,
+)
 from .styles import DEFAULT_STYLE, VisualizationStyle
 
 
@@ -88,7 +93,7 @@ def plot_generation_metric_grid(
     axes = tuple(axes_array.flat)
     for axis, panel in zip(axes, resolved):
         _plot_metric_lines(axis, panel.series, style=style)
-        axis.set_title(panel.title, fontsize=style.title_size)
+        axis.set_title("")
         setup_publication_objective_axis(axis, xlabel=x_label, ylabel=panel.y_label, style=style)
     _shared_figure_legend(figure, axes[0], style=style)
     return figure
@@ -100,19 +105,24 @@ def plot_frontier_evolution(
     *,
     x_label: str | None = None,
     y_label: str | None = None,
+    threshold_color: str | None = None,
     style: VisualizationStyle = DEFAULT_STYLE,
 ):
     """Render prepared frontier series by prepared generation order for one threshold."""
     del threshold
     pyplot = require_pyplot()
     figure, axis = pyplot.subplots(figsize=style.layouts.standard, dpi=style.dpi)
-    for index, frontier in enumerate(frontiers):
+    color = threshold_color or _cycle(style.frontier_colors, 0)
+    resolved = tuple(frontiers)
+    count = len(resolved)
+    for index, frontier in enumerate(resolved):
         axis.plot(
             _x(frontier),
             _y(frontier),
             marker="o",
             markersize=5.0,
-            color=_cycle(style.frontier_colors, index),
+            color=color,
+            alpha=_generation_alpha(index, count),
             linewidth=1.9,
             zorder=6,
             label=frontier.label,
@@ -137,7 +147,13 @@ def plot_frontier_generation_comparison(
     """Render a prepared generation-to-generation frontier comparison."""
     del threshold
     pyplot = require_pyplot()
-    figure, axes_array = pyplot.subplots(1, 2, figsize=style.layouts.standard, dpi=style.dpi)
+    figure, axes_array = pyplot.subplots(
+        1,
+        2,
+        figsize=style.layouts.standard,
+        dpi=style.dpi,
+        gridspec_kw={"width_ratios": (1, 1), "wspace": 0.24},
+    )
     axes = tuple(axes_array)
     panel_titles = ("Previous frontier", "Current frontier" if generation is None else f"Generation {generation}")
     for axis, title in zip(axes, panel_titles):
@@ -174,6 +190,7 @@ def plot_frontier_generation_comparison(
     _scatter_improvement_points(axes[1], improvement_points, style=style)
     for axis in axes:
         _axis_legend(axis, style=style)
+    _add_panel_separator(figure, axes, pyplot=pyplot, style=style)
     return figure
 
 
@@ -254,7 +271,7 @@ def plot_evolution_by_layer(
             label=frontier.label,
         )
     setup_publication_objective_axis(axis, xlabel=x_label, ylabel=y_label, style=style)
-    axis.legend(frameon=False, ncol=2, fontsize=style.legend_size)
+    _axis_legend(axis, style=style)
     return figure
 
 
@@ -320,33 +337,62 @@ def _shared_figure_legend(figure, source_axis, *, style: VisualizationStyle) -> 
     handles, labels = source_axis.get_legend_handles_labels()
     if not handles:
         return
-    figure.legend(
+    figure.subplots_adjust(top=0.84)
+    legend = figure.legend(
         handles,
         labels,
-        loc="upper center",
+        loc="upper right",
+        bbox_to_anchor=(0.985, 0.985),
         ncol=max(1, len(labels)),
         frameon=style.legend_frame,
-        framealpha=style.legend_framealpha,
+        framealpha=1.0,
         edgecolor=style.legend_edgecolor,
         fancybox=style.legend_fancybox,
         fontsize=style.legend_size,
     )
+    style_publication_legend(legend, style=style)
 
 
 def _axis_legend(axis, *, style: VisualizationStyle) -> None:
     handles, labels = axis.get_legend_handles_labels()
     if not handles:
         return
-    axis.legend(
+    legend = axis.legend(
         handles,
         labels,
         loc=style.legend_location,
         frameon=style.legend_frame,
-        framealpha=style.legend_framealpha,
+        framealpha=1.0,
         edgecolor=style.legend_edgecolor,
         fancybox=style.legend_fancybox,
         fontsize=style.legend_size,
     )
+    style_publication_legend(legend, style=style)
+
+
+def _generation_alpha(index: int, count: int) -> float:
+    if count <= 1:
+        return 1.0
+    return 0.25 + (0.75 * index / (count - 1))
+
+
+def _add_panel_separator(figure, axes: tuple[Any, Any], *, pyplot, style: VisualizationStyle) -> None:
+    left_position = axes[0].get_position()
+    right_position = axes[1].get_position()
+    x = (left_position.x1 + right_position.x0) / 2.0
+    y0 = min(left_position.y0, right_position.y0)
+    y1 = max(left_position.y1, right_position.y1)
+    separator = pyplot.Line2D(
+        [x, x],
+        [y0, y1],
+        transform=figure.transFigure,
+        color=style.legend_edgecolor,
+        linewidth=0.85,
+        alpha=0.75,
+        zorder=4,
+    )
+    separator.set_gid("verfeinert-panel-separator")
+    figure.add_artist(separator)
 
 
 def _scatter_improvement_points(axis, series: ObjectiveSeries, *, style: VisualizationStyle) -> None:

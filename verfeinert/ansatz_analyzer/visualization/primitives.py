@@ -7,8 +7,12 @@ import colorsys
 import hashlib
 from typing import Any
 
+from .labels import PUBLICATION_EXPRESSIBILITY_LABEL, PUBLICATION_TRAINABILITY_LABEL
 from .models import BarSeries, ObjectiveSeries, TableSpec, VisualizationModelError
 from .styles import DEFAULT_STYLE, SemanticRoleStyle, VisualizationStyle
+
+PUBLICATION_LEGEND_ZORDER = 1000
+BAR_HEADROOM_FACTOR = 1.18
 
 
 def setup_publication_objective_axis(
@@ -20,6 +24,10 @@ def setup_publication_objective_axis(
     grid: bool = True,
 ):
     """Apply shared publication objective-axis styling to an existing axis."""
+    if xlabel is None:
+        xlabel = PUBLICATION_TRAINABILITY_LABEL
+    if ylabel is None:
+        ylabel = PUBLICATION_EXPRESSIBILITY_LABEL
     if xlabel is not None:
         axis.set_xlabel(xlabel, fontsize=style.label_size)
     if ylabel is not None:
@@ -189,10 +197,37 @@ def apply_publication_legend(
     }
     options.update(legend_kwargs)
     legend = axis.legend(handles, labels, **options)
+    return style_publication_legend(legend, style=style)
+
+
+def style_publication_legend(
+    legend,
+    *,
+    style: VisualizationStyle = DEFAULT_STYLE,
+    zorder: int = PUBLICATION_LEGEND_ZORDER,
+):
+    """Apply opaque/high-zorder publication legend styling to an existing legend."""
+    if legend is None:
+        return None
+    legend.set_zorder(zorder)
     frame = legend.get_frame()
     frame.set_edgecolor(style.legend_edgecolor)
-    frame.set_alpha(style.legend_framealpha)
+    frame.set_alpha(1.0)
+    frame.set_facecolor(style.facecolor)
     return legend
+
+
+def apply_bar_headroom(
+    axis,
+    values: Sequence[float],
+    *,
+    factor: float = BAR_HEADROOM_FACTOR,
+) -> None:
+    """Reserve deterministic y-axis headroom above prepared bar values."""
+    finite_values = [float(value) for value in values if value is not None]
+    maximum = max(finite_values, default=0.0)
+    top = 1.0 if maximum <= 0.0 else maximum * float(factor)
+    axis.set_ylim(0.0, top)
 
 
 def publication_table_figure_size(
@@ -289,6 +324,9 @@ def _rgb_hex(red: float, green: float, blue: float) -> str:
 
 
 __all__ = [
+    "BAR_HEADROOM_FACTOR",
+    "PUBLICATION_LEGEND_ZORDER",
+    "apply_bar_headroom",
     "apply_publication_legend",
     "grouped_categorical_bars",
     "ordered_lineage_color_map",
@@ -300,4 +338,5 @@ __all__ = [
     "resolve_role_style",
     "scatter_objective_series",
     "setup_publication_objective_axis",
+    "style_publication_legend",
 ]

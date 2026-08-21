@@ -7,6 +7,7 @@ from typing import Any
 from ..collections import AnalysisResultCollection, cost_value, metric_value
 from ..pareto import ParetoResult
 from .export import require_pyplot
+from .labels import publication_objective_label
 from .primitives import apply_publication_legend, setup_publication_objective_axis
 from .styles import DEFAULT_STYLE, VisualizationStyle
 
@@ -108,11 +109,7 @@ def _pareto_rank(document: dict[str, Any]) -> int | None:
 
 
 def _axis_label(metric_name: str) -> str:
-    if metric_name == "trainability":
-        return "Trainability\nT = (1/|P|) sum Var[d<H>/dtheta]"
-    if metric_name == "expressibility":
-        return "Expressibility\nE = -log10(D_KL)"
-    return metric_name.replace("_", " ").title()
+    return publication_objective_label(metric_name)
 
 
 __all__ = [

@@ -6,7 +6,7 @@ from importlib import metadata
 
 
 PACKAGE_NAME = "verfeinert"
-SOURCE_TREE_VERSION = "0.3.1"
+SOURCE_TREE_VERSION = "0.3.2"
 
 
 def runtime_version(

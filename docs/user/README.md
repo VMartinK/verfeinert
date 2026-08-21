@@ -9,7 +9,7 @@ These guides describe reproducible researcher workflows built on public
 From a GitHub release wheel once downloaded:
 
 ```bash
-python -m pip install ./verfeinert-0.3.1-py3-none-any.whl
+python -m pip install ./verfeinert-0.3.2-py3-none-any.whl
 ```
 
 From a repository checkout:
@@ -177,6 +177,8 @@ and remains optional via
 the `visualization` extra. Plot data adapters can be used independently from
 figure export. Plotting calls fail with a clear optional-dependency error when
 Matplotlib is unavailable.
+Objective-space publication plots default to generic `T(H)` trainability and
+expressibility labels, and publication legends use opaque frames above data.
 
 Broad arbitrary external CSV import is deferred. CSV export for canonical and
 derived Verfeinert artifacts is part of the standard workflow surface.

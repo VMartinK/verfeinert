@@ -7,7 +7,7 @@ from typing import Any
 
 from .export import require_pyplot
 from .models import BarSeries, ObjectivePoint, ObjectiveSeries, VisualizationModelError
-from .primitives import ordered_lineage_color_map, setup_publication_objective_axis
+from .primitives import ordered_lineage_color_map, setup_publication_objective_axis, style_publication_legend
 from .styles import DEFAULT_STYLE, VisualizationStyle
 
 
@@ -235,7 +235,7 @@ def plot_individual_by_layer(
             label=frontier.label,
         )
     setup_publication_objective_axis(axis, xlabel=x_label, ylabel=y_label, style=style)
-    axis.legend(frameon=False, ncol=2, fontsize=style.legend_size)
+    _legend_from_axis(axis, style=style, ncol=2)
     return figure
 
 
@@ -310,9 +310,10 @@ def plot_individual_by_lineage(
             edgecolor=style.legend_edgecolor,
             fancybox=style.legend_fancybox,
         )
+        style_publication_legend(reference_legend, style=style)
         axis.add_artist(reference_legend)
     if lineage_handles:
-        axis.legend(
+        lineage_legend = axis.legend(
             lineage_handles,
             lineage_labels,
             loc="upper right",
@@ -329,6 +330,7 @@ def plot_individual_by_lineage(
             fancybox=style.legend_fancybox,
             ncol=2 if len(lineage_labels) > 8 else 1,
         )
+        style_publication_legend(lineage_legend, style=style)
     return figure
 
 
@@ -437,7 +439,7 @@ def _apply_legend(
     ordered_labels = [label for label in labels if label in handles]
     if not ordered_labels:
         return
-    axis.legend(
+    legend = axis.legend(
         [handles[label] for label in ordered_labels],
         ordered_labels,
         loc=style.legend_location,
@@ -448,6 +450,7 @@ def _apply_legend(
         fontsize=style.legend_size,
         **kwargs,
     )
+    style_publication_legend(legend, style=style)
 
 
 def _legend_from_axis(axis, *, style: VisualizationStyle, **kwargs) -> None:
@@ -455,7 +458,7 @@ def _legend_from_axis(axis, *, style: VisualizationStyle, **kwargs) -> None:
     handles_and_labels = [(handle, label) for handle, label in zip(handles, labels) if label]
     if not handles_and_labels:
         return
-    axis.legend(
+    legend = axis.legend(
         [item[0] for item in handles_and_labels],
         [item[1] for item in handles_and_labels],
         loc=style.legend_location,
@@ -466,6 +469,7 @@ def _legend_from_axis(axis, *, style: VisualizationStyle, **kwargs) -> None:
         fontsize=style.legend_size,
         **kwargs,
     )
+    style_publication_legend(legend, style=style)
 
 
 def _required_values(series: BarSeries) -> list[float]:

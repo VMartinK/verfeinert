@@ -3,11 +3,18 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
+import warnings
 from typing import Any
 
 from .export import require_pyplot
 from .models import BarSeries, ObjectivePoint, ObjectiveSeries, TableSpec, VisualizationModelError
-from .primitives import ordered_lineage_color_map, plot_publication_table, setup_publication_objective_axis
+from .primitives import (
+    apply_bar_headroom,
+    ordered_lineage_color_map,
+    plot_publication_table,
+    setup_publication_objective_axis,
+    style_publication_legend,
+)
 from .styles import DEFAULT_STYLE, VisualizationStyle
 
 
@@ -84,24 +91,23 @@ def plot_campaign_frontiers(
     pyplot = require_pyplot()
     figure, axis = pyplot.subplots(figsize=style.layouts.global_wide, dpi=style.dpi)
     colorbar = None
-    if score_points is not None and score_points.points:
-        scatter = axis.scatter(
-            _x(score_points),
-            _y(score_points),
-            c=_required_scores(score_points.points),
-            cmap=style.score_colormap,
-            s=22,
-            alpha=0.82,
-            edgecolors="none",
-            zorder=5,
-            label=score_points.label,
+    if score_points is not None:
+        warnings.warn(
+            "score_points is deprecated for campaign frontier coloring; "
+            "supply prepared aggregate scores with ObjectiveSeries.score.",
+            DeprecationWarning,
+            stacklevel=2,
         )
-        colorbar = figure.colorbar(scatter, ax=axis, fraction=0.022, pad=0.018)
-        colorbar.set_label(score_points.label or "Score")
+    campaign_scores = [
+        frontier.score
+        for frontier in campaign_frontiers
+        if not _is_reference_frontier(frontier) and frontier.score is not None
+    ]
+    color_mapper = _score_color_mapper(pyplot, campaign_scores, style=style) if campaign_scores else None
     normal_index = 0
     reference_index = 0
     for frontier in campaign_frontiers:
-        if frontier.role in {"reference", "baseline", "reference_frontier"}:
+        if _is_reference_frontier(frontier):
             axis.plot(
                 _x(frontier),
                 _y(frontier),
@@ -116,19 +122,27 @@ def plot_campaign_frontiers(
             )
             reference_index += 1
         else:
+            frontier_color = (
+                color_mapper(frontier.score)
+                if color_mapper is not None and frontier.score is not None
+                else _cycle(style.frontier_colors, normal_index)
+            )
             axis.plot(
                 _x(frontier),
                 _y(frontier),
                 linestyle="-",
                 marker="o",
                 markersize=3.6,
-                color=_cycle(style.frontier_colors, normal_index),
+                color=frontier_color,
                 linewidth=1.35,
                 alpha=0.95,
                 zorder=5,
                 label=frontier.label,
             )
             normal_index += 1
+    if color_mapper is not None:
+        colorbar = figure.colorbar(color_mapper.mappable, ax=axis, fraction=0.022, pad=0.018)
+        colorbar.set_label("Mean combined score")
     axis.plot(
         _x(global_frontier),
         _y(global_frontier),
@@ -148,15 +162,16 @@ def plot_campaign_frontiers(
         label="_nolegend_",
     )
     setup_publication_objective_axis(axis, xlabel=x_label, ylabel=y_label, style=style)
-    axis.legend(
+    legend = axis.legend(
         loc="upper right",
         fontsize=7.5,
         frameon=True,
         fancybox=False,
-        framealpha=0.94,
+        framealpha=1.0,
         edgecolor=style.legend_edgecolor,
         handlelength=2.5,
     )
+    style_publication_legend(legend, style=style)
     figure._verfeinert_colorbar = colorbar  # type: ignore[attr-defined]
     return figure
 
@@ -342,14 +357,30 @@ def plot_global_lineages(
     left_axis.set_yticks(positions)
     left_axis.set_yticklabels(eligible_counts.categories)
     left_axis.set_xlabel("Candidates")
-    left_axis.legend(
+    handles, labels = left_axis.get_legend_handles_labels()
+    handles.append(
+        pyplot.Line2D(
+            [],
+            [],
+            linestyle="None",
+            marker="$1$",
+            markersize=9,
+            color="#202020",
+            label="Bold number = Global-frontier members",
+        ),
+    )
+    labels.append("Bold number = Global-frontier members")
+    left_legend = left_axis.legend(
+        handles,
+        labels,
         loc="lower right",
         fontsize=10,
         frameon=True,
         fancybox=False,
-        framealpha=style.legend_framealpha,
+        framealpha=1.0,
         edgecolor=style.legend_edgecolor,
     )
+    style_publication_legend(left_legend, style=style)
 
     for lineage_id in lineage_order:
         points = [point for point in selected_lineage_points.points if point.lineage_id == lineage_id]
@@ -373,6 +404,14 @@ def plot_global_lineages(
         label=global_frontier.label,
     )
     setup_publication_objective_axis(right_axis, xlabel=x_label, ylabel=y_label, style=style)
+    _axis_legend(
+        right_axis,
+        style=style,
+        fontsize=8,
+        ncol=2 if len(lineage_order) > 5 else 1,
+        handletextpad=0.4,
+        columnspacing=0.7,
+    )
     return figure
 
 
@@ -403,8 +442,10 @@ def _plot_grouped_bars(
     width = 0.8
     slot_width = width / group_count
     base_positions = list(range(len(categories)))
+    all_values: list[float] = []
     for series_index, series in enumerate(resolved):
         values = _required_values(series)
+        all_values.extend(values)
         offset = (series_index - (group_count - 1) / 2.0) * slot_width
         axis.bar(
             [position + offset for position in base_positions],
@@ -416,22 +457,52 @@ def _plot_grouped_bars(
         )
     axis.set_xticks(base_positions)
     axis.set_xticklabels(categories, rotation=rotation, ha=ha)
+    apply_bar_headroom(axis, all_values)
 
 
-def _axis_legend(axis, *, style: VisualizationStyle) -> None:
+def _axis_legend(axis, *, style: VisualizationStyle, **legend_kwargs) -> None:
     handles, labels = axis.get_legend_handles_labels()
     if not handles:
         return
-    axis.legend(
+    options = {
+        "loc": style.legend_location,
+        "frameon": style.legend_frame,
+        "framealpha": 1.0,
+        "edgecolor": style.legend_edgecolor,
+        "fancybox": style.legend_fancybox,
+        "fontsize": style.legend_size,
+    }
+    options.update(legend_kwargs)
+    legend = axis.legend(
         handles,
         labels,
-        loc=style.legend_location,
-        frameon=style.legend_frame,
-        framealpha=style.legend_framealpha,
-        edgecolor=style.legend_edgecolor,
-        fancybox=style.legend_fancybox,
-        fontsize=style.legend_size,
+        **options,
     )
+    style_publication_legend(legend, style=style)
+
+
+def _is_reference_frontier(frontier: ObjectiveSeries) -> bool:
+    return frontier.role in {"reference", "baseline", "reference_frontier"}
+
+
+def _score_color_mapper(pyplot, scores: Sequence[float], *, style: VisualizationStyle):
+    minimum = min(scores)
+    maximum = max(scores)
+    if minimum == maximum:
+        minimum -= 0.5
+        maximum += 0.5
+    normalizer = pyplot.Normalize(vmin=minimum, vmax=maximum)
+    colormap = pyplot.get_cmap(style.score_colormap)
+    mappable = pyplot.matplotlib.cm.ScalarMappable(norm=normalizer, cmap=colormap)
+    mappable.set_array(list(scores))
+
+    def color(score: float | None):
+        if score is None:
+            return _cycle(style.frontier_colors, 0)
+        return colormap(normalizer(score))
+
+    color.mappable = mappable  # type: ignore[attr-defined]
+    return color
 
 
 def _required_values(series: BarSeries) -> list[float]:

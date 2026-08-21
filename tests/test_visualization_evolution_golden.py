@@ -31,6 +31,9 @@ from verfeinert.ansatz_analyzer.visualization import (
     MetricSeries,
     ObjectivePoint,
     ObjectiveSeries,
+    PUBLICATION_EXPRESSIBILITY_LABEL,
+    PUBLICATION_LEGEND_ZORDER,
+    PUBLICATION_TRAINABILITY_LABEL,
     TableSpec,
     plot_evolution_by_layer,
     plot_evolution_ranking_table,
@@ -73,11 +76,17 @@ def _coords(collection) -> list[tuple[float, float]]:
 
 def _metric_panels(suffix: str) -> tuple[MetricPanelSpec, ...]:
     return (
-        MetricPanelSpec(f"Combined score {suffix}", "Combined score", (_metric("0.1", (1.0, 1.1, 1.2)), _metric("0.2", (1.3, 1.4, 1.5)))),
-        MetricPanelSpec(f"Expressibility {suffix}", "Expressibility", (_metric("0.1", (2.0, 2.1, 2.2)), _metric("0.2", (2.3, 2.4, 2.5)))),
-        MetricPanelSpec(f"Trainability {suffix}", "Trainability", (_metric("0.1", (3.0, 3.1, 3.2)), _metric("0.2", (3.3, 3.4, 3.5)))),
-        MetricPanelSpec(f"Structural cost {suffix}", "Structural cost", (_metric("0.1", (4.0, 4.1, 4.2)), _metric("0.2", (4.3, 4.4, 4.5)))),
+        MetricPanelSpec(f"Combined score {suffix}", "Mean combined score", (_metric("0.1", (1.0, 1.1, 1.2)), _metric("0.2", (1.3, 1.4, 1.5)))),
+        MetricPanelSpec(f"Expressibility {suffix}", "Mean expressibility", (_metric("0.1", (2.0, 2.1, 2.2)), _metric("0.2", (2.3, 2.4, 2.5)))),
+        MetricPanelSpec(f"Trainability {suffix}", "Mean trainability", (_metric("0.1", (3.0, 3.1, 3.2)), _metric("0.2", (3.3, 3.4, 3.5)))),
+        MetricPanelSpec(f"Structural cost {suffix}", "Mean structural cost", (_metric("0.1", (4.0, 4.1, 4.2)), _metric("0.2", (4.3, 4.4, 4.5)))),
     )
+
+
+def _assert_publication_legend(legend) -> None:
+    assert legend.get_zorder() >= PUBLICATION_LEGEND_ZORDER
+    frame = legend.get_frame()
+    assert frame.get_alpha() == 1.0
 
 
 def test_e1_generation_candidate_counts_uses_two_panel_layout_and_shared_legend() -> None:
@@ -92,6 +101,8 @@ def test_e1_generation_candidate_counts_uses_two_panel_layout_and_shared_legend(
     assert list(figure.axes[0].lines[0].get_xdata()) == [0, 1, 2]
     assert list(figure.axes[0].lines[0].get_ydata()) == [3.0, 5.0, 8.0]
     assert [text.get_text() for text in figure.legends[0].get_texts()] == ["0.1", "0.2"]
+    assert figure.legends[0]._loc == 1
+    _assert_publication_legend(figure.legends[0])
     pyplot.close(figure)
 
 
@@ -100,14 +111,17 @@ def test_e2_generation_metric_grid_total_population_contract() -> None:
 
     _assert_size(figure, (8.0, 4.5))
     assert len(figure.axes) == 4
-    assert [axis.get_title() for axis in figure.axes] == [
-        "Combined score total",
-        "Expressibility total",
-        "Trainability total",
-        "Structural cost total",
+    assert [axis.get_title() for axis in figure.axes] == ["", "", "", ""]
+    assert [axis.get_ylabel() for axis in figure.axes] == [
+        "Mean combined score",
+        "Mean expressibility",
+        "Mean trainability",
+        "Mean structural cost",
     ]
     assert list(figure.axes[0].lines[1].get_ydata()) == [1.3, 1.4, 1.5]
     assert [text.get_text() for text in figure.legends[0].get_texts()] == ["0.1", "0.2"]
+    assert figure.legends[0]._loc == 1
+    _assert_publication_legend(figure.legends[0])
     pyplot.close(figure)
 
 
@@ -115,7 +129,8 @@ def test_e3_generation_metric_grid_generation_local_pareto_contract() -> None:
     figure = plot_generation_metric_grid(_metric_panels("local Pareto"))
 
     assert len(figure.axes) == 4
-    assert figure.axes[1].get_ylabel() == "Expressibility"
+    assert [axis.get_title() for axis in figure.axes] == ["", "", "", ""]
+    assert figure.axes[1].get_ylabel() == "Mean expressibility"
     assert list(figure.axes[2].lines[0].get_xdata()) == [0, 1, 2]
     assert list(figure.axes[2].lines[0].get_ydata()) == [3.0, 3.1, 3.2]
     pyplot.close(figure)
@@ -125,25 +140,40 @@ def test_e4_generation_metric_grid_optimized_frontier_contract() -> None:
     figure = plot_generation_metric_grid(_metric_panels("optimized frontier"))
 
     assert len(figure.axes) == 4
-    assert figure.axes[3].get_ylabel() == "Structural cost"
+    assert [axis.get_title() for axis in figure.axes] == ["", "", "", ""]
+    assert figure.axes[3].get_ylabel() == "Mean structural cost"
     assert list(figure.axes[3].lines[1].get_ydata()) == [4.3, 4.4, 4.5]
     pyplot.close(figure)
 
 
-def test_e5_frontier_evolution_preserves_prepared_generation_order() -> None:
+def test_e5_frontier_evolution_uses_threshold_color_and_generation_alpha() -> None:
     frontiers = (
         _series("generation 0", (_point("g0a", 0.1, 1.0), _point("g0b", 0.2, 1.1))),
         _series("generation 1", (_point("g1a", 0.3, 1.4), _point("g1b", 0.5, 1.8))),
+        _series("generation 2", (_point("g2a", 0.4, 1.5), _point("g2b", 0.6, 1.9))),
     )
 
-    figure = plot_frontier_evolution(frontiers, 0.2)
+    figure = plot_frontier_evolution(frontiers, 0.2, threshold_color="#123456")
     axis = figure.axes[0]
 
     _assert_size(figure, (8.0, 4.5))
-    assert len(axis.lines) == 2
+    assert len(axis.lines) == 3
     assert list(axis.lines[1].get_xdata()) == [0.3, 0.5]
     assert list(axis.lines[1].get_ydata()) == [1.4, 1.8]
+    assert [to_hex(line.get_color()) for line in axis.lines] == ["#123456", "#123456", "#123456"]
+    alphas = [line.get_alpha() for line in axis.lines]
+    assert alphas == sorted(alphas)
+    assert alphas[-1] == max(alphas)
+    assert alphas[-1] == 1.0
+    assert axis.get_xlabel() == PUBLICATION_TRAINABILITY_LABEL
+    assert axis.get_ylabel() == PUBLICATION_EXPRESSIBILITY_LABEL
+    _assert_publication_legend(axis.get_legend())
     assert axis.get_title() == ""
+
+    other = plot_frontier_evolution(frontiers, 0.2, threshold_color="#654321")
+    assert [line.get_alpha() for line in other.axes[0].lines] == alphas
+    assert to_hex(other.axes[0].lines[0].get_color()) == "#654321"
+    pyplot.close(other)
     pyplot.close(figure)
 
 
@@ -164,11 +194,17 @@ def test_e6_frontier_generation_comparison_uses_preclassified_improvement_points
     _assert_size(figure, (8.0, 4.5))
     assert len(figure.axes) == 2
     assert [axis.get_title() for axis in figure.axes] == ["Previous frontier", "Generation 2"]
+    assert figure._suptitle is None
+    assert round(figure.axes[0].get_position().width, 6) == round(figure.axes[1].get_position().width, 6)
+    assert round(figure.axes[0].get_position().height, 6) == round(figure.axes[1].get_position().height, 6)
+    assert len([artist for artist in figure.artists if artist.get_gid() == "verfeinert-panel-separator"]) == 1
     assert len(figure.axes[0].lines) == 2
     assert len(figure.axes[1].collections) == 2
     assert _coords(figure.axes[1].collections[0]) == [(0.35, 1.5)]
     assert _coords(figure.axes[1].collections[1]) == [(0.45, 1.8)]
     assert figure.axes[1].collections[1].get_sizes()[0] == 78
+    _assert_publication_legend(figure.axes[0].get_legend())
+    _assert_publication_legend(figure.axes[1].get_legend())
     pyplot.close(figure)
 
 
@@ -184,6 +220,7 @@ def test_e7_final_frontier_vs_eligible_draws_only_prepared_background_and_fronti
     assert _coords(axis.collections[0]) == [(0.1, 1.0), (0.2, 1.2)]
     assert len(axis.lines) == 1
     assert list(axis.lines[0].get_xdata()) == [0.3, 0.4]
+    _assert_publication_legend(axis.get_legend())
     assert axis.get_title() == ""
     pyplot.close(figure)
 
@@ -207,6 +244,7 @@ def test_e8_evolution_by_layer_preserves_layer_semantics_and_final_frontiers() -
     assert _coords(axis.collections[1]) == [(0.1, 1.0), (0.3, 1.4)]
     assert len(axis.lines) == 1
     assert axis.lines[0].get_linewidth() == 1.55
+    _assert_publication_legend(axis.get_legend())
     pyplot.close(figure)
 
 

@@ -21,6 +21,8 @@ from verfeinert.ansatz_analyzer.visualization import (
     MetricSeries,
     ObjectivePoint,
     ObjectiveSeries,
+    PUBLICATION_EXPRESSIBILITY_LABEL,
+    PUBLICATION_TRAINABILITY_LABEL,
     TableSpec,
     VisualizationDependencyError,
     VisualizationModelError,
@@ -45,6 +47,7 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 VISUALIZATION_ROOT = PROJECT_ROOT / "verfeinert" / "ansatz_analyzer" / "visualization"
 FOUNDATION_VISUALIZATION_MODULES = (
     VISUALIZATION_ROOT / "models.py",
+    VISUALIZATION_ROOT / "labels.py",
     VISUALIZATION_ROOT / "primitives.py",
     VISUALIZATION_ROOT / "export.py",
     VISUALIZATION_ROOT / "styles" / "default.py",
@@ -402,8 +405,8 @@ class AnalyzerPhase57VisualizationTests(unittest.TestCase):
 
             self.assertTrue(saved.is_file())
             self.assertTrue(lineage_saved.is_file())
-            self.assertEqual(figure.axes[0].get_xlabel().splitlines()[0], "Trainability")
-            self.assertEqual(figure.axes[0].get_ylabel().splitlines()[0], "Expressibility")
+            self.assertEqual(figure.axes[0].get_xlabel(), PUBLICATION_TRAINABILITY_LABEL)
+            self.assertEqual(figure.axes[0].get_ylabel(), PUBLICATION_EXPRESSIBILITY_LABEL)
 
     def test_save_figure_uses_guarded_caller_output_path(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

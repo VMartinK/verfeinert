@@ -12,12 +12,10 @@ matplotlib.use("Agg")
 from matplotlib import pyplot
 
 from verfeinert.ansatz_analyzer.visualization import (
-    BarSeries,
-    MetricSeries,
     ObjectivePoint,
     ObjectiveSeries,
-    plot_generation_candidate_counts,
-    plot_global_aggregate_metric,
+    plot_campaign_frontiers,
+    plot_frontier_evolution,
     plot_individual_classification,
     save_publication_figure,
 )
@@ -59,35 +57,76 @@ def build_individual_figure():
         reference_frontier,
         classified_candidates,
         threshold=0.2,
-        x_label="Prepared objective X",
-        y_label="Prepared objective Y",
     )
 
 
 def build_evolution_figure():
-    generated_counts = (
-        MetricSeries(x=(0, 1, 2, 3), y=(8, 12, 15, 17), label="generated @ 0.2"),
+    frontiers = (
+        ObjectiveSeries(
+            points=(
+                _point("generation-0-a", 0.10, 1.02),
+                _point("generation-0-b", 0.22, 1.20),
+            ),
+            label="generation 0",
+        ),
+        ObjectiveSeries(
+            points=(
+                _point("generation-1-a", 0.14, 1.18),
+                _point("generation-1-b", 0.30, 1.48),
+            ),
+            label="generation 1",
+        ),
+        ObjectiveSeries(
+            points=(
+                _point("generation-2-a", 0.18, 1.34),
+                _point("generation-2-b", 0.42, 1.82),
+            ),
+            label="generation 2",
+        ),
     )
-    selected_counts = (
-        MetricSeries(x=(0, 1, 2, 3), y=(3, 4, 5, 5), label="selected @ 0.2"),
-    )
-    return plot_generation_candidate_counts(generated_counts, selected_counts)
+    return plot_frontier_evolution(frontiers, threshold=0.2, threshold_color="#1565C0")
 
 
 def build_global_figure():
-    metric_bars = (
-        BarSeries(
-            categories=("campaign-a", "campaign-b", "campaign-c"),
-            values=(0.42, 0.55, 0.48),
-            label="threshold 0.2",
+    campaign_frontiers = (
+        ObjectiveSeries(
+            points=(
+                _point("campaign-a-1", 0.12, 1.18),
+                _point("campaign-a-2", 0.26, 1.42),
+                _point("campaign-a-3", 0.44, 1.76),
+            ),
+            role="campaign",
+            label="campaign A",
+            score=0.58,
         ),
-        BarSeries(
-            categories=("campaign-a", "campaign-b", "campaign-c"),
-            values=(0.31, 0.44, 0.37),
-            label="threshold 0.3",
+        ObjectiveSeries(
+            points=(
+                _point("campaign-b-1", 0.16, 1.10),
+                _point("campaign-b-2", 0.32, 1.55),
+                _point("campaign-b-3", 0.50, 1.92),
+            ),
+            role="campaign",
+            label="campaign B",
+            score=0.81,
+        ),
+        ObjectiveSeries(
+            points=(
+                _point("baseline-1", 0.08, 1.00),
+                _point("baseline-2", 0.24, 1.26),
+            ),
+            role="reference",
+            label="baseline",
         ),
     )
-    return plot_global_aggregate_metric(metric_bars, y_label="Prepared aggregate score")
+    global_frontier = ObjectiveSeries(
+        points=(
+            _point("global-1", 0.18, 1.34),
+            _point("global-2", 0.38, 1.68),
+            _point("global-3", 0.56, 2.02),
+        ),
+        label="global optimized",
+    )
+    return plot_campaign_frontiers(campaign_frontiers, global_frontier, threshold=0.2)
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -103,8 +142,8 @@ def main(argv: list[str] | None = None) -> int:
     output_root = args.output_root.expanduser().resolve(strict=False)
     figures = {
         "individual-classification": build_individual_figure(),
-        "evolution-candidate-counts": build_evolution_figure(),
-        "global-aggregate-metric": build_global_figure(),
+        "evolution-frontier-evolution": build_evolution_figure(),
+        "global-campaign-frontiers": build_global_figure(),
     }
 
     written_paths: list[Path] = []

@@ -28,6 +28,7 @@ from verfeinert.ansatz_analyzer.visualization import (
     BarSeries,
     ObjectivePoint,
     ObjectiveSeries,
+    PUBLICATION_LEGEND_ZORDER,
     TableSpec,
     ordered_lineage_color_map,
     plot_campaign_frontiers,
@@ -62,8 +63,14 @@ def _point(
     )
 
 
-def _series(label: str, points: tuple[ObjectivePoint, ...], *, role: str = "series") -> ObjectiveSeries:
-    return ObjectiveSeries(points=points, role=role, label=label)
+def _series(
+    label: str,
+    points: tuple[ObjectivePoint, ...],
+    *,
+    role: str = "series",
+    score: float | None = None,
+) -> ObjectiveSeries:
+    return ObjectiveSeries(points=points, role=role, label=label, score=score)
 
 
 def _assert_size(figure, expected: tuple[float, float]) -> None:
@@ -73,6 +80,34 @@ def _assert_size(figure, expected: tuple[float, float]) -> None:
 
 def _coords(collection) -> list[tuple[float, float]]:
     return [(float(x), float(y)) for x, y in collection.get_offsets()]
+
+
+def _legend_labels(axis) -> list[str]:
+    return [text.get_text() for text in axis.get_legend().get_texts()]
+
+
+def _assert_publication_legend(legend) -> None:
+    assert legend.get_zorder() >= PUBLICATION_LEGEND_ZORDER
+    frame = legend.get_frame()
+    assert frame.get_alpha() == 1.0
+
+
+def test_objective_series_preserves_positional_contract_and_keyword_score() -> None:
+    points = (_point("legacy", 0.1, 1.0),)
+
+    legacy = ObjectiveSeries(points, "series", "legacy label", 0.2, 3, "source-a")
+
+    assert legacy.points == points
+    assert legacy.role == "series"
+    assert legacy.label == "legacy label"
+    assert legacy.threshold == 0.2
+    assert legacy.generation == 3
+    assert legacy.source_id == "source-a"
+    assert legacy.score is None
+
+    scored = ObjectiveSeries(points, "campaign", "campaign label", score=0.75)
+    assert scored.score == 0.75
+    assert scored.to_dict()["score"] == 0.75
 
 
 def test_g_a_global_cost_eligibility_grouped_bars_preserve_campaign_order() -> None:
@@ -92,6 +127,7 @@ def test_g_a_global_cost_eligibility_grouped_bars_preserve_campaign_order() -> N
     assert axis.get_xticklabels()[0].get_rotation() == 45
     assert axis.get_ylabel() == "Eligible circuits"
     assert [text.get_text() for text in axis.get_legend().get_texts()] == ["0.1", "0.2"]
+    _assert_publication_legend(axis.get_legend())
     pyplot.close(figure)
 
 
@@ -119,36 +155,45 @@ def test_g_b_global_pareto_overview_draws_layers_and_global_frontiers_only() -> 
     assert axis.lines[0].get_marker() == "o"
     assert axis.lines[0].get_markersize() == 4.2
     assert axis.lines[0].get_linewidth() == 2.0
+    _assert_publication_legend(axis.get_legend())
     pyplot.close(figure)
 
 
 def test_g_c_campaign_frontiers_include_reference_global_overlay_and_score_colorbar() -> None:
     campaigns = (
-        _series("campaign-a", (_point("a1", 0.1, 1.0), _point("a2", 0.2, 1.2)), role="campaign"),
+        _series("campaign-a", (_point("a1", 0.1, 1.0), _point("a2", 0.2, 1.2)), role="campaign", score=0.35),
+        _series("campaign-b", (_point("c1", 0.15, 1.05), _point("c2", 0.3, 1.3)), role="campaign", score=0.85),
         _series("baseline", (_point("b1", 0.1, 0.9), _point("b2", 0.25, 1.1)), role="reference"),
     )
     global_frontier = _series("global optimized", (_point("g1", 0.3, 1.5), _point("g2", 0.4, 1.8)))
     scores = _series("Prepared score", (_point("s1", 0.2, 1.4, score=0.6), _point("s2", 0.35, 1.7, score=0.9)))
 
-    figure = plot_campaign_frontiers(campaigns, global_frontier, 0.2, score_points=scores)
+    with pytest.warns(DeprecationWarning, match="score_points is deprecated"):
+        figure = plot_campaign_frontiers(campaigns, global_frontier, 0.2, score_points=scores)
     axis = figure.axes[0]
 
     _assert_size(figure, (13.6, 7.65))
     assert len(figure.axes) == 2
     assert figure._verfeinert_colorbar is not None
-    assert len(axis.lines) == 3
+    assert figure._verfeinert_colorbar.ax.get_ylabel() == "Mean combined score"
+    assert len(axis.lines) == 4
     assert axis.lines[0].get_linestyle() == "-"
-    assert axis.lines[1].get_linestyle() == "--"
-    assert axis.lines[2].get_color() == "#000000"
-    assert axis.lines[2].get_linewidth() == 2.6
-    assert len(axis.collections) == 2
+    assert axis.lines[1].get_linestyle() == "-"
+    assert to_hex(axis.lines[0].get_color()) != to_hex(axis.lines[1].get_color())
+    assert axis.lines[2].get_linestyle() == "--"
+    assert axis.lines[3].get_color() == "#000000"
+    assert axis.lines[3].get_linewidth() == 2.6
+    assert len(axis.collections) == 1
     assert axis.collections[-1].get_sizes()[0] == 28
-    assert [text.get_text() for text in axis.get_legend().get_texts()] == [
-        "Prepared score",
+    assert _legend_labels(axis) == [
         "campaign-a",
+        "campaign-b",
         "baseline",
         "global optimized",
     ]
+    assert campaigns[0].score == 0.35
+    assert campaigns[1].score == 0.85
+    _assert_publication_legend(axis.get_legend())
     pyplot.close(figure)
 
 
@@ -178,6 +223,7 @@ def test_g_d_global_pareto_score_map_uses_prepared_roles_and_score_values() -> N
     assert len(axis.lines) == 2
     assert axis.lines[0].get_linestyle() == "--"
     assert axis.lines[1].get_color() == "#000000"
+    _assert_publication_legend(axis.get_legend())
     pyplot.close(figure)
 
 
@@ -195,6 +241,8 @@ def test_g_e_global_aggregate_metric_grouped_bars_preserve_threshold_order() -> 
     assert [patch.get_height() for patch in axis.patches] == [0.6, 0.8, 0.7, 0.9]
     assert [tick.get_text() for tick in axis.get_xticklabels()] == list(categories)
     assert axis.get_ylabel() == "Combined score"
+    assert axis.get_ylim()[1] > 0.9 * 1.15
+    _assert_publication_legend(axis.get_legend())
     pyplot.close(figure)
 
 
@@ -211,6 +259,8 @@ def test_g_e2_global_population_aggregate_metric_uses_same_renderer_contract() -
     assert [patch.get_height() for patch in axis.patches] == [2.0, 3.0, 4.0, 5.0]
     assert axis.get_ylabel() == "Population frontier size"
     assert [text.get_text() for text in axis.get_legend().get_texts()] == ["0.1", "0.2"]
+    assert axis.get_ylim()[1] > 5.0 * 1.15
+    _assert_publication_legend(axis.get_legend())
     pyplot.close(figure)
 
 
@@ -235,6 +285,9 @@ def test_g_g_global_contributions_use_two_shared_x_panels_with_independent_y_lab
     assert axes[1].get_ylabel() == "Global optimized frontier members"
     assert axes[0].get_xticklabels()[0].get_rotation() == 48
     assert [patch.get_height() for patch in axes[1].patches] == [1.0, 2.0, 2.0, 3.0]
+    assert axes[0].get_ylim()[1] > 5.0 * 1.15
+    assert axes[1].get_ylim()[1] > 3.0 * 1.15
+    _assert_publication_legend(axes[0].get_legend())
     pyplot.close(figure)
 
 
@@ -263,10 +316,19 @@ def test_g_h_global_lineages_preserves_lineage_order_and_prepared_counts() -> No
     assert [tick.get_text() for tick in left_axis.get_yticklabels()] == list(lineage_order)
     assert [text.get_text() for text in left_axis.texts] == ["1", "0", "2"]
     assert to_hex(left_axis.patches[0].get_facecolor()) == expected_colors["lineage-b"].lower()
+    assert "Bold number = Global-frontier members" in _legend_labels(left_axis)
+    _assert_publication_legend(left_axis.get_legend())
     assert len(right_axis.collections) == 3
     assert _coords(right_axis.collections[0]) == [(0.1, 1.0)]
     assert len(right_axis.lines) == 1
     assert right_axis.lines[0].get_linewidth() == 2.2
+    assert _legend_labels(right_axis) == [
+        "lineage-b",
+        "lineage-a",
+        "lineage-c",
+        "global optimized",
+    ]
+    _assert_publication_legend(right_axis.get_legend())
     pyplot.close(figure)
 
 
