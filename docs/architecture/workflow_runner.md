@@ -65,13 +65,15 @@ work remains delegated to the owning public module.
 - requested and executed operations;
 - consumed, reused, and produced artifacts;
 - Candidate, StagedPackage, AnalysisResult, EvolutionRun, ComparisonResult,
-  CSV, and visualization paths when produced;
+  CSV, visualization, checkpoint, event-log, manifest, and traceability paths
+  when produced;
 - candidate, analysis, survivor, and rejected IDs;
 - warnings;
 - workflow provenance.
 
-It is a run manifest, not the canonical scientific artifact replacing the
-versioned JSON contracts.
+It is the in-memory return object for Python callers. The persisted
+`workflow_manifest.json` described below is the durable run manifest. Neither
+artifact replaces the versioned canonical scientific JSON contracts.
 
 ## Data Flow
 
@@ -182,6 +184,34 @@ as the event log. Observer errors are governed by
 `workflow.observability.observer_error_policy`: `raise` fails truthfully, while
 `record_warning` records an `observer_error` event and includes a workflow
 warning without changing scientific execution order.
+
+## Run Manifest And Traceability
+
+Every successful run writes deterministic audit exports under:
+
+```text
+<output_root>/<run_id>/manifest/workflow_manifest.json
+<output_root>/<run_id>/manifest/workflow_traceability.json
+<output_root>/<run_id>/manifest/workflow_traceability.csv
+```
+
+`workflow_manifest.json` records the run ID, Verfeinert version, effective
+workflow config snapshot and stable config hash, seed policy, execution mode
+and worker count, materialization and constraint configuration, requested and
+completed stages, consumed/reused/produced artifact refs, key artifact paths,
+warnings, checkpoint/event-log refs when present, and the final evolution
+stopping reason when an EvolutionRun is available.
+
+`workflow_traceability.json` and `workflow_traceability.csv` are derived audit
+tables with a fixed column order. Rows are keyed by canonical candidate IDs and
+include available structural and lineage hashes, generation, parent candidate
+ID from Candidate lineage when available, AnalysisResult ID, computed
+expressibility/trainability/structural-cost values, survivor/rejected/archive
+roles from EvolutionRun refs, and final stopping reason. Missing or skipped
+metrics remain null in JSON and blank in CSV; workflow does not fabricate
+metric values. When a workflow reuses a persisted EvolutionRun, traceability
+loads candidate and analysis documents through EvolutionRun refs when their
+URIs are available and otherwise preserves the ref-level audit row.
 
 ## Comparison And Postprocessing
 

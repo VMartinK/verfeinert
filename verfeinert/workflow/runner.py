@@ -89,6 +89,13 @@ from .checkpoints import (
 )
 from .config import WorkflowConfig, WorkflowConfigError
 from .events import WorkflowEvent, WorkflowEventRecorder
+from .manifests import (
+    build_traceability_document,
+    build_workflow_manifest_document,
+    write_traceability_csv,
+    write_traceability_json,
+    write_workflow_manifest_json,
+)
 from .provenance import workflow_provenance
 
 
@@ -117,6 +124,9 @@ class WorkflowResult:
     visualization_paths: tuple[Path, ...] = ()
     checkpoint_path: Path | None = None
     event_log_path: Path | None = None
+    manifest_path: Path | None = None
+    traceability_json_path: Path | None = None
+    traceability_csv_path: Path | None = None
     candidate_ids: tuple[str, ...] = ()
     analysis_result_ids: tuple[str, ...] = ()
     survivor_candidate_ids: tuple[str, ...] = ()
@@ -160,6 +170,17 @@ class WorkflowResult:
                 "visualization_paths": [str(path) for path in self.visualization_paths],
                 "checkpoint_path": str(self.checkpoint_path) if self.checkpoint_path else None,
                 "event_log_path": str(self.event_log_path) if self.event_log_path else None,
+                "manifest_path": str(self.manifest_path) if self.manifest_path else None,
+                "traceability_json_path": (
+                    str(self.traceability_json_path)
+                    if self.traceability_json_path
+                    else None
+                ),
+                "traceability_csv_path": (
+                    str(self.traceability_csv_path)
+                    if self.traceability_csv_path
+                    else None
+                ),
                 "candidate_ids": list(self.candidate_ids),
                 "analysis_result_ids": list(self.analysis_result_ids),
                 "survivor_candidate_ids": list(self.survivor_candidate_ids),
@@ -620,6 +641,62 @@ class WorkflowRunner:
         else:
             analysis_result_ids = ()
 
+        manifest_root = run_root / "manifest"
+        evolution_trace_source = evolution_path or resolved_evolution_source
+        final_stopping_reason = _workflow_final_stopping_reason(evolution_trace_source)
+        traceability_rows = _workflow_traceability_rows(
+            run_id=config.run_id,
+            candidate_ids=candidate_ids,
+            candidate_artifacts=candidate_artifacts,
+            analysis_collection=analysis_collection,
+            evolution_source=evolution_trace_source,
+            final_stopping_reason=final_stopping_reason,
+        )
+        traceability_document = build_traceability_document(
+            run_id=config.run_id,
+            rows=traceability_rows,
+        )
+        traceability_json_path = write_traceability_json(traceability_document, manifest_root)
+        traceability_csv_path = write_traceability_csv(traceability_rows, manifest_root)
+        produced_artifacts.extend(
+            [
+                _artifact_record("workflow_traceability", str(traceability_json_path)),
+                _artifact_record("workflow_traceability_csv", str(traceability_csv_path)),
+            ],
+        )
+        manifest_document = build_workflow_manifest_document(
+            config=config,
+            run_root=run_root,
+            stage_plan=stage_plan.to_dict(),
+            executed_operations=tuple(dict.fromkeys(executed)),
+            consumed_artifacts=consumed_artifacts,
+            produced_artifacts=produced_artifacts,
+            reused_artifacts=reused_artifacts,
+            artifact_paths=_workflow_manifest_artifact_paths(
+                generated_package=generated_package,
+                analysis_result_paths=analysis_result_paths,
+                evolution_source=evolution_trace_source,
+                ranking_json_path=ranking_json_path,
+                ranking_csv_path=ranking_csv_path,
+                pareto_json_path=pareto_json_path,
+                pareto_csv_path=pareto_csv_path,
+                analysis_csv_path=analysis_csv_path,
+                comparison_json_paths=comparison_json_paths,
+                comparison_csv_paths=comparison_csv_paths,
+                visualization_paths=visualization_paths,
+                checkpoint_path=checkpoint_path,
+                event_log_path=event_log_path,
+                traceability_json_path=traceability_json_path,
+                traceability_csv_path=traceability_csv_path,
+            ),
+            warnings=warnings,
+            final_stopping_reason=final_stopping_reason,
+            checkpoint_path=checkpoint_path,
+            event_log_path=event_log_path,
+        )
+        manifest_path = write_workflow_manifest_json(manifest_document, manifest_root)
+        produced_artifacts.append(_artifact_record("workflow_manifest", str(manifest_path)))
+
         provenance = workflow_provenance(
             run_id=config.run_id,
             config_snapshot=config.to_dict(),
@@ -689,6 +766,9 @@ class WorkflowRunner:
             visualization_paths=tuple(visualization_paths),
             checkpoint_path=checkpoint_path,
             event_log_path=event_log_path,
+            manifest_path=manifest_path,
+            traceability_json_path=traceability_json_path,
+            traceability_csv_path=traceability_csv_path,
             candidate_ids=candidate_ids,
             analysis_result_ids=analysis_result_ids,
             survivor_candidate_ids=survivor_candidate_ids,
@@ -1695,6 +1775,226 @@ def _uri_from_ref(value: Any) -> str | None:
         return None
     uri = value.get("uri")
     return uri if isinstance(uri, str) and uri else None
+
+
+def _workflow_manifest_artifact_paths(
+    *,
+    generated_package,
+    analysis_result_paths: Sequence[Path],
+    evolution_source: str | Path | Mapping[str, Any] | None,
+    ranking_json_path: Path | None,
+    ranking_csv_path: Path | None,
+    pareto_json_path: Path | None,
+    pareto_csv_path: Path | None,
+    analysis_csv_path: Path | None,
+    comparison_json_paths: Sequence[Path],
+    comparison_csv_paths: Sequence[Path],
+    visualization_paths: Sequence[Path],
+    checkpoint_path: Path | None,
+    event_log_path: Path | None,
+    traceability_json_path: Path,
+    traceability_csv_path: Path,
+) -> dict[str, Any]:
+    evolution_uri = _source_uri(evolution_source)
+    return {
+        "candidate_paths": (
+            [str(path) for path in generated_package.candidate_paths]
+            if generated_package is not None
+            else []
+        ),
+        "staged_package_path": (
+            str(generated_package.staged_package_path)
+            if generated_package is not None
+            else None
+        ),
+        "analysis_result_paths": [str(path) for path in analysis_result_paths],
+        "evolution_run_path": evolution_uri,
+        "ranking_json_path": str(ranking_json_path) if ranking_json_path is not None else None,
+        "ranking_csv_path": str(ranking_csv_path) if ranking_csv_path is not None else None,
+        "pareto_json_path": str(pareto_json_path) if pareto_json_path is not None else None,
+        "pareto_csv_path": str(pareto_csv_path) if pareto_csv_path is not None else None,
+        "analysis_csv_path": str(analysis_csv_path) if analysis_csv_path is not None else None,
+        "comparison_json_paths": [str(path) for path in comparison_json_paths],
+        "comparison_csv_paths": [str(path) for path in comparison_csv_paths],
+        "visualization_paths": [str(path) for path in visualization_paths],
+        "checkpoint_path": str(checkpoint_path) if checkpoint_path is not None else None,
+        "event_log_path": str(event_log_path) if event_log_path is not None else None,
+        "traceability_json_path": str(traceability_json_path),
+        "traceability_csv_path": str(traceability_csv_path),
+    }
+
+
+def _workflow_traceability_rows(
+    *,
+    run_id: str,
+    candidate_ids: Sequence[str],
+    candidate_artifacts: Sequence[_CandidateArtifact],
+    analysis_collection: AnalysisResultCollection | None,
+    evolution_source: str | Path | Mapping[str, Any] | None,
+    final_stopping_reason: str | None,
+) -> tuple[dict[str, Any], ...]:
+    candidate_by_id = {
+        artifact.document["candidate_id"]: artifact.document
+        for artifact in candidate_artifacts
+    }
+    for candidate_id, document in _traceability_candidate_documents(evolution_source).items():
+        candidate_by_id.setdefault(candidate_id, document)
+    analysis_by_candidate_id: dict[str, Mapping[str, Any]] = {}
+    if analysis_collection is not None:
+        analysis_by_candidate_id = {
+            document["candidate_ref"]["candidate_id"]: document
+            for document in analysis_collection.documents
+        }
+    for candidate_id, document in _traceability_analysis_documents(evolution_source).items():
+        analysis_by_candidate_id.setdefault(candidate_id, document)
+    evolution_by_candidate_id = _traceability_evolution_roles(evolution_source)
+    ordered_ids = tuple(
+        dict.fromkeys(
+            [
+                *candidate_ids,
+                *analysis_by_candidate_id.keys(),
+                *evolution_by_candidate_id.keys(),
+            ],
+        ),
+    )
+    return tuple(
+        _workflow_traceability_row(
+            run_id=run_id,
+            candidate_id=candidate_id,
+            candidate=candidate_by_id.get(candidate_id),
+            analysis=analysis_by_candidate_id.get(candidate_id),
+            evolution=evolution_by_candidate_id.get(candidate_id, {}),
+            final_stopping_reason=final_stopping_reason,
+        )
+        for candidate_id in ordered_ids
+    )
+
+
+def _workflow_traceability_row(
+    *,
+    run_id: str,
+    candidate_id: str,
+    candidate: Mapping[str, Any] | None,
+    analysis: Mapping[str, Any] | None,
+    evolution: Mapping[str, Any],
+    final_stopping_reason: str | None,
+) -> dict[str, Any]:
+    identity = dict(candidate.get("identity", {})) if candidate is not None else {}
+    lineage = dict(candidate.get("lineage", {})) if candidate is not None else {}
+    candidate_ref = dict(analysis.get("candidate_ref", {})) if analysis is not None else {}
+    metrics = _analysis_metric_values(analysis)
+    cost = dict(analysis.get("cost", {})) if analysis is not None else {}
+    return {
+        "run_id": run_id,
+        "candidate_id": candidate_id,
+        "structural_hash": identity.get("structural_hash") or candidate_ref.get("structural_hash") or evolution.get("structural_hash"),
+        "lineage_hash": identity.get("lineage_hash") or evolution.get("lineage_hash"),
+        "generation": lineage.get("generation", evolution.get("generation")),
+        "parent_candidate_id": lineage.get("parent_candidate_id"),
+        "analysis_result_id": (
+            analysis.get("analysis_result_id")
+            if analysis is not None
+            else evolution.get("analysis_result_id")
+        ),
+        "expressibility": metrics.get("expressibility"),
+        "trainability": metrics.get("trainability"),
+        "structural_cost": cost.get("structural_cost"),
+        "survivor": bool(evolution.get("survivor", False)),
+        "rejected": bool(evolution.get("rejected", False)),
+        "archive": bool(evolution.get("archive", False)),
+        "final_stopping_reason": final_stopping_reason,
+    }
+
+
+def _analysis_metric_values(analysis: Mapping[str, Any] | None) -> dict[str, Any]:
+    if analysis is None:
+        return {}
+    values: dict[str, Any] = {}
+    for metric in analysis.get("metrics", ()):
+        if not isinstance(metric, Mapping):
+            continue
+        name = str(metric.get("name", "")).strip()
+        if not name:
+            continue
+        values[name] = metric.get("value") if metric.get("status") == "computed" else None
+    return values
+
+
+def _traceability_candidate_documents(
+    evolution_source: str | Path | Mapping[str, Any] | None,
+) -> dict[str, dict[str, Any]]:
+    document, source_path = _traceability_evolution_document_with_path(evolution_source)
+    if document is None:
+        return {}
+    return _candidate_documents_from_state(
+        _state_from_evolution_document(document),
+        source_path=source_path,
+    )
+
+
+def _traceability_analysis_documents(
+    evolution_source: str | Path | Mapping[str, Any] | None,
+) -> dict[str, dict[str, Any]]:
+    document, source_path = _traceability_evolution_document_with_path(evolution_source)
+    if document is None:
+        return {}
+    return _analysis_result_documents_from_state(
+        _state_from_evolution_document(document),
+        source_path=source_path,
+    )
+
+
+def _traceability_evolution_roles(
+    evolution_source: str | Path | Mapping[str, Any] | None,
+) -> dict[str, dict[str, Any]]:
+    document, _source_path = _traceability_evolution_document_with_path(evolution_source)
+    if document is None:
+        return {}
+    roles: dict[str, dict[str, Any]] = {}
+    for generation in document.get("generations", ()):
+        generation_index = generation.get("generation_index")
+        for ref in generation.get("candidate_refs", ()):
+            candidate_id = ref["candidate_id"]
+            roles.setdefault(candidate_id, {})
+            roles[candidate_id]["generation"] = generation_index
+            roles[candidate_id]["structural_hash"] = ref.get("structural_hash")
+            roles[candidate_id]["lineage_hash"] = ref.get("lineage_hash")
+        for field, role_name in (
+            ("survivor_refs", "survivor"),
+            ("rejected_refs", "rejected"),
+            ("archive_refs", "archive"),
+        ):
+            for ref in generation.get(field, ()):
+                roles.setdefault(ref["candidate_id"], {})
+                roles[ref["candidate_id"]][role_name] = True
+        for ref in generation.get("analysis_result_refs", ()):
+            roles.setdefault(ref["candidate_id"], {})
+            roles[ref["candidate_id"]]["analysis_result_id"] = ref.get("analysis_result_id")
+    return roles
+
+
+def _workflow_final_stopping_reason(
+    evolution_source: str | Path | Mapping[str, Any] | None,
+) -> str | None:
+    document, _source_path = _traceability_evolution_document_with_path(evolution_source)
+    if document is None:
+        return None
+    decision = dict(dict(document.get("metadata", {})).get("workflow", {})).get("final_stopping_decision")
+    if isinstance(decision, Mapping):
+        reason = decision.get("reason")
+        return reason if isinstance(reason, str) else None
+    return None
+
+
+def _traceability_evolution_document_with_path(
+    evolution_source: str | Path | Mapping[str, Any] | None,
+) -> tuple[dict[str, Any] | None, Path | None]:
+    if evolution_source is None:
+        return None, None
+    document, source_path = _evolution_document_with_path(evolution_source)
+    if document.get("schema_version") != "verfeinert.evolution_run.v1":
+        raise WorkflowConfigError("traceability evolution input is not an EvolutionRun artifact.")
+    return document, source_path
 
 
 def _load_candidate_artifacts(

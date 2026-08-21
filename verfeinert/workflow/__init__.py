@@ -28,6 +28,16 @@ from .events import (
     WorkflowEventRecorder,
     read_workflow_event_log,
 )
+from .manifests import (
+    TRACEABILITY_COLUMNS,
+    WORKFLOW_MANIFEST_SCHEMA_VERSION,
+    WORKFLOW_TRACEABILITY_SCHEMA_VERSION,
+    build_traceability_document,
+    build_workflow_manifest_document,
+    write_traceability_csv,
+    write_traceability_json,
+    write_workflow_manifest_json,
+)
 from .provenance import workflow_provenance
 from .runner import WorkflowResult, WorkflowRunner, run_workflow
 
@@ -35,9 +45,12 @@ __all__ = [
     "AnalyzerStageConfig",
     "EvolutionStageConfig",
     "GenerationStageConfig",
+    "TRACEABILITY_COLUMNS",
     "WORKFLOW_CHECKPOINT_FINGERPRINT_VERSION",
     "WORKFLOW_CHECKPOINT_SCHEMA_VERSION",
     "WORKFLOW_EVENT_SCHEMA_VERSION",
+    "WORKFLOW_MANIFEST_SCHEMA_VERSION",
+    "WORKFLOW_TRACEABILITY_SCHEMA_VERSION",
     "WorkflowArtifactInputs",
     "WorkflowCheckpointConfig",
     "WorkflowCheckpointError",
@@ -55,7 +68,12 @@ __all__ = [
     "read_workflow_event_log",
     "run_workflow",
     "validate_workflow_checkpoint_document",
+    "build_traceability_document",
+    "build_workflow_manifest_document",
     "workflow_checkpoint_fingerprint",
     "workflow_provenance",
+    "write_traceability_csv",
+    "write_traceability_json",
     "write_workflow_checkpoint_json",
+    "write_workflow_manifest_json",
 ]
