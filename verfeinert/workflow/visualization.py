@@ -6,8 +6,12 @@ from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import Any
 
-from verfeinert.ansatz_analyzer import AnalysisResultCollection, validate_analysis_result_document
-from verfeinert.ansatz_analyzer.collections import cost_value, metric_value
+from verfeinert.ansatz_analyzer import (
+    AnalysisResultCollection,
+    cost_value,
+    metric_value,
+    validate_analysis_result_document,
+)
 from verfeinert.ansatz_evolver import read_evolution_run_json
 from verfeinert.core.io import read_json
 

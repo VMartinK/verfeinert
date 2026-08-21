@@ -31,7 +31,7 @@ class PackageHardeningTests(unittest.TestCase):
 import json
 from verfeinert.core import load_schema, schema_names
 from verfeinert.ansatz_generator import build_sanz19_candidate_record, export_candidate_json
-from verfeinert.ansatz_analyzer import validate_candidate_document
+from verfeinert.ansatz_analyzer import cost_value, metric_value, validate_candidate_document
 from verfeinert.ansatz_evolver import CandidateRef
 from verfeinert.workflow import WorkflowConfig
 
@@ -51,6 +51,8 @@ print(json.dumps({
     "schema_count": len(schema_names()),
     "candidate_schema": load_schema("candidate")["$id"],
     "candidate_id": candidate["candidate_id"],
+    "metric_value_export": callable(metric_value),
+    "cost_value_export": callable(cost_value),
 }, sort_keys=True))
 """
         env = os.environ.copy()
@@ -70,6 +72,8 @@ print(json.dumps({
         self.assertEqual(payload["schema_count"], 6)
         self.assertEqual(payload["candidate_id"], "external-style-candidate")
         self.assertTrue(payload["candidate_schema"].endswith("/candidate.schema.json"))
+        self.assertTrue(payload["metric_value_export"])
+        self.assertTrue(payload["cost_value_export"])
 
     def test_nonvisual_public_paths_work_when_matplotlib_unavailable(self) -> None:
         code = r"""

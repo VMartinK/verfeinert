@@ -25,8 +25,7 @@ from verfeinert.core.validation import (
     require_non_negative_int_or_none,
     require_positive_int,
 )
-from verfeinert.ansatz_generator import ConstraintSet
-from verfeinert.ansatz_generator.validation import GeneratorValidationError
+from verfeinert.ansatz_generator import ConstraintSet, GeneratorValidationError
 
 
 class WorkflowConfigError(CoreValidationError):
