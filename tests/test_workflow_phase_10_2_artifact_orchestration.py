@@ -836,6 +836,46 @@ class WorkflowPhase102ArtifactOrchestrationTests(unittest.TestCase):
                 msg=f"metric_callables propagation mismatch: {received!r}",
             )
 
+    def test_evolution_continue_rejects_changed_analyzer_scientific_identity(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            cases = (
+                ("materialization", lambda mapping: mapping["analyzer"].update({"materialization": {"enabled": True}})),
+                ("permissions", lambda mapping: mapping["analyzer"].update({"permissions": {"allow_expensive_metrics": False, "allow_qnode_execution": True}})),
+                ("analyzer-random-seed", lambda mapping: mapping["analyzer"].update({"random_seed": 23})),
+            )
+
+            for case_name, mutate in cases:
+                with self.subTest(case=case_name):
+                    case_root = root / case_name
+                    run_id = f"fingerprint-{case_name}"
+                    source = WorkflowRunner(
+                        WorkflowConfig.from_mapping(
+                            _workflow_mapping(
+                                case_root / "out",
+                                run_id=run_id,
+                                campaign_type="evolutionary",
+                                scientific_execution=("generate", "analyze", "evolve"),
+                                max_generations=1,
+                            ),
+                        ),
+                    ).run(candidate_factory=RecordingFactory())
+
+                    continue_mapping = _workflow_mapping(
+                        case_root / "out",
+                        run_id=run_id,
+                        campaign_type="evolutionary",
+                        scientific_execution=("evolve",),
+                        artifacts={"evolution_run": str(source.evolution_run_path)},
+                        max_generations=2,
+                    )
+                    mutate(continue_mapping)
+
+                    with self.assertRaisesRegex(WorkflowConfigError, "branch required"):
+                        WorkflowRunner(
+                            WorkflowConfig.from_mapping(continue_mapping),
+                        ).run(candidate_factory=RecordingFactory())
+
 
 
 if __name__ == "__main__":

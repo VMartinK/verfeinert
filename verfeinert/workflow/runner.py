@@ -3212,6 +3212,13 @@ def _evolution_fingerprint(config: WorkflowConfig) -> str:
             "selected_metrics": list(config.analyzer.selected_metrics),
             "structural_cost": config.analyzer.structural_cost.to_dict(),
             "metric_configs": config.analyzer.metric_configs,
+            "materialization": config.analyzer.materialization.to_dict(),
+            "permissions": config.analyzer.permissions.to_dict(),
+            "random_seed": (
+                config.analyzer.random_seed
+                if config.analyzer.random_seed is not None
+                else config.random_seed
+            ),
         },
     }
     if config.generation.constraints is not None:
