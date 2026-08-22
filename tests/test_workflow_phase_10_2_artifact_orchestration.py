@@ -798,6 +798,45 @@ class WorkflowPhase102ArtifactOrchestrationTests(unittest.TestCase):
                     ),
                 )
 
+    def test_metric_callables_propagate_into_evolution_generation_analysis(self) -> None:
+        """Explicit metric callables must survive every evolutionary analysis call."""
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            mapping = _workflow_mapping(
+                root / "out",
+                run_id="metric-callables-evolution",
+                campaign_type="evolutionary",
+                scientific_execution=("generate", "analyze", "evolve"),
+                max_generations=2,
+            )
+            runner = WorkflowRunner(WorkflowConfig.from_mapping(mapping))
+
+            def explicit_state_callable(parameters):
+                return parameters
+
+            metric_callables = {"sentinel-candidate": explicit_state_callable}
+
+            with mock.patch.object(
+                runner,
+                "_run_analysis",
+                wraps=runner._run_analysis,
+            ) as run_analysis:
+                runner.run(
+                    candidate_factory=RecordingFactory(),
+                    metric_callables=metric_callables,
+                )
+
+            self.assertGreaterEqual(run_analysis.call_count, 2)
+            received = [
+                call.kwargs.get("metric_callables")
+                for call in run_analysis.call_args_list
+            ]
+            self.assertTrue(
+                all(value is metric_callables for value in received),
+                msg=f"metric_callables propagation mismatch: {received!r}",
+            )
+
+
 
 if __name__ == "__main__":
     unittest.main()
