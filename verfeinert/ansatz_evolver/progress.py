@@ -395,4 +395,3 @@ __all__ = [
     "threshold_trajectories_from_mapping",
     "threshold_trajectories_to_mapping",
 ]
-
