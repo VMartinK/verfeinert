@@ -43,7 +43,7 @@ class InsertGateMutationFactory:
     default_edges: tuple[tuple[int, int], ...] = ()
     default_insertion_strategy: str = "before_first_multiqubit"
     default_edge_selection: str = "parent_index_cycle"
-    default_candidate_id_template: str = "{root_candidate_id}_g{generation:03d}-{recipe_id}-v{variant_ordinal:03d}"
+    default_candidate_id_template: str = "{root_candidate_id}_g{generation:03d}-{recipe_id}-p{parent_ordinal:03d}-v{variant_ordinal:03d}"
     source_label: str = "verfeinert.ansatz_generator.insert_gate_mutation_factory"
     created_at: str | None = None
     constraints: ConstraintSet | None = None
@@ -168,7 +168,7 @@ class CanonicalMutationFactory:
     default_edges: tuple[tuple[int, int], ...] = ()
     default_insertion_strategy: str = "before_first_multiqubit"
     default_edge_selection: str = "parent_index_cycle"
-    default_candidate_id_template: str = "{root_candidate_id}_g{generation:03d}-{recipe_id}-v{variant_ordinal:03d}"
+    default_candidate_id_template: str = "{root_candidate_id}_g{generation:03d}-{recipe_id}-p{parent_ordinal:03d}-v{variant_ordinal:03d}"
     source_label: str = "verfeinert.ansatz_generator.canonical_mutation_factory"
     created_at: str | None = None
     constraints: ConstraintSet | None = None
