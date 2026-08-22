@@ -1532,6 +1532,10 @@ class WorkflowRunner:
 
         while _should_extend_evolution(config, state, candidate_factory):
             next_generation = state.generations[-1].generation_index + 1
+            machine = (
+                EvolutionStateMachine.from_run_state(state)
+                .plan_generation(next_generation)
+            )
             parent_refs = _parent_refs_for_next_generation(config, state, next_generation)
             previous_threshold_states = (
                 _trajectory_states_from_state(state)
@@ -1622,6 +1626,8 @@ class WorkflowRunner:
                 candidate_uri_lookup[candidate["candidate_id"]] = str(path)
                 candidate_lookup[candidate["candidate_id"]] = candidate
 
+            machine = machine.record_candidates_generated()
+            machine = machine.request_analysis()
             analyzer_config = self._analyzer_config((package.package_root,), analysis_root)
             analysis_run = self._run_analysis(
                 candidates=tuple(package.candidates),
@@ -1646,6 +1652,7 @@ class WorkflowRunner:
                 analysis_run.documents,
                 collection_id=f"{config.run_id}:g{next_generation:03d}:analysis",
             )
+            machine = machine.record_analysis_complete()
             if previous_threshold_states:
                 (
                     threshold_trajectories,
@@ -1694,6 +1701,7 @@ class WorkflowRunner:
                     or accumulated_progress_refs
                     or selection.archive_refs
                 )
+            machine = machine.record_selection_complete()
             analysis_by_candidate_id.update(
                 {
                     document["candidate_ref"]["candidate_id"]: document
@@ -1765,7 +1773,7 @@ class WorkflowRunner:
                 ),
                 stopping_decision=stopping_decision,
             )
-            state = _state_with_generation(config, state, generation)
+            state = machine.append_generation(generation).run_state
 
         return _state_completed(config, state), tuple(generated_paths)
 
@@ -2841,6 +2849,22 @@ def _generation_record(
         ) from exc
 
 
+
+def _checkpoint_generation_lifecycle(
+    machine: EvolutionStateMachine,
+    generation: GenerationRecord,
+) -> EvolutionStateMachine:
+    """Validate one complete generation through the canonical evolver lifecycle."""
+    return (
+        machine.plan_generation(generation.generation_index)
+        .record_candidates_generated()
+        .request_analysis()
+        .record_analysis_complete()
+        .record_selection_complete()
+        .append_generation(generation)
+    )
+
+
 def _new_evolution_state(
     *,
     config: WorkflowConfig,
@@ -2871,7 +2895,7 @@ def _new_evolution_state(
         git_commit=None,
     )
     for generation in generations:
-        machine = machine.append_generation(generation)
+        machine = _checkpoint_generation_lifecycle(machine, generation)
     return machine.run_state
 
 
@@ -2880,19 +2904,10 @@ def _state_with_generation(
     state: EvolutionRunState,
     generation: GenerationRecord,
 ) -> EvolutionRunState:
-    run_state = EvolutionRunState(
-        evolution_run_id=state.evolution_run_id,
-        status=state.status,
-        configuration=_evolution_configuration(config),
-        generations=state.generations,
-        provenance=state.provenance,
-        metadata=state.metadata,
-        created_at=state.created_at,
-        software_version=state.software_version,
-        git_commit=state.git_commit,
-        execution_metadata=_evolution_execution_metadata(state.generations),
-    )
-    return EvolutionStateMachine.from_run_state(run_state).append_generation(generation).run_state
+    """Append through the canonical lifecycle; retained as a compatibility helper."""
+    del config
+    machine = EvolutionStateMachine.from_run_state(state)
+    return _checkpoint_generation_lifecycle(machine, generation).run_state
 
 
 def _final_stopping_decision(config: WorkflowConfig, state: EvolutionRunState) -> dict[str, Any]:
@@ -2933,19 +2948,11 @@ def _state_completed(config: WorkflowConfig, state: EvolutionRunState) -> Evolut
     workflow_metadata = dict(metadata.get("workflow", {}))
     workflow_metadata["final_stopping_decision"] = final_decision
     metadata["workflow"] = workflow_metadata
-    run_state = EvolutionRunState(
-        evolution_run_id=state.evolution_run_id,
-        status=state.status,
-        configuration=_evolution_configuration(config),
-        generations=state.generations,
-        provenance=state.provenance,
-        metadata=state.metadata,
-        created_at=state.created_at,
-        software_version=state.software_version,
-        git_commit=state.git_commit,
-        execution_metadata=_evolution_execution_metadata(state.generations),
+    return (
+        EvolutionStateMachine.from_run_state(state)
+        .complete(metadata=metadata)
+        .run_state
     )
-    return EvolutionStateMachine.from_run_state(run_state).complete(metadata=metadata).run_state
 
 
 def _state_for_resume_or_branch(
