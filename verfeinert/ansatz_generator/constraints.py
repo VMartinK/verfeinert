@@ -123,6 +123,103 @@ def validate_candidate_constraints(
     return payload
 
 
+def validate_mutation_constraints(
+    parent: Mapping[str, Any],
+    child: Mapping[str, Any],
+    constraints: ConstraintSet | Mapping[str, Any] | None,
+) -> dict[str, Any]:
+    '''Validate parent-to-child structural invariants for one mutation transition.'''
+    constraint_set = _constraint_set_or_none(constraints)
+    if constraint_set is None:
+        return to_json_safe(dict(child))
+
+    parent_payload = validate_candidate_constraints(parent, constraint_set)
+    child_payload = validate_candidate_constraints(child, constraint_set)
+
+    if constraint_set.preserve_parameter_count:
+        parent_parameter_count = _candidate_parameter_count(parent_payload)
+        child_parameter_count = _candidate_parameter_count(child_payload)
+        if parent_parameter_count != child_parameter_count:
+            raise GeneratorValidationError(
+                "candidate mutation violates structural constraints: "
+                "preserve_parameter_count requires parent and child parameter "
+                "counts to match "
+                f"(parent={parent_parameter_count}, child={child_parameter_count}).",
+            )
+
+    if constraint_set.preserve_layer_count:
+        parent_layer_count = _candidate_layer_count(parent_payload)
+        child_layer_count = _candidate_layer_count(child_payload)
+        if parent_layer_count != child_layer_count:
+            raise GeneratorValidationError(
+                "candidate mutation violates structural constraints: "
+                "preserve_layer_count requires parent and child layer counts "
+                "to match "
+                f"(parent={parent_layer_count}, child={child_layer_count}).",
+            )
+
+    return child_payload
+
+
+def _candidate_parameter_count(candidate: Mapping[str, Any]) -> int:
+    circuit = candidate.get("circuit")
+    if not isinstance(circuit, Mapping):
+        raise GeneratorValidationError(
+            "candidate circuit is required for transition constraint validation.",
+        )
+    parameters = circuit.get("parameters")
+    if not isinstance(parameters, Sequence) or isinstance(
+        parameters,
+        (str, bytes, bytearray),
+    ):
+        raise GeneratorValidationError(
+            "candidate circuit.parameters must be a sequence for transition "
+            "constraint validation.",
+        )
+    return len(parameters)
+
+
+def _candidate_layer_count(candidate: Mapping[str, Any]) -> int:
+    circuit = candidate.get("circuit")
+    if not isinstance(circuit, Mapping):
+        raise GeneratorValidationError(
+            "candidate circuit is required for transition constraint validation.",
+        )
+    operations = circuit.get("operations")
+    if not isinstance(operations, Sequence) or isinstance(
+        operations,
+        (str, bytes, bytearray),
+    ):
+        raise GeneratorValidationError(
+            "candidate circuit.operations must be a sequence for transition "
+            "constraint validation.",
+        )
+
+    layers: set[int] = set()
+    for index, operation in enumerate(operations):
+        if not isinstance(operation, Mapping):
+            raise GeneratorValidationError(
+                "candidate operations must be mappings for transition "
+                "constraint validation.",
+            )
+        raw_layer = operation.get("layer")
+        if raw_layer is None:
+            metadata = operation.get("metadata")
+            raw_layer = (
+                metadata.get("layer_index")
+                if isinstance(metadata, Mapping)
+                else None
+            )
+        if raw_layer is None:
+            raw_layer = 0
+        if type(raw_layer) is not int or raw_layer < 0:
+            raise GeneratorValidationError(
+                f"candidate operation {index} layer must be a non-negative integer.",
+            )
+        layers.add(raw_layer)
+    return len(layers)
+
+
 def _normalize_gate_tuple(gates: tuple[str, ...] | list[str] | set[str] | None) -> tuple[str, ...] | None:
     if gates is None:
         return None
@@ -169,4 +266,4 @@ def _operation_qubits(operation: Mapping[str, Any], index: int) -> tuple[int, ..
     return qubits
 
 
-__all__ = ["ConstraintSet", "validate_candidate_constraints"]
+__all__ = ["ConstraintSet", "validate_candidate_constraints", "validate_mutation_constraints"]

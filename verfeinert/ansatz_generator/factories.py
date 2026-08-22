@@ -18,7 +18,11 @@ from .exporters import (
     CANDIDATE_SCHEMA_VERSION,
 )
 from .exporters.candidate_json import validate_candidate_json
-from .constraints import ConstraintSet, validate_candidate_constraints
+from .constraints import (
+    ConstraintSet,
+    validate_candidate_constraints,
+    validate_mutation_constraints,
+)
 from .operations import DEFAULT_GATE_REGISTRY
 from .validation import GeneratorValidationError
 
@@ -151,7 +155,7 @@ class InsertGateMutationFactory:
             },
         }
         validated = validate_candidate_json(child)
-        return validate_candidate_constraints(validated, self.constraints)
+        return validate_mutation_constraints(parent, validated, self.constraints)
 
 
 @dataclass(frozen=True)
@@ -284,7 +288,7 @@ class CanonicalMutationFactory:
             },
         }
         validated = validate_candidate_json(child)
-        return validate_candidate_constraints(validated, self.constraints)
+        return validate_mutation_constraints(parent, validated, self.constraints)
 
     def _insert_factory(self) -> InsertGateMutationFactory:
         return InsertGateMutationFactory(
