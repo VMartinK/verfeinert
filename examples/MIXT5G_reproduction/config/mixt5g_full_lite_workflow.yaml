@@ -96,6 +96,7 @@ evolver:
   strict_ties: true
   keep: 1
   max_generations: 3
+  patience: 5
   initial_parent_policy: all_generation_zero_candidates
   offspring_deduplication:
     enabled: true

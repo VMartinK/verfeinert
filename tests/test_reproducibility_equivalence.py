@@ -194,6 +194,7 @@ def _workflow_mapping(
             "strict_ties": True,
             "keep": 1,
             "max_generations": 3,
+            "patience": 10,
             "initial_parent_policy": "all_generation_zero_candidates",
             "offspring_deduplication": {
                 "enabled": True,

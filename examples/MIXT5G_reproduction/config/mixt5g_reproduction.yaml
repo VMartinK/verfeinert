@@ -73,6 +73,7 @@ evolver:
     - name: structural_cost
       direction: minimize
   max_generations: 6
+  patience: 5
   mutation_policy:
     policy_id: mixt5g-insert-schedule
     variants_per_parent: 1

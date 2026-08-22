@@ -89,6 +89,7 @@ def _workflow_mapping(
             "keep": keep,
             "direction": "minimize",
             "max_generations": max_generations,
+            "patience": 10,
             "mutation_policy": {
                 "policy_id": "phase102-mutation",
                 "variants_per_parent": 1,

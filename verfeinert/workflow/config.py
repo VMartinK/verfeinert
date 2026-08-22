@@ -292,6 +292,7 @@ class EvolutionStageConfig:
     )
     thresholds: dict[str, float] = field(default_factory=dict)
     threshold_direction: str = "at_most"
+    trajectory_thresholds: dict[str, Any] = field(default_factory=dict)
     max_generations: int = 1
     patience: int | None = None
     mutation_policy: dict[str, Any] = field(default_factory=dict)
@@ -320,6 +321,52 @@ class EvolutionStageConfig:
         object.__setattr__(self, "thresholds", thresholds)
         if self.threshold_direction not in {"at_most", "at_least"}:
             raise WorkflowConfigError("evolver.threshold_direction must be at_most or at_least.")
+
+        trajectory_thresholds = dict(self.trajectory_thresholds)
+        if trajectory_thresholds:
+            if mode != "strict_pareto_feedback":
+                raise WorkflowConfigError(
+                    "evolver.trajectory_thresholds currently requires "
+                    "selection_mode='strict_pareto_feedback'."
+                )
+            trajectory_metric = _non_empty_text(
+                trajectory_thresholds.get("metric_name"),
+                "evolver.trajectory_thresholds.metric_name",
+            )
+            trajectory_direction = str(
+                trajectory_thresholds.get("direction", "at_most")
+            ).strip().lower()
+            if trajectory_direction not in {"at_most", "at_least"}:
+                raise WorkflowConfigError(
+                    "evolver.trajectory_thresholds.direction must be at_most or at_least."
+                )
+            raw_trajectories = trajectory_thresholds.get("trajectories", {})
+            if not isinstance(raw_trajectories, Mapping) or not raw_trajectories:
+                raise WorkflowConfigError(
+                    "evolver.trajectory_thresholds.trajectories must be a non-empty mapping."
+                )
+            normalized_trajectories: dict[str, float] = {}
+            for trajectory_id, threshold in sorted(raw_trajectories.items()):
+                normalized_id = require_identifier(
+                    str(trajectory_id),
+                    "evolver.trajectory_thresholds.trajectory_id",
+                )
+                if type(threshold) not in {int, float}:
+                    raise WorkflowConfigError(
+                        "evolver.trajectory_thresholds trajectory values must be numeric."
+                    )
+                normalized_trajectories[normalized_id] = float(threshold)
+            trajectory_thresholds = {
+                "metric_name": trajectory_metric,
+                "direction": trajectory_direction,
+                "trajectories": normalized_trajectories,
+            }
+        object.__setattr__(
+            self,
+            "trajectory_thresholds",
+            to_json_safe(trajectory_thresholds),
+        )
+
         object.__setattr__(
             self,
             "max_generations",
@@ -358,6 +405,7 @@ class EvolutionStageConfig:
             objectives=tuple(data.get("objectives", ({"name": "structural_cost", "direction": "minimize"},))),
             thresholds=dict(data.get("thresholds", {})),
             threshold_direction=data.get("threshold_direction", "at_most"),
+            trajectory_thresholds=dict(data.get("trajectory_thresholds", {})),
             max_generations=data.get("max_generations", 1),
             patience=_first_non_none(
                 data.get("patience"),
@@ -383,6 +431,7 @@ class EvolutionStageConfig:
             "objectives": [dict(item) for item in self.objectives],
             "thresholds": dict(self.thresholds),
             "threshold_direction": self.threshold_direction,
+            "trajectory_thresholds": dict(self.trajectory_thresholds),
             "max_generations": self.max_generations,
             "patience": self.patience,
             "mutation_policy": dict(self.mutation_policy),

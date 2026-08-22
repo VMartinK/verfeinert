@@ -270,6 +270,7 @@ def evaluate_stopping_conditions(
     strict_improvement: bool = True,
     patience_state: StoppingState | Mapping[str, Any] | None = None,
     threshold_improvements: Mapping[str, bool] | None = None,
+    consume_patience: bool = True,
     execution_budget_exhausted: bool = False,
     cancelled: bool = False,
     failed: bool = False,
@@ -307,6 +308,42 @@ def evaluate_stopping_conditions(
         )
     if generation >= policy.max_generations:
         return _decision(True, "max_generations_reached", "completed", generation, policy, state)
+
+    if not consume_patience:
+        threshold_states = dict(state.threshold_states)
+        if threshold_improvements is not None:
+            for threshold_id in sorted(threshold_improvements):
+                threshold_states.setdefault(
+                    str(threshold_id),
+                    ThresholdPatienceState(str(threshold_id)),
+                )
+        initialized = StoppingState(
+            consecutive_no_improvement=state.consecutive_no_improvement,
+            last_improvement_generation=state.last_improvement_generation,
+            patience_exhausted=state.patience_exhausted,
+            threshold_states=threshold_states,
+        )
+        return _decision(
+            False,
+            "continue",
+            "running",
+            generation,
+            policy,
+            initialized,
+            metadata={
+                "patience_enabled": policy.patience is not None,
+                "patience_consumed": False,
+                "threshold_governed": threshold_improvements is not None,
+                "exhausted_thresholds": [
+                    threshold_id
+                    for threshold_id, threshold_state in sorted(
+                        initialized.threshold_states.items()
+                    )
+                    if threshold_state.exhausted
+                ],
+            },
+        )
+
     if policy.patience is None:
         return _decision(
             False,

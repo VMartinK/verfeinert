@@ -297,6 +297,25 @@ class _WorkflowStagePlan:
         }
 
 
+from verfeinert.ansatz_evolver.progress import (
+    ThresholdTrajectoryState,
+    accumulated_fitness_progress,
+    accumulated_pareto_progress,
+    active_parent_refs_by_trajectory,
+    apply_threshold_patience_state,
+    build_threshold_trajectory_specs,
+    frontier_signature,
+    initialize_threshold_trajectories,
+    threshold_trajectories_from_mapping,
+    threshold_trajectories_to_mapping,
+)
+from verfeinert.ansatz_evolver.selection.fitness import (
+    SelectionDecision,
+    SelectionResult,
+    metric_value,
+)
+
+
 class WorkflowRunner:
     """Coordinate JSON-first Verfeinert workflows through public APIs."""
 
@@ -1393,7 +1412,10 @@ class WorkflowRunner:
             for artifact in candidate_artifacts
             if artifact.uri is not None
         }
-        analysis_by_candidate_id: dict[str, dict[str, Any]] = {}
+        analysis_by_candidate_id: dict[str, dict[str, Any]] = {
+            document["candidate_ref"]["candidate_id"]: dict(document)
+            for document in reference_analysis_results
+        }
         if analysis_collection is not None:
             analysis_by_candidate_id.update(
                 {
@@ -1428,7 +1450,33 @@ class WorkflowRunner:
                 candidate_artifacts=candidate_artifacts,
                 uri_by_candidate_id=candidate_uri_lookup,
             )
-            selection = self._select(collection, reference_analysis_results)
+            if config.evolver.trajectory_thresholds:
+                threshold_trajectories, selection = _initialize_threshold_trajectory_state(
+                    config,
+                    collection,
+                )
+                progress_configuration = None
+                threshold_improvements = {
+                    threshold_id: False
+                    for threshold_id in sorted(threshold_trajectories)
+                }
+                continuation_refs = _aggregate_candidate_refs(
+                    trajectory.parent_refs
+                    for trajectory in threshold_trajectories.values()
+                )
+            else:
+                threshold_trajectories = {}
+                selection = self._select(collection, reference_analysis_results)
+                _, progress_configuration, continuation_refs = (
+                    _single_progress_for_generation(
+                        config=config,
+                        state=None,
+                        collection=collection,
+                        selection=selection,
+                        analysis_by_candidate_id=analysis_by_candidate_id,
+                    )
+                )
+                threshold_improvements = None
             analysis_by_candidate_id.update(
                 {
                     document["candidate_ref"]["candidate_id"]: document
@@ -1441,9 +1489,25 @@ class WorkflowRunner:
                 generation_index=0,
                 candidate_count=len(candidate_refs),
                 analysis_result_count=len(collection.documents),
-                survivor_count=len(selection.survivor_refs),
-                strict_improvement=bool(selection.survivor_refs),
+                survivor_count=len(continuation_refs or selection.survivor_refs),
+                strict_improvement=True,
+                threshold_improvements=threshold_improvements,
+                consume_patience=False,
             )
+            if threshold_trajectories:
+                threshold_trajectories = apply_threshold_patience_state(
+                    threshold_trajectories,
+                    StoppingState.from_mapping(
+                        stopping_decision.metadata.get("stopping_state")
+                    ).threshold_states,
+                )
+            initial_extra_configuration: dict[str, Any] = {}
+            if threshold_trajectories:
+                initial_extra_configuration["threshold_trajectories"] = (
+                    threshold_trajectories_to_mapping(threshold_trajectories)
+                )
+            if progress_configuration is not None:
+                initial_extra_configuration["progress"] = progress_configuration
             generation = _generation_record(
                 generation_index=0,
                 candidate_refs=candidate_refs,
@@ -1456,6 +1520,7 @@ class WorkflowRunner:
                 ),
                 parent_refs=(),
                 run_id=config.run_id,
+                extra_configuration=initial_extra_configuration,
                 stopping_decision=stopping_decision,
             )
             state = _new_evolution_state(
@@ -1468,6 +1533,11 @@ class WorkflowRunner:
         while _should_extend_evolution(config, state, candidate_factory):
             next_generation = state.generations[-1].generation_index + 1
             parent_refs = _parent_refs_for_next_generation(config, state, next_generation)
+            previous_threshold_states = (
+                _trajectory_states_from_state(state)
+                if config.evolver.trajectory_thresholds
+                else {}
+            )
             if not parent_refs:
                 raise WorkflowConfigError("invalid resume state: latest generation has no parent candidates.")
             policy = _mutation_policy_for_generation(config, next_generation)
@@ -1478,6 +1548,7 @@ class WorkflowRunner:
                 parent_candidates=candidate_lookup,
             )
             children = []
+            child_parent_by_id: dict[str, str] = {}
             for request in requests:
                 parent = candidate_lookup.get(request.parent_candidate_id)
                 if parent is None:
@@ -1492,7 +1563,48 @@ class WorkflowRunner:
                     config=config,
                 )
                 children.append(child)
-            children, dedup_report = _deduplicate_offspring(children, config.evolver.offspring_deduplication)
+                child_parent_by_id[child["candidate_id"]] = request.parent_candidate_id
+
+            if previous_threshold_states:
+                raw_children = list(children)
+                child_by_id = {
+                    child["candidate_id"]: child
+                    for child in raw_children
+                }
+                trajectory_raw_ids = _trajectory_children_by_id(
+                    states=previous_threshold_states,
+                    child_parent_by_id=child_parent_by_id,
+                    candidate_ids=tuple(child_by_id),
+                )
+                trajectory_child_ids: dict[str, tuple[str, ...]] = {}
+                trajectory_deduplication: dict[str, Any] = {}
+                kept_union: set[str] = set()
+                for threshold_id, trajectory_ids in sorted(trajectory_raw_ids.items()):
+                    subset = [
+                        child_by_id[candidate_id]
+                        for candidate_id in trajectory_ids
+                    ]
+                    kept, trajectory_report = _deduplicate_offspring(
+                        subset,
+                        config.evolver.offspring_deduplication,
+                    )
+                    kept_ids = tuple(child["candidate_id"] for child in kept)
+                    trajectory_child_ids[threshold_id] = kept_ids
+                    kept_union.update(kept_ids)
+                    if trajectory_report is not None:
+                        trajectory_deduplication[threshold_id] = trajectory_report.to_dict()
+                children = [
+                    child for child in raw_children
+                    if child["candidate_id"] in kept_union
+                ]
+                dedup_report = None
+            else:
+                trajectory_child_ids = {}
+                trajectory_deduplication = {}
+                children, dedup_report = _deduplicate_offspring(
+                    children,
+                    config.evolver.offspring_deduplication,
+                )
             package = write_canonical_staged_package_json(
                 children,
                 config=self._canonical_staged_package_config(
@@ -1534,15 +1646,54 @@ class WorkflowRunner:
                 analysis_run.documents,
                 collection_id=f"{config.run_id}:g{next_generation:03d}:analysis",
             )
-            selection = self._select(
-                child_collection,
-                _selection_reference_results(
-                    config,
-                    state,
-                    analysis_by_candidate_id,
-                    reference_analysis_results,
-                ),
-            )
+            if previous_threshold_states:
+                (
+                    threshold_trajectories,
+                    threshold_improvements,
+                    selection,
+                ) = _advance_threshold_trajectory_state(
+                    config=config,
+                    state=state,
+                    collection=child_collection,
+                    analysis_by_candidate_id=analysis_by_candidate_id,
+                    child_ids_by_trajectory=trajectory_child_ids,
+                    generation_index=next_generation,
+                )
+                strict_improvement = any(threshold_improvements.values())
+                progress_configuration = None
+                continuation_refs = _aggregate_candidate_refs(
+                    trajectory.parent_refs
+                    for trajectory in threshold_trajectories.values()
+                    if not trajectory.exhausted
+                )
+            else:
+                threshold_trajectories = {}
+                threshold_improvements = None
+                selection = self._select(
+                    child_collection,
+                    _selection_reference_results(
+                        config,
+                        state,
+                        analysis_by_candidate_id,
+                        reference_analysis_results,
+                    ),
+                )
+                (
+                    strict_improvement,
+                    progress_configuration,
+                    accumulated_progress_refs,
+                ) = _single_progress_for_generation(
+                    config=config,
+                    state=state,
+                    collection=child_collection,
+                    selection=selection,
+                    analysis_by_candidate_id=analysis_by_candidate_id,
+                )
+                continuation_refs = (
+                    selection.survivor_refs
+                    or accumulated_progress_refs
+                    or selection.archive_refs
+                )
             analysis_by_candidate_id.update(
                 {
                     document["candidate_ref"]["candidate_id"]: document
@@ -1559,14 +1710,39 @@ class WorkflowRunner:
                 generation_index=next_generation,
                 candidate_count=len(child_refs),
                 analysis_result_count=len(child_collection.documents),
-                survivor_count=len(selection.survivor_refs),
-                strict_improvement=bool(selection.survivor_refs),
+                survivor_count=len(continuation_refs),
+                strict_improvement=strict_improvement,
+                threshold_improvements=threshold_improvements,
                 duplicate_only=(
                     dedup_report is not None
                     and dedup_report.input_count > 0
                     and dedup_report.kept_count == 0
                 ),
             )
+            if threshold_trajectories:
+                threshold_trajectories = apply_threshold_patience_state(
+                    threshold_trajectories,
+                    StoppingState.from_mapping(
+                        stopping_decision.metadata.get("stopping_state")
+                    ).threshold_states,
+                )
+
+            generation_extra_configuration: dict[str, Any] = {}
+            if dedup_report is not None:
+                generation_extra_configuration["offspring_deduplication"] = (
+                    dedup_report.to_dict()
+                )
+            if trajectory_deduplication:
+                generation_extra_configuration[
+                    "trajectory_offspring_deduplication"
+                ] = trajectory_deduplication
+            if threshold_trajectories:
+                generation_extra_configuration["threshold_trajectories"] = (
+                    threshold_trajectories_to_mapping(threshold_trajectories)
+                )
+            if progress_configuration is not None:
+                generation_extra_configuration["progress"] = progress_configuration
+
             generation = _generation_record(
                 generation_index=next_generation,
                 candidate_refs=child_refs,
@@ -1575,11 +1751,7 @@ class WorkflowRunner:
                 analysis_uris=_analysis_uri_map_from_documents(analysis_run.documents, analysis_paths),
                 parent_refs=tuple(parent_refs),
                 run_id=config.run_id,
-                extra_configuration=(
-                    {"offspring_deduplication": dedup_report.to_dict()}
-                    if dedup_report is not None
-                    else None
-                ),
+                extra_configuration=generation_extra_configuration,
                 extra_events=(
                     (
                         EvolutionEvent(
@@ -2957,6 +3129,40 @@ def _analysis_result_documents_from_state(
     return documents
 
 
+def _aggregate_candidate_refs(
+    groups: Iterable[Iterable[CandidateRef]],
+) -> tuple[CandidateRef, ...]:
+    by_id: dict[str, CandidateRef] = {}
+    for refs in groups:
+        for ref in refs:
+            by_id.setdefault(ref.candidate_id, ref)
+    return tuple(by_id[candidate_id] for candidate_id in sorted(by_id))
+
+
+def _trajectory_specs(config: WorkflowConfig):
+    data = dict(config.evolver.trajectory_thresholds)
+    if not data:
+        return ()
+    return build_threshold_trajectory_specs(
+        metric_name=str(data["metric_name"]),
+        direction=str(data["direction"]),
+        trajectories=dict(data["trajectories"]),
+    )
+
+
+def _trajectory_states_from_state(
+    state: EvolutionRunState,
+) -> dict[str, ThresholdTrajectoryState]:
+    if not state.generations:
+        return {}
+    payload = state.generations[-1].configuration.get("threshold_trajectories", {})
+    if not isinstance(payload, Mapping):
+        raise WorkflowConfigError(
+            "invalid evolution state: threshold_trajectories must be a mapping."
+        )
+    return threshold_trajectories_from_mapping(payload)
+
+
 def _parent_refs_for_next_generation(
     config: WorkflowConfig,
     state: EvolutionRunState,
@@ -2965,12 +3171,378 @@ def _parent_refs_for_next_generation(
     generations = tuple(state.generations)
     if not generations:
         return ()
+
+    if config.evolver.trajectory_thresholds:
+        active = active_parent_refs_by_trajectory(
+            _trajectory_states_from_state(state)
+        )
+        return _aggregate_candidate_refs(active.values())
+
     if config.evolver.initial_parent_policy == "all_generation_zero_candidates" and next_generation == 1:
         return tuple(generations[0].candidate_refs)
     latest = generations[-1]
     if config.evolver.selection_mode == "strict_pareto_feedback" and next_generation > 1:
-        return tuple(latest.survivor_refs)
+        return tuple(latest.survivor_refs or latest.archive_refs)
     return tuple(latest.survivor_refs or latest.archive_refs or latest.candidate_refs)
+
+
+def _analysis_results_for_refs(
+    refs: Iterable[CandidateRef],
+    analysis_by_candidate_id: Mapping[str, Mapping[str, Any]],
+) -> tuple[Mapping[str, Any], ...]:
+    documents = []
+    missing = []
+    for ref in refs:
+        document = analysis_by_candidate_id.get(ref.candidate_id)
+        if document is None:
+            missing.append(ref.candidate_id)
+        else:
+            documents.append(document)
+    if missing:
+        raise WorkflowConfigError(
+            "cannot reconstruct accumulated evolution progress: unresolved "
+            f"AnalysisResult(s) for {sorted(missing)}"
+        )
+    return tuple(documents)
+
+
+def _trajectory_selection_view(
+    results: Sequence[Mapping[str, Any]],
+    states: Mapping[str, ThresholdTrajectoryState],
+    *,
+    policy_id: str,
+) -> SelectionResult:
+    survivor_refs = _aggregate_candidate_refs(
+        state.survivor_refs for state in states.values()
+    )
+    archive_refs = _aggregate_candidate_refs(
+        state.archive_refs for state in states.values()
+    )
+    survivor_ids = {ref.candidate_id for ref in survivor_refs}
+    decisions = tuple(
+        SelectionDecision(
+            candidate_id=str(result["candidate_ref"]["candidate_id"]),
+            analysis_result_id=str(result["analysis_result_id"]),
+            selected=str(result["candidate_ref"]["candidate_id"]) in survivor_ids,
+            reason=(
+                "selected_by_threshold_trajectory"
+                if str(result["candidate_ref"]["candidate_id"]) in survivor_ids
+                else "not_selected_by_threshold_trajectory"
+            ),
+        )
+        for result in sorted(
+            results,
+            key=lambda item: (
+                str(item["candidate_ref"]["candidate_id"]),
+                str(item["analysis_result_id"]),
+            ),
+        )
+    )
+    rejected_refs = tuple(
+        CandidateRef(
+            candidate_id=str(result["candidate_ref"]["candidate_id"]),
+            candidate_uri=dict(result["candidate_ref"]).get("candidate_uri"),
+            structural_hash=dict(result["candidate_ref"]).get("structural_hash"),
+            lineage_hash=dict(result["candidate_ref"]).get("lineage_hash"),
+        )
+        for result in sorted(
+            results,
+            key=lambda item: str(item["candidate_ref"]["candidate_id"]),
+        )
+        if str(result["candidate_ref"]["candidate_id"]) not in survivor_ids
+    )
+    return SelectionResult(
+        policy_id=policy_id,
+        survivor_refs=survivor_refs,
+        rejected_refs=rejected_refs,
+        archive_refs=archive_refs,
+        decisions=decisions,
+        analysis_result_refs=tuple(
+            AnalysisResultRef.from_analysis_result_document(result)
+            for result in results
+        ),
+        configuration={
+            "mode": "independent_threshold_trajectories",
+            "trajectory_ids": sorted(states),
+        },
+    )
+
+
+def _initialize_threshold_trajectory_state(
+    config: WorkflowConfig,
+    collection: AnalysisResultCollection,
+) -> tuple[dict[str, ThresholdTrajectoryState], SelectionResult]:
+    objectives = tuple(
+        ObjectiveSpec(item["name"], item["direction"])  # type: ignore[arg-type]
+        for item in config.evolver.objectives
+    )
+    states = initialize_threshold_trajectories(
+        specs=_trajectory_specs(config),
+        analysis_results=collection.documents,
+        objectives=objectives,
+    )
+    if config.evolver.initial_parent_policy == "all_generation_zero_candidates":
+        states = {
+            threshold_id: ThresholdTrajectoryState(
+                threshold_id=state.threshold_id,
+                metric_name=state.metric_name,
+                direction=state.direction,
+                threshold=state.threshold,
+                generation_index=state.generation_index,
+                parent_refs=state.eligible_candidate_refs,
+                eligible_candidate_refs=state.eligible_candidate_refs,
+                survivor_refs=state.survivor_refs,
+                archive_refs=state.archive_refs,
+                improved=False,
+                exhausted=False,
+            )
+            for threshold_id, state in states.items()
+        }
+    return states, _trajectory_selection_view(
+        collection.documents,
+        states,
+        policy_id=f"{config.evolver.policy_id}:threshold-trajectories:g0",
+    )
+
+
+def _trajectory_children_by_id(
+    *,
+    states: Mapping[str, ThresholdTrajectoryState],
+    child_parent_by_id: Mapping[str, str],
+    candidate_ids: Iterable[str],
+) -> dict[str, tuple[str, ...]]:
+    ids = tuple(candidate_ids)
+    result = {}
+    for threshold_id, state in sorted(states.items()):
+        if state.exhausted:
+            continue
+        parent_ids = {ref.candidate_id for ref in state.parent_refs}
+        result[threshold_id] = tuple(
+            candidate_id
+            for candidate_id in ids
+            if child_parent_by_id.get(candidate_id) in parent_ids
+        )
+    return result
+
+
+def _advance_threshold_trajectory_state(
+    *,
+    config: WorkflowConfig,
+    state: EvolutionRunState,
+    collection: AnalysisResultCollection,
+    analysis_by_candidate_id: Mapping[str, Mapping[str, Any]],
+    child_ids_by_trajectory: Mapping[str, Sequence[str]],
+    generation_index: int,
+):
+    previous_states = _trajectory_states_from_state(state)
+    objectives = tuple(
+        ObjectiveSpec(item["name"], item["direction"])  # type: ignore[arg-type]
+        for item in config.evolver.objectives
+    )
+    current_by_id = {
+        str(document["candidate_ref"]["candidate_id"]): document
+        for document in collection.documents
+    }
+    updated = {}
+    improvements = {}
+
+    for threshold_id, previous in sorted(previous_states.items()):
+        if previous.exhausted:
+            updated[threshold_id] = previous
+            continue
+
+        allowed_ids = set(child_ids_by_trajectory.get(threshold_id, ()))
+        trajectory_results = tuple(
+            current_by_id[candidate_id]
+            for candidate_id in sorted(allowed_ids)
+            if candidate_id in current_by_id
+        )
+        eligible = []
+        for result in trajectory_results:
+            value = metric_value(result, previous.metric_name)
+            if value is None:
+                continue
+            passes = (
+                float(value) <= previous.threshold
+                if previous.direction == "at_most"
+                else float(value) >= previous.threshold
+            )
+            if passes:
+                eligible.append(result)
+
+        reference_results = _analysis_results_for_refs(
+            previous.archive_refs,
+            analysis_by_candidate_id,
+        )
+        trajectory_selection = select_strict_pareto_feedback(
+            trajectory_results,
+            objectives=objectives,
+            reference_results=reference_results,
+            thresholds={previous.metric_name: previous.threshold},
+            threshold_direction=previous.direction,
+            strict_ties=config.evolver.strict_ties,
+            policy_id=f"{config.evolver.policy_id}:{threshold_id}:g{generation_index}",
+        )
+        combined_lookup = {
+            **dict(analysis_by_candidate_id),
+            **current_by_id,
+        }
+        archive_documents = _analysis_results_for_refs(
+            trajectory_selection.archive_refs,
+            combined_lookup,
+        )
+        previous_signature = frontier_signature(
+            reference_results,
+            objectives=objectives,
+        )
+        current_signature = frontier_signature(
+            archive_documents,
+            objectives=objectives,
+        )
+        improved = current_signature != previous_signature
+        continuation_parents = (
+            trajectory_selection.survivor_refs
+            or trajectory_selection.archive_refs
+        )
+        updated[threshold_id] = ThresholdTrajectoryState(
+            threshold_id=previous.threshold_id,
+            metric_name=previous.metric_name,
+            direction=previous.direction,
+            threshold=previous.threshold,
+            generation_index=generation_index,
+            parent_refs=tuple(continuation_parents),
+            eligible_candidate_refs=tuple(
+                CandidateRef(
+                    candidate_id=str(result["candidate_ref"]["candidate_id"]),
+                    candidate_uri=dict(result["candidate_ref"]).get("candidate_uri"),
+                    structural_hash=dict(result["candidate_ref"]).get("structural_hash"),
+                    lineage_hash=dict(result["candidate_ref"]).get("lineage_hash"),
+                )
+                for result in eligible
+            ),
+            survivor_refs=trajectory_selection.survivor_refs,
+            archive_refs=trajectory_selection.archive_refs,
+            improved=improved,
+            exhausted=False,
+        )
+        improvements[threshold_id] = improved
+
+    selection = _trajectory_selection_view(
+        collection.documents,
+        updated,
+        policy_id=f"{config.evolver.policy_id}:threshold-trajectories:g{generation_index}",
+    )
+    return updated, improvements, selection
+
+
+def _progress_refs_from_generation(
+    generation: GenerationRecord,
+) -> tuple[CandidateRef, ...]:
+    payload = generation.configuration.get("progress", {})
+    if not isinstance(payload, Mapping):
+        return ()
+    return tuple(
+        CandidateRef.from_ref_document(item)
+        for item in payload.get("archive_refs", ())
+    )
+
+
+def _single_progress_for_generation(
+    *,
+    config: WorkflowConfig,
+    state: EvolutionRunState | None,
+    collection: AnalysisResultCollection,
+    selection: SelectionResult,
+    analysis_by_candidate_id: Mapping[str, Mapping[str, Any]],
+):
+    mode = config.evolver.selection_mode
+    previous_refs = (
+        _progress_refs_from_generation(state.generations[-1])
+        if state is not None and state.generations
+        else ()
+    )
+    previous_results = (
+        _analysis_results_for_refs(previous_refs, analysis_by_candidate_id)
+        if previous_refs
+        else ()
+    )
+
+    if mode == "fitness":
+        progress = accumulated_fitness_progress(
+            previous_results=previous_results,
+            candidate_results=collection.documents,
+            metric_name=config.evolver.metric_name,
+            direction=config.evolver.direction,
+            keep=config.evolver.keep,
+        )
+        return progress.improved, {"kind": "fitness", **progress.to_dict()}, progress.archive_refs
+
+    if mode in {"pareto", "strict_pareto"}:
+        objectives = tuple(
+            ObjectiveSpec(item["name"], item["direction"])  # type: ignore[arg-type]
+            for item in config.evolver.objectives
+        )
+        progress = accumulated_pareto_progress(
+            previous_frontier=previous_results,
+            candidate_results=collection.documents,
+            objectives=objectives,
+        )
+        return progress.improved, {"kind": "pareto", **progress.to_dict()}, progress.archive_refs
+
+    if mode == "strict_pareto_feedback":
+        objectives = tuple(
+            ObjectiveSpec(item["name"], item["direction"])  # type: ignore[arg-type]
+            for item in config.evolver.objectives
+        )
+        current_lookup = {
+            str(document["candidate_ref"]["candidate_id"]): document
+            for document in collection.documents
+        }
+        combined_lookup = {
+            **dict(analysis_by_candidate_id),
+            **current_lookup,
+        }
+        archive_documents = _analysis_results_for_refs(
+            selection.archive_refs,
+            combined_lookup,
+        )
+        previous_signature = (
+            frontier_signature(previous_results, objectives=objectives)
+            if previous_results
+            else ()
+        )
+        current_signature = frontier_signature(
+            archive_documents,
+            objectives=objectives,
+        )
+        improved = current_signature != previous_signature
+        payload = {
+            "kind": "strict_pareto_feedback",
+            "improved": improved,
+            "previous_signature": [list(item) for item in previous_signature],
+            "current_signature": [list(item) for item in current_signature],
+            "archive_refs": [ref.to_ref_dict() for ref in selection.archive_refs],
+        }
+        return improved, payload, tuple(selection.archive_refs)
+
+    if mode == "thresholds":
+        if config.evolver.patience is not None:
+            raise WorkflowConfigError(
+                "governed patience for selection_mode='thresholds' has no "
+                "ordered scientific truth source; use trajectory_thresholds "
+                "with strict_pareto_feedback instead."
+            )
+        return True, {
+            "kind": "legacy_threshold_filter",
+            "improved": True,
+            "archive_refs": [ref.to_ref_dict() for ref in selection.archive_refs],
+        }, tuple(selection.archive_refs)
+
+    raise WorkflowConfigError(
+        f"unsupported evolution selection mode for progress: {mode!r}"
+    )
+
+
 
 
 def _selection_reference_results(
@@ -3074,6 +3646,8 @@ def _stopping_decision_for_generation(
     survivor_count: int,
     strict_improvement: bool,
     duplicate_only: bool = False,
+    threshold_improvements: Mapping[str, bool] | None = None,
+    consume_patience: bool = True,
 ) -> StoppingDecision:
     return evaluate_stopping_conditions(
         generation_index=generation_index,
@@ -3084,6 +3658,8 @@ def _stopping_decision_for_generation(
         duplicate_only=duplicate_only,
         strict_improvement=strict_improvement,
         patience_state=_stopping_state_from_state(state),
+        threshold_improvements=threshold_improvements,
+        consume_patience=consume_patience,
     )
 
 
