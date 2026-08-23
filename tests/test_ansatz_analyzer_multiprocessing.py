@@ -228,7 +228,11 @@ class AnalyzerMultiprocessingTests(unittest.TestCase):
                 )
 
         self.assertEqual(raised.exception.reason, "multiprocessing_execution_failed")
-        self.assertIn("pickle", str(raised.exception).lower())
+        message = str(raised.exception).lower()
+        self.assertIn(
+            "analyzer multiprocessing failed without sequential fallback",
+            message,
+        )
 
     def test_worker_failure_reports_candidate_context(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
