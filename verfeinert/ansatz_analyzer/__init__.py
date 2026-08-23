@@ -10,6 +10,8 @@ from .config import (
 from .collections import (
     AnalysisResultCollection,
     AnalysisResultCollectionError,
+    cost_value,
+    metric_value,
 )
 from .comparison import (
     ComparisonCandidateRow,
@@ -41,8 +43,10 @@ from .models import (
 )
 from .materialization import (
     CircuitMaterializationError,
+    MaterializationCapability,
     MaterializedCircuit,
     StateCallableProvider,
+    inspect_materialization_capability,
     make_state_callable,
     materialize_candidate,
 )
@@ -61,7 +65,12 @@ from .ranking import (
     RankingResult,
     rank_analysis_results,
 )
-from .pipeline import AnalysisPipeline, analyze_and_write, analyze_candidates
+from .pipeline import (
+    AnalysisPipeline,
+    AnalysisPipelineExecutionError,
+    analyze_and_write,
+    analyze_candidates,
+)
 from .results import build_analysis_context, build_analysis_result_record
 from .validation import (
     AnalyzerValidationError,
@@ -74,6 +83,7 @@ from .validation import (
 __all__ = [
     "AnalysisContext",
     "AnalysisPipeline",
+    "AnalysisPipelineExecutionError",
     "AnalysisResultCollection",
     "AnalysisResultCollectionError",
     "AnalysisResultRecord",
@@ -94,6 +104,7 @@ __all__ = [
     "CompatibilityIssue",
     "CompatibilityReport",
     "CostRecord",
+    "MaterializationCapability",
     "MaterializedCircuit",
     "MetricRecord",
     "ObjectiveSpec",
@@ -113,11 +124,14 @@ __all__ = [
     "compare_analysis_collections",
     "compatibility_report",
     "compute_pareto_classifications",
+    "cost_value",
     "dominates",
     "load_candidate_document",
     "load_candidate_views",
+    "inspect_materialization_capability",
     "make_state_callable",
     "materialize_candidate",
+    "metric_value",
     "rank_analysis_results",
     "read_comparison_result_json",
     "validate_analysis_result_document",

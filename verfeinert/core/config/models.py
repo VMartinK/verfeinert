@@ -27,9 +27,10 @@ SUPPORTED_EXECUTION_MODES: tuple[ExecutionMode, ...] = ("sequential", "multiproc
 SUPPORTED_EXECUTION_SCOPES: tuple[ExecutionScope, ...] = ("candidate",)
 SCIENTIFIC_MULTIPROCESSING_DEFERRED_MESSAGE = (
     "multiprocessing executor primitives are available in verfeinert.core, "
-    "but multiprocessing integration for scientific candidate pipelines is "
-    "deferred to v0.4.0; use execution.mode='sequential' for v0.3.x scientific "
-    "analysis, evolution, and workflow runs."
+    "but this public boundary does not execute analyzer candidate science "
+    "directly. Use analyzer/workflow analysis execution for candidate-level "
+    "multiprocessing, or use execution.mode='sequential' for direct evolver "
+    "state construction."
 )
 
 

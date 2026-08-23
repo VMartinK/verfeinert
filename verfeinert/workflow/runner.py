@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
@@ -40,12 +40,19 @@ from verfeinert.ansatz_evolver import (
     CandidateRef,
     EvolutionEvent,
     EvolutionRunState,
+    EvolutionStateMachine,
+    EvolutionStateMachineError,
     GenerationRecord,
+    StoppingDecision,
+    StoppingPolicy,
+    StoppingState,
+    build_analyzed_generation_record,
+    evaluate_stopping_conditions,
+    evolution_execution_metadata,
     produce_candidate_from_request,
     read_evolution_run_json,
     write_evolution_run_json,
 )
-from verfeinert.ansatz_evolver.evaluation import ingest_analysis_results
 from verfeinert.ansatz_evolver.mutation import (
     MutationPolicy,
     MutationRecipe,
@@ -63,18 +70,40 @@ from verfeinert.ansatz_evolver.selection import (
 )
 from verfeinert.ansatz_generator import (
     CandidateJsonExportConfig,
+    CanonicalMutationFactory,
+    GeneratorValidationError,
     StagedPackageJsonExportConfig,
     build_sanz19_candidate_records,
+    validate_candidate_constraints,
     write_canonical_staged_package_json,
     write_staged_package_json,
 )
 from verfeinert.core.hashing import hash_file, stable_hash
 from verfeinert.core.io import ensure_output_root, read_json
 from verfeinert.core.io.serialization import to_json_safe
-from verfeinert.core.config import SCIENTIFIC_MULTIPROCESSING_DEFERRED_MESSAGE
 
+from .checkpoints import (
+    build_workflow_checkpoint_document,
+    read_workflow_checkpoint_json,
+    workflow_checkpoint_fingerprint,
+    write_workflow_checkpoint_json,
+)
 from .config import WorkflowConfig, WorkflowConfigError
+from .events import WorkflowEvent, WorkflowEventRecorder
+from .manifests import (
+    build_traceability_document,
+    build_workflow_manifest_document,
+    write_traceability_csv,
+    write_traceability_json,
+    write_workflow_manifest_json,
+)
 from .provenance import workflow_provenance
+from .reports import (
+    build_workflow_report_document,
+    write_workflow_report_json,
+    write_workflow_report_markdown,
+)
+from .visualization import write_workflow_publication_visualizations
 
 
 EVOLUTION_FINGERPRINT_VERSION = "verfeinert.workflow.evolution_fingerprint.v1"
@@ -100,6 +129,13 @@ class WorkflowResult:
     comparison_json_paths: tuple[Path, ...] = ()
     comparison_csv_paths: tuple[Path, ...] = ()
     visualization_paths: tuple[Path, ...] = ()
+    checkpoint_path: Path | None = None
+    event_log_path: Path | None = None
+    manifest_path: Path | None = None
+    traceability_json_path: Path | None = None
+    traceability_csv_path: Path | None = None
+    report_json_path: Path | None = None
+    report_markdown_path: Path | None = None
     candidate_ids: tuple[str, ...] = ()
     analysis_result_ids: tuple[str, ...] = ()
     survivor_candidate_ids: tuple[str, ...] = ()
@@ -141,6 +177,25 @@ class WorkflowResult:
                 "comparison_json_paths": [str(path) for path in self.comparison_json_paths],
                 "comparison_csv_paths": [str(path) for path in self.comparison_csv_paths],
                 "visualization_paths": [str(path) for path in self.visualization_paths],
+                "checkpoint_path": str(self.checkpoint_path) if self.checkpoint_path else None,
+                "event_log_path": str(self.event_log_path) if self.event_log_path else None,
+                "manifest_path": str(self.manifest_path) if self.manifest_path else None,
+                "traceability_json_path": (
+                    str(self.traceability_json_path)
+                    if self.traceability_json_path
+                    else None
+                ),
+                "traceability_csv_path": (
+                    str(self.traceability_csv_path)
+                    if self.traceability_csv_path
+                    else None
+                ),
+                "report_json_path": str(self.report_json_path) if self.report_json_path else None,
+                "report_markdown_path": (
+                    str(self.report_markdown_path)
+                    if self.report_markdown_path
+                    else None
+                ),
                 "candidate_ids": list(self.candidate_ids),
                 "analysis_result_ids": list(self.analysis_result_ids),
                 "survivor_candidate_ids": list(self.survivor_candidate_ids),
@@ -182,6 +237,85 @@ class _AnalysisRunOutput:
     generated_paths: tuple[Path, ...] = ()
 
 
+@dataclass(frozen=True)
+class _GenerationStageOutput:
+    generated_package: Any
+    candidate_artifacts: tuple[_CandidateArtifact, ...]
+    staged_artifacts: tuple[dict[str, Any], ...]
+
+
+@dataclass(frozen=True)
+class _AnalysisStageOutput:
+    analysis_result_paths: tuple[Path, ...]
+    analysis_collection: AnalysisResultCollection | None
+
+
+@dataclass(frozen=True)
+class _EvolutionStageOutput:
+    evolution_path: Path | None = None
+    generation_record: GenerationRecord | None = None
+    survivor_candidate_ids: tuple[str, ...] = ()
+    rejected_candidate_ids: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True)
+class _PostprocessingStageOutput:
+    ranking_json_path: Path | None = None
+    ranking_csv_path: Path | None = None
+    pareto_json_path: Path | None = None
+    pareto_csv_path: Path | None = None
+    analysis_csv_path: Path | None = None
+    comparison_json_paths: tuple[Path, ...] = ()
+    comparison_csv_paths: tuple[Path, ...] = ()
+    visualization_paths: tuple[Path, ...] = ()
+
+
+@dataclass(frozen=True)
+class _CheckpointArtifactSources:
+    candidates: tuple[str, ...] = ()
+    staged_packages: tuple[str, ...] = ()
+    analysis_results: tuple[str, ...] = ()
+    comparison_results: tuple[str, ...] = ()
+    evolution_run: str | None = None
+
+
+@dataclass(frozen=True)
+class _WorkflowStagePlan:
+    scientific: tuple[str, ...]
+    postprocessing: tuple[str, ...]
+
+    def scientific_requested(self, stage: str) -> bool:
+        return stage in self.scientific
+
+    def postprocessing_requested(self, stage: str) -> bool:
+        return stage in self.postprocessing
+
+    def to_dict(self) -> dict[str, list[str]]:
+        return {
+            "scientific": list(self.scientific),
+            "postprocessing": list(self.postprocessing),
+        }
+
+
+from verfeinert.ansatz_evolver.progress import (
+    ThresholdTrajectoryState,
+    accumulated_fitness_progress,
+    accumulated_pareto_progress,
+    active_parent_refs_by_trajectory,
+    apply_threshold_patience_state,
+    build_threshold_trajectory_specs,
+    frontier_signature,
+    initialize_threshold_trajectories,
+    threshold_trajectories_from_mapping,
+    threshold_trajectories_to_mapping,
+)
+from verfeinert.ansatz_evolver.selection.fitness import (
+    SelectionDecision,
+    SelectionResult,
+    metric_value,
+)
+
+
 class WorkflowRunner:
     """Coordinate JSON-first Verfeinert workflows through public APIs."""
 
@@ -203,10 +337,60 @@ class WorkflowRunner:
         analysis_result_sources: Sequence[str | Path | Mapping[str, Any]] = (),
         evolution_run_source: str | Path | Mapping[str, Any] | None = None,
         candidate_factory: Any | None = None,
+        event_sink: Callable[[WorkflowEvent], Any] | None = None,
     ) -> WorkflowResult:
         """Run only the requested workflow operations over compatible artifacts."""
         config = self.config
-        _reject_unsupported_scientific_multiprocessing(config)
+        event_recorder = _workflow_event_recorder(config, event_sink=event_sink)
+        event_recorder.emit(
+            "run_started",
+            status="running",
+            metadata={
+                "scientific_execution": list(config.scientific_execution),
+                "postprocessing": list(config.postprocessing),
+            },
+        )
+        try:
+            return self._run_impl(
+                candidate_records=candidate_records,
+                metric_callables=metric_callables,
+                reference_analysis_results=reference_analysis_results,
+                candidate_sources=candidate_sources,
+                staged_package_sources=staged_package_sources,
+                analysis_result_sources=analysis_result_sources,
+                evolution_run_source=evolution_run_source,
+                candidate_factory=candidate_factory,
+                event_recorder=event_recorder,
+            )
+        except Exception as exc:
+            event_recorder.emit(
+                "run_failed",
+                status="failed",
+                reason="exception",
+                message=str(exc),
+                metadata={"error_type": type(exc).__name__},
+            )
+            raise
+
+    def _run_impl(
+        self,
+        *,
+        candidate_records: Sequence[Mapping[str, Any] | Any] | None = None,
+        metric_callables: Mapping[str, Any] | None = None,
+        reference_analysis_results: Sequence[Mapping[str, Any]] = (),
+        candidate_sources: Sequence[str | Path | Mapping[str, Any]] = (),
+        staged_package_sources: Sequence[str | Path | Mapping[str, Any]] = (),
+        analysis_result_sources: Sequence[str | Path | Mapping[str, Any]] = (),
+        evolution_run_source: str | Path | Mapping[str, Any] | None = None,
+        candidate_factory: Any | None = None,
+        event_recorder: WorkflowEventRecorder,
+    ) -> WorkflowResult:
+        """Run only the requested workflow operations over compatible artifacts."""
+        config = self.config
+        stage_plan = _workflow_stage_plan(config)
+        resume_checkpoint = _load_resume_checkpoint(config)
+        _validate_checkpoint_stage_resume(stage_plan, resume_checkpoint)
+        checkpoint_sources = _checkpoint_artifact_sources(resume_checkpoint)
         output_root = ensure_output_root(config.output_root, input_roots=config.input_roots)
         run_root = output_root / config.run_id
         package_output_root = run_root / "candidates"
@@ -214,8 +398,8 @@ class WorkflowRunner:
         evolution_root = run_root / "evolution"
         derived_root = run_root / "derived_outputs"
 
-        requested_scientific = config.scientific_execution
-        requested_postprocessing = config.postprocessing
+        requested_scientific = stage_plan.scientific
+        requested_postprocessing = stage_plan.postprocessing
         executed: list[str] = []
         warnings: list[str] = []
         produced_artifacts: list[dict[str, Any]] = []
@@ -223,19 +407,32 @@ class WorkflowRunner:
         reused_artifacts: list[dict[str, Any]] = []
 
         configured = config.artifacts
-        all_candidate_sources = (*configured.candidates, *tuple(candidate_sources))
-        all_staged_sources = (*configured.staged_packages, *tuple(staged_package_sources))
-        all_analysis_sources = (*configured.analysis_results, *tuple(analysis_result_sources))
-        all_comparison_result_sources = configured.comparison_results
+        all_candidate_sources = (*checkpoint_sources.candidates, *configured.candidates, *tuple(candidate_sources))
+        all_staged_sources = (*checkpoint_sources.staged_packages, *configured.staged_packages, *tuple(staged_package_sources))
+        all_analysis_sources = (*checkpoint_sources.analysis_results, *configured.analysis_results, *tuple(analysis_result_sources))
+        all_comparison_result_sources = (*checkpoint_sources.comparison_results, *configured.comparison_results)
         resolved_evolution_source = (
             evolution_run_source
             if evolution_run_source is not None
-            else configured.evolution_run
+            else configured.evolution_run or checkpoint_sources.evolution_run
         )
+
+        if resume_checkpoint is not None:
+            record = _artifact_record(
+                "workflow_checkpoint",
+                _source_uri(config.resume.checkpoint),
+                document_id=resume_checkpoint["checkpoint_id"],
+            )
+            consumed_artifacts.append(record)
+            reused_artifacts.append(record)
 
         candidate_artifacts = _load_candidate_artifacts(all_candidate_sources)
         staged_artifacts = _load_staged_package_artifacts(all_staged_sources)
         candidate_artifacts.extend(_candidate_artifacts_from_staged_packages(staged_artifacts))
+        _validate_candidate_artifacts_against_constraints(
+            candidate_artifacts,
+            config.generation.constraints,
+        )
         for artifact in candidate_artifacts:
             consumed_artifacts.append(_artifact_record("candidate", artifact.uri))
         for package in staged_artifacts:
@@ -255,76 +452,62 @@ class WorkflowRunner:
             reused_artifacts.append(record)
 
         generated_package = None
-        if "generate" in requested_scientific:
-            records = tuple(candidate_records) if candidate_records is not None else tuple(self._generate_records())
-            if not records:
-                raise WorkflowConfigError("Workflow generation produced no candidate records.")
-            generated_package = write_staged_package_json(
-                records,
-                config=self._staged_package_config(package_output_root),
+        if stage_plan.scientific_requested("generate"):
+            event_recorder.emit("stage_started", stage="generate", status="running")
+            generation_output = self._run_generation_stage(
+                candidate_records=candidate_records,
+                package_output_root=package_output_root,
+                produced_artifacts=produced_artifacts,
             )
-            if generated_package.package_root is None or generated_package.staged_package_path is None:
-                raise RuntimeError("Staged package exporter did not return paths.")
+            generated_package = generation_output.generated_package
             executed.append("generate")
-            produced_artifacts.extend(
-                _staged_package_records(
-                    generated_package.staged_package_path,
-                    generated_package.candidate_paths,
-                ),
+            candidate_artifacts = list(generation_output.candidate_artifacts)
+            staged_artifacts = list(generation_output.staged_artifacts)
+            event_recorder.emit(
+                "stage_completed",
+                stage="generate",
+                status="completed",
+                metadata={
+                    "candidate_count": len(candidate_artifacts),
+                    "staged_package_count": len(staged_artifacts),
+                },
             )
-            candidate_artifacts = [
-                _CandidateArtifact(document, str(path))
-                for document, path in zip(
-                    generated_package.candidates,
-                    generated_package.candidate_paths,
-                    strict=True,
-                )
-            ]
-            staged_artifacts = [
-                {
-                    "document": generated_package.package,
-                    "uri": str(generated_package.staged_package_path),
-                }
-            ]
         elif candidate_records is not None:
             raise WorkflowConfigError("candidate_records require the generate operation.")
 
         analysis_result_paths: tuple[Path, ...] = ()
         analysis_collection: AnalysisResultCollection | None = None
-        if "analyze" in requested_scientific:
-            analysis_sources_for_pipeline = _analysis_input_sources(
+        if stage_plan.scientific_requested("analyze"):
+            event_recorder.emit("stage_started", stage="analyze", status="running")
+            event_recorder.emit("analysis_started", stage="analyze", status="running")
+            analysis_output = self._run_analysis_stage(
                 generated_package=generated_package,
+                candidate_artifacts=candidate_artifacts,
                 candidate_sources=all_candidate_sources,
                 staged_package_sources=all_staged_sources,
-            )
-            if not analysis_sources_for_pipeline:
-                raise WorkflowConfigError("requested analysis has no Candidate/StagedPackage input.")
-            analyzer_config = self._analyzer_config(
-                _input_roots_for_sources(analysis_sources_for_pipeline, fallback=config.input_roots),
-                analysis_root,
-            )
-            analysis_run = self._run_analysis(
-                candidates=tuple(artifact.document for artifact in candidate_artifacts),
-                input_sources=analysis_sources_for_pipeline,
-                analyzer_config=analyzer_config,
-                metric_callables=metric_callables,
+                analysis_sources=all_analysis_sources,
+                analysis_root=analysis_root,
                 package_output_root=package_output_root,
-                package_id=f"{config.run_id}-analysis-reuse-miss-package",
-                reuse_artifacts=(
-                    _load_analysis_result_artifacts(all_analysis_sources)
-                    if _analysis_result_reuse_enabled(config)
-                    else ()
-                ),
+                metric_callables=metric_callables,
                 consumed_artifacts=consumed_artifacts,
                 reused_artifacts=reused_artifacts,
                 produced_artifacts=produced_artifacts,
             )
-            analysis_result_paths = analysis_run.paths
-            analysis_collection = AnalysisResultCollection.from_records(
-                analysis_run.documents,
-                collection_id=f"{config.run_id}:analysis",
-            )
+            analysis_result_paths = analysis_output.analysis_result_paths
+            analysis_collection = analysis_output.analysis_collection
             executed.append("analyze")
+            event_recorder.emit(
+                "analysis_completed",
+                stage="analyze",
+                status="completed",
+                metadata={"analysis_result_count": len(analysis_result_paths)},
+            )
+            event_recorder.emit(
+                "stage_completed",
+                stage="analyze",
+                status="completed",
+                metadata={"analysis_result_count": len(analysis_result_paths)},
+            )
         elif all_analysis_sources:
             analysis_collection = AnalysisResultCollection.from_sources(
                 all_analysis_sources,
@@ -338,14 +521,14 @@ class WorkflowRunner:
         generation_record: GenerationRecord | None = None
         survivor_candidate_ids: tuple[str, ...] = ()
         rejected_candidate_ids: tuple[str, ...] = ()
-        if "evolve" in requested_scientific:
-            if config.campaign_type == "individual":
-                raise WorkflowConfigError("individual campaigns must not execute evolution.")
-            state, generated_during_evolution = self._run_evolution(
+        if stage_plan.scientific_requested("evolve"):
+            event_recorder.emit("stage_started", stage="evolve", status="running")
+            evolution_output = self._run_evolution_stage(
                 analysis_collection=analysis_collection,
                 candidate_artifacts=candidate_artifacts,
                 evolution_source=resolved_evolution_source,
                 candidate_factory=candidate_factory,
+                metric_callables=metric_callables,
                 reference_analysis_results=reference_analysis_results,
                 analysis_result_paths=analysis_result_paths,
                 analysis_reuse_artifacts=(
@@ -359,26 +542,24 @@ class WorkflowRunner:
                 reused_artifacts=reused_artifacts,
                 executed=executed,
                 produced_artifacts=produced_artifacts,
+                evolution_root=evolution_root,
             )
-            evolution_path = write_evolution_run_json(
-                state,
-                output_root=evolution_root,
-                input_roots=_evolution_input_roots(config, generated_during_evolution, analysis_root),
-            )
-            produced_artifacts.append(_artifact_record("evolution_run", str(evolution_path)))
-            generation_record = state.generations[-1] if state.generations else None
-            survivor_candidate_ids = (
-                tuple(ref.candidate_id for ref in generation_record.survivor_refs)
-                if generation_record is not None
-                else ()
-            )
-            rejected_candidate_ids = (
-                tuple(ref.candidate_id for ref in generation_record.rejected_refs)
-                if generation_record is not None
-                else ()
-            )
+            evolution_path = evolution_output.evolution_path
+            generation_record = evolution_output.generation_record
+            survivor_candidate_ids = evolution_output.survivor_candidate_ids
+            rejected_candidate_ids = evolution_output.rejected_candidate_ids
             if "evolve" not in executed:
                 executed.append("evolve")
+            event_recorder.emit(
+                "stage_completed",
+                stage="evolve",
+                status="completed",
+                metadata={
+                    "evolution_run_path": str(evolution_path) if evolution_path else None,
+                    "survivor_count": len(survivor_candidate_ids),
+                    "rejected_count": len(rejected_candidate_ids),
+                },
+            )
         elif resolved_evolution_source is not None:
             consumed_artifacts.append(_artifact_record("evolution_run", _source_uri(resolved_evolution_source)))
             reused_artifacts.append(_artifact_record("evolution_run", _source_uri(resolved_evolution_source)))
@@ -392,156 +573,95 @@ class WorkflowRunner:
             else:
                 raise WorkflowConfigError("requested postprocessing has no AnalysisResult input.")
 
-        ranking_json_path: Path | None = None
-        ranking_csv_path: Path | None = None
-        pareto_json_path: Path | None = None
-        pareto_csv_path: Path | None = None
-        analysis_csv_path: Path | None = None
-        comparison_json_paths: list[Path] = []
-        comparison_csv_paths: list[Path] = []
-        visualization_paths: list[Path] = []
-        ranking_result = None
-        pareto_result = None
-        computed_comparison_results: list[ComparisonResult] = []
-        if "ranking" in requested_postprocessing:
-            collection = _require_collection(analysis_collection)
-            ranking_config = config.analyzer.ranking or RankingConfig(
-                score_components={"cost.structural_cost": 1.0},
-                combination="weighted_sum",
-                ascending=True,
+        if requested_postprocessing:
+            event_recorder.emit("stage_started", stage="postprocessing", status="running")
+        postprocessing_output = self._run_postprocessing_stage(
+            stage_plan=stage_plan,
+            analysis_collection=analysis_collection,
+            analysis_result_paths=analysis_result_paths,
+            analysis_sources=all_analysis_sources,
+            comparison_result_sources=all_comparison_result_sources,
+            loaded_comparison_results=loaded_comparison_results,
+            evolution_source=evolution_path or resolved_evolution_source,
+            derived_root=derived_root,
+            warnings=warnings,
+            executed=executed,
+            produced_artifacts=produced_artifacts,
+        )
+        ranking_json_path = postprocessing_output.ranking_json_path
+        ranking_csv_path = postprocessing_output.ranking_csv_path
+        pareto_json_path = postprocessing_output.pareto_json_path
+        pareto_csv_path = postprocessing_output.pareto_csv_path
+        analysis_csv_path = postprocessing_output.analysis_csv_path
+        comparison_json_paths = postprocessing_output.comparison_json_paths
+        comparison_csv_paths = postprocessing_output.comparison_csv_paths
+        visualization_paths = postprocessing_output.visualization_paths
+        if requested_postprocessing:
+            event_recorder.emit(
+                "stage_completed",
+                stage="postprocessing",
+                status="completed",
+                metadata={"executed_operations": list(dict.fromkeys(executed))},
             )
-            ranking_result = rank_analysis_results(collection, config=ranking_config)
-            if not ranking_result.ranked_candidate_ids and len(collection):
-                raise WorkflowConfigError(
-                    "requested ranking metric is missing or unavailable: "
-                    + "; ".join(ranking_result.warnings),
-                )
-            ranking_json = write_ranking_json(
-                ranking_result,
-                output_root=derived_root,
-                run_id=config.run_id,
-                input_roots=_postprocessing_input_roots(config, analysis_result_paths, all_analysis_sources),
-            )
-            ranking_csv = write_ranking_csv(
-                ranking_result,
-                output_root=derived_root,
-                run_id=config.run_id,
-                input_roots=_postprocessing_input_roots(config, analysis_result_paths, all_analysis_sources),
-            )
-            ranking_json_path = ranking_json.path
-            ranking_csv_path = ranking_csv.path
-            warnings.extend(ranking_result.warnings)
-            executed.append("ranking")
-            produced_artifacts.extend([ranking_json.to_dict(), ranking_csv.to_dict()])
-        if "pareto" in requested_postprocessing:
-            collection = _require_collection(analysis_collection)
-            pareto_config = config.analyzer.pareto or ParetoConfig()
-            pareto_result = compute_pareto_classifications(collection, config=pareto_config)
-            if not pareto_result.frontier_candidate_ids and len(collection) and pareto_result.warnings:
-                raise WorkflowConfigError(
-                    "requested Pareto objective is missing or unavailable: "
-                    + "; ".join(pareto_result.warnings),
-                )
-            pareto_json = write_pareto_json(
-                pareto_result,
-                output_root=derived_root,
-                run_id=config.run_id,
-                input_roots=_postprocessing_input_roots(config, analysis_result_paths, all_analysis_sources),
-            )
-            pareto_json_path = pareto_json.path
-            produced_artifacts.append(pareto_json.to_dict())
-            warnings.extend(pareto_result.warnings)
-            executed.append("pareto")
-            if "export_csv" in requested_postprocessing:
-                pareto_csv = write_pareto_csv(
-                    pareto_result,
-                    output_root=derived_root,
-                    run_id=config.run_id,
-                    input_roots=_postprocessing_input_roots(config, analysis_result_paths, all_analysis_sources),
-                )
-                pareto_csv_path = pareto_csv.path
-                produced_artifacts.append(pareto_csv.to_dict())
-        if "comparison" in requested_postprocessing:
-            if not config.comparisons:
-                raise WorkflowConfigError("requested comparison requires explicit comparison sources.")
-            for comparison_config in config.comparisons:
-                sources = tuple(
-                    ComparisonSource.from_sources(
-                        source.source_id,
-                        source.analysis_results,
-                        role=source.role,
-                        label=source.label,
-                        metadata=source.metadata,
-                    )
-                    for source in comparison_config.sources
-                )
-                comparison = compare_analysis_collections(
-                    sources,
-                    config=comparison_config.config,
-                )
-                computed_comparison_results.append(comparison)
-                comparison_json = write_comparison_json(
-                    comparison,
-                    output_root=derived_root,
-                    run_id=config.run_id,
-                    input_roots=_comparison_input_roots(config, comparison_config),
-                )
-                comparison_json_paths.append(comparison_json.path)
-                produced_artifacts.append(comparison_json.to_dict())
-                if "export_csv" in requested_postprocessing:
-                    comparison_csv = write_comparison_csv(
-                        comparison,
-                        output_root=derived_root,
-                        run_id=config.run_id,
-                        input_roots=_comparison_input_roots(config, comparison_config),
-                    )
-                    comparison_csv_paths.append(comparison_csv.path)
-                    produced_artifacts.append(comparison_csv.to_dict())
-            executed.append("comparison")
-        if "export_csv" in requested_postprocessing:
-            if loaded_comparison_results and "comparison" not in requested_postprocessing:
-                for comparison in loaded_comparison_results:
-                    comparison_csv = write_comparison_csv(
-                        comparison,
-                        output_root=derived_root,
-                        run_id=config.run_id,
-                        input_roots=_comparison_result_input_roots(config, all_comparison_result_sources),
-                    )
-                    comparison_csv_paths.append(comparison_csv.path)
-                    produced_artifacts.append(comparison_csv.to_dict())
-            elif (
-                "ranking" not in requested_postprocessing
-                and "pareto" not in requested_postprocessing
-                and "comparison" not in requested_postprocessing
-            ):
-                collection = _require_collection(analysis_collection)
-                analysis_csv = write_analysis_results_csv(
-                    collection,
-                    output_root=derived_root,
-                    run_id=config.run_id,
-                    input_roots=_postprocessing_input_roots(config, analysis_result_paths, all_analysis_sources),
-                )
-                analysis_csv_path = analysis_csv.path
-                produced_artifacts.append(analysis_csv.to_dict())
-            executed.append("export_csv")
-        if "visualization" in requested_postprocessing:
-            visualization_paths.extend(
-                _write_requested_visualizations(
-                    config=config,
-                    derived_root=derived_root,
-                    analysis_collection=analysis_collection,
-                    ranking_result=ranking_result,
-                    pareto_result=pareto_result,
-                    comparison_results=(
-                        tuple(computed_comparison_results)
-                        or tuple(loaded_comparison_results)
-                    ),
+
+        checkpoint_path: Path | None = None
+        if config.checkpoint.enabled:
+            checkpoint_doc = build_workflow_checkpoint_document(
+                config=config,
+                completed_stages=tuple(dict.fromkeys(executed)),
+                stage_plan=stage_plan.to_dict(),
+                artifact_refs=_workflow_checkpoint_artifact_refs(
+                    candidate_artifacts=candidate_artifacts,
+                    staged_artifacts=staged_artifacts,
+                    analysis_result_paths=analysis_result_paths,
+                    analysis_sources=all_analysis_sources,
+                    comparison_result_sources=all_comparison_result_sources,
                     evolution_source=evolution_path or resolved_evolution_source,
-                    input_roots=_postprocessing_input_roots(config, analysis_result_paths, all_analysis_sources),
+                    ranking_json_path=ranking_json_path,
+                    ranking_csv_path=ranking_csv_path,
+                    pareto_json_path=pareto_json_path,
+                    pareto_csv_path=pareto_csv_path,
+                    analysis_csv_path=analysis_csv_path,
+                    comparison_json_paths=comparison_json_paths,
+                    comparison_csv_paths=comparison_csv_paths,
+                    visualization_paths=visualization_paths,
+                ),
+                consumed_artifacts=consumed_artifacts,
+                produced_artifacts=produced_artifacts,
+                reused_artifacts=reused_artifacts,
+            )
+            checkpoint_path = write_workflow_checkpoint_json(
+                checkpoint_doc,
+                _workflow_checkpoint_path(run_root),
+            )
+            produced_artifacts.append(
+                _artifact_record(
+                    "workflow_checkpoint",
+                    str(checkpoint_path),
+                    document_id=checkpoint_doc["checkpoint_id"],
                 ),
             )
-            produced_artifacts.extend(_path_records("figure", visualization_paths))
-            executed.append("visualization")
+            event_recorder.emit(
+                "checkpoint_written",
+                status="completed",
+                metadata={"checkpoint_path": str(checkpoint_path)},
+            )
+
+        warnings.extend(event_recorder.warnings)
+        for warning in tuple(dict.fromkeys(warnings)):
+            event_recorder.emit(
+                "warning",
+                status="warning",
+                message=warning,
+            )
+        event_recorder.emit(
+            "run_completed",
+            status="completed",
+            metadata={"executed_operations": list(dict.fromkeys(executed))},
+        )
+        event_log_path = event_recorder.event_log_path
+        if event_log_path is not None:
+            produced_artifacts.append(_artifact_record("workflow_event_log", str(event_log_path)))
 
         candidate_ids = tuple(
             dict.fromkeys(
@@ -555,6 +675,113 @@ class WorkflowRunner:
                 candidate_ids = analysis_collection.candidate_ids
         else:
             analysis_result_ids = ()
+
+        manifest_root = run_root / "manifest"
+        evolution_trace_source = evolution_path or resolved_evolution_source
+        final_stopping_reason = _workflow_final_stopping_reason(evolution_trace_source)
+        traceability_rows = _workflow_traceability_rows(
+            run_id=config.run_id,
+            candidate_ids=candidate_ids,
+            candidate_artifacts=candidate_artifacts,
+            analysis_collection=analysis_collection,
+            evolution_source=evolution_trace_source,
+            final_stopping_reason=final_stopping_reason,
+        )
+        traceability_document = build_traceability_document(
+            run_id=config.run_id,
+            rows=traceability_rows,
+        )
+        traceability_json_path = write_traceability_json(traceability_document, manifest_root)
+        traceability_csv_path = write_traceability_csv(traceability_rows, manifest_root)
+        produced_artifacts.extend(
+            [
+                _artifact_record("workflow_traceability", str(traceability_json_path)),
+                _artifact_record("workflow_traceability_csv", str(traceability_csv_path)),
+            ],
+        )
+        report_json_path: Path | None = None
+        report_markdown_path: Path | None = None
+        report_artifact_paths = _workflow_manifest_artifact_paths(
+            generated_package=generated_package,
+            analysis_result_paths=analysis_result_paths,
+            evolution_source=evolution_trace_source,
+            ranking_json_path=ranking_json_path,
+            ranking_csv_path=ranking_csv_path,
+            pareto_json_path=pareto_json_path,
+            pareto_csv_path=pareto_csv_path,
+            analysis_csv_path=analysis_csv_path,
+            comparison_json_paths=comparison_json_paths,
+            comparison_csv_paths=comparison_csv_paths,
+            visualization_paths=visualization_paths,
+            checkpoint_path=checkpoint_path,
+            event_log_path=event_log_path,
+            traceability_json_path=traceability_json_path,
+            traceability_csv_path=traceability_csv_path,
+            report_json_path=None,
+            report_markdown_path=None,
+        )
+        if stage_plan.postprocessing_requested("report"):
+            if "report" not in executed:
+                executed.append("report")
+            report_root = run_root / "reports"
+            report_document = build_workflow_report_document(
+                config=config,
+                run_root=run_root,
+                executed_operations=tuple(dict.fromkeys(executed)),
+                candidate_ids=candidate_ids,
+                analysis_result_ids=analysis_result_ids,
+                survivor_candidate_ids=survivor_candidate_ids,
+                rejected_candidate_ids=rejected_candidate_ids,
+                analysis_collection=analysis_collection,
+                evolution_source=evolution_trace_source,
+                ranking_json_path=ranking_json_path,
+                pareto_json_path=pareto_json_path,
+                artifact_paths=report_artifact_paths,
+                warnings=warnings,
+                final_stopping_reason=final_stopping_reason,
+            )
+            report_json_path = write_workflow_report_json(report_document, report_root)
+            report_markdown_path = write_workflow_report_markdown(report_document, report_root)
+            produced_artifacts.extend(
+                [
+                    _artifact_record("workflow_report", str(report_json_path)),
+                    _artifact_record("workflow_report_markdown", str(report_markdown_path)),
+                ],
+            )
+        manifest_document = build_workflow_manifest_document(
+            config=config,
+            run_root=run_root,
+            stage_plan=stage_plan.to_dict(),
+            executed_operations=tuple(dict.fromkeys(executed)),
+            consumed_artifacts=consumed_artifacts,
+            produced_artifacts=produced_artifacts,
+            reused_artifacts=reused_artifacts,
+            artifact_paths=_workflow_manifest_artifact_paths(
+                generated_package=generated_package,
+                analysis_result_paths=analysis_result_paths,
+                evolution_source=evolution_trace_source,
+                ranking_json_path=ranking_json_path,
+                ranking_csv_path=ranking_csv_path,
+                pareto_json_path=pareto_json_path,
+                pareto_csv_path=pareto_csv_path,
+                analysis_csv_path=analysis_csv_path,
+                comparison_json_paths=comparison_json_paths,
+                comparison_csv_paths=comparison_csv_paths,
+                visualization_paths=visualization_paths,
+                checkpoint_path=checkpoint_path,
+                event_log_path=event_log_path,
+                traceability_json_path=traceability_json_path,
+                traceability_csv_path=traceability_csv_path,
+                report_json_path=report_json_path,
+                report_markdown_path=report_markdown_path,
+            ),
+            warnings=warnings,
+            final_stopping_reason=final_stopping_reason,
+            checkpoint_path=checkpoint_path,
+            event_log_path=event_log_path,
+        )
+        manifest_path = write_workflow_manifest_json(manifest_document, manifest_root)
+        produced_artifacts.append(_artifact_record("workflow_manifest", str(manifest_path)))
 
         provenance = workflow_provenance(
             run_id=config.run_id,
@@ -571,10 +798,13 @@ class WorkflowRunner:
                     evolution_run=resolved_evolution_source is not None,
                 ),
                 "campaign_type": config.campaign_type,
+                "stage_plan": stage_plan.to_dict(),
                 "requested_scientific_execution": list(requested_scientific),
                 "requested_postprocessing": list(requested_postprocessing),
                 "executed_operations": list(dict.fromkeys(executed)),
                 "reused_artifact_count": len(reused_artifacts),
+                "checkpoint_written": checkpoint_path is not None,
+                "event_log_written": event_log_path is not None,
                 "candidate_generation_executed": "generate" in executed,
                 "analysis_executed": "analyze" in executed,
                 "evolution_exported": evolution_path is not None,
@@ -582,6 +812,7 @@ class WorkflowRunner:
                 "pareto_executed": pareto_json_path is not None,
                 "comparison_executed": bool(comparison_json_paths),
                 "visualization_executed": bool(visualization_paths),
+                "report_executed": report_json_path is not None,
                 "plots_generated_by_runner": bool(visualization_paths),
                 "csv_exported": any(
                     path is not None
@@ -620,6 +851,13 @@ class WorkflowRunner:
             comparison_json_paths=tuple(comparison_json_paths),
             comparison_csv_paths=tuple(comparison_csv_paths),
             visualization_paths=tuple(visualization_paths),
+            checkpoint_path=checkpoint_path,
+            event_log_path=event_log_path,
+            manifest_path=manifest_path,
+            traceability_json_path=traceability_json_path,
+            traceability_csv_path=traceability_csv_path,
+            report_json_path=report_json_path,
+            report_markdown_path=report_markdown_path,
             candidate_ids=candidate_ids,
             analysis_result_ids=analysis_result_ids,
             survivor_candidate_ids=survivor_candidate_ids,
@@ -635,6 +873,48 @@ class WorkflowRunner:
             consumed_artifacts=tuple(consumed_artifacts),
             produced_artifacts=tuple(produced_artifacts),
             reused_artifacts=tuple(reused_artifacts),
+        )
+
+    def _run_generation_stage(
+        self,
+        *,
+        candidate_records: Sequence[Mapping[str, Any] | Any] | None,
+        package_output_root: Path,
+        produced_artifacts: list[dict[str, Any]],
+    ) -> _GenerationStageOutput:
+        records = tuple(candidate_records) if candidate_records is not None else tuple(self._generate_records())
+        if not records:
+            raise WorkflowConfigError("Workflow generation produced no candidate records.")
+        generated_package = write_staged_package_json(
+            records,
+            config=self._staged_package_config(package_output_root),
+        )
+        if generated_package.package_root is None or generated_package.staged_package_path is None:
+            raise RuntimeError("Staged package exporter did not return paths.")
+        produced_artifacts.extend(
+            _staged_package_records(
+                generated_package.staged_package_path,
+                generated_package.candidate_paths,
+            ),
+        )
+        candidate_artifacts = tuple(
+            _CandidateArtifact(document, str(path))
+            for document, path in zip(
+                generated_package.candidates,
+                generated_package.candidate_paths,
+                strict=True,
+            )
+        )
+        staged_artifacts = (
+            {
+                "document": generated_package.package,
+                "uri": str(generated_package.staged_package_path),
+            },
+        )
+        return _GenerationStageOutput(
+            generated_package=generated_package,
+            candidate_artifacts=candidate_artifacts,
+            staged_artifacts=staged_artifacts,
         )
 
     def _generate_records(self) -> list[dict[str, Any]]:
@@ -662,6 +942,7 @@ class WorkflowRunner:
                 "workflow_run_id": config.run_id,
                 **dict(generation.metadata),
             },
+            constraints=generation.constraints,
         )
         return StagedPackageJsonExportConfig(
             package_id=package_id,
@@ -693,6 +974,7 @@ class WorkflowRunner:
                 source_label="verfeinert.workflow",
                 git_commit=None,
                 discover_git_commit=False,
+                constraints=config.generation.constraints,
             ),
             created_at=config.created_at,
             producer="verfeinert.workflow",
@@ -719,6 +1001,57 @@ class WorkflowRunner:
             structural_cost=config.analyzer.structural_cost,
             metric_configs=config.analyzer.metric_configs,
             materialization=config.analyzer.materialization,
+        )
+
+    def _run_analysis_stage(
+        self,
+        *,
+        generated_package,
+        candidate_artifacts: Sequence[_CandidateArtifact],
+        candidate_sources: Sequence[str | Path | Mapping[str, Any]],
+        staged_package_sources: Sequence[str | Path | Mapping[str, Any]],
+        analysis_sources: Sequence[str | Path | Mapping[str, Any]],
+        analysis_root: Path,
+        package_output_root: Path,
+        metric_callables: Mapping[str, Any] | None,
+        consumed_artifacts: list[dict[str, Any]],
+        reused_artifacts: list[dict[str, Any]],
+        produced_artifacts: list[dict[str, Any]],
+    ) -> _AnalysisStageOutput:
+        config = self.config
+        analysis_sources_for_pipeline = _analysis_input_sources(
+            generated_package=generated_package,
+            candidate_sources=candidate_sources,
+            staged_package_sources=staged_package_sources,
+        )
+        if not analysis_sources_for_pipeline:
+            raise WorkflowConfigError("requested analysis has no Candidate/StagedPackage input.")
+        analyzer_config = self._analyzer_config(
+            _input_roots_for_sources(analysis_sources_for_pipeline, fallback=config.input_roots),
+            analysis_root,
+        )
+        analysis_run = self._run_analysis(
+            candidates=tuple(artifact.document for artifact in candidate_artifacts),
+            input_sources=analysis_sources_for_pipeline,
+            analyzer_config=analyzer_config,
+            metric_callables=metric_callables,
+            package_output_root=package_output_root,
+            package_id=f"{config.run_id}-analysis-reuse-miss-package",
+            reuse_artifacts=(
+                _load_analysis_result_artifacts(analysis_sources)
+                if _analysis_result_reuse_enabled(config)
+                else ()
+            ),
+            consumed_artifacts=consumed_artifacts,
+            reused_artifacts=reused_artifacts,
+            produced_artifacts=produced_artifacts,
+        )
+        return _AnalysisStageOutput(
+            analysis_result_paths=analysis_run.paths,
+            analysis_collection=AnalysisResultCollection.from_records(
+                analysis_run.documents,
+                collection_id=f"{config.run_id}:analysis",
+            ),
         )
 
     def _run_analysis(
@@ -805,6 +1138,251 @@ class WorkflowRunner:
             generated_paths=tuple(generated_paths),
         )
 
+    def _run_evolution_stage(
+        self,
+        *,
+        analysis_collection: AnalysisResultCollection | None,
+        candidate_artifacts: Sequence[_CandidateArtifact],
+        evolution_source: str | Path | Mapping[str, Any] | None,
+        candidate_factory: Any | None,
+        metric_callables: Mapping[str, Any] | None,
+        reference_analysis_results: Sequence[Mapping[str, Any]],
+        analysis_result_paths: Sequence[Path],
+        analysis_reuse_artifacts: Sequence[_AnalysisResultArtifact],
+        analysis_root: Path,
+        package_output_root: Path,
+        consumed_artifacts: list[dict[str, Any]],
+        reused_artifacts: list[dict[str, Any]],
+        executed: list[str],
+        produced_artifacts: list[dict[str, Any]],
+        evolution_root: Path,
+    ) -> _EvolutionStageOutput:
+        config = self.config
+        if config.campaign_type == "individual":
+            raise WorkflowConfigError("individual campaigns must not execute evolution.")
+        candidate_factory = _workflow_candidate_factory(config, candidate_factory)
+        state, generated_during_evolution = self._run_evolution(
+            analysis_collection=analysis_collection,
+            candidate_artifacts=candidate_artifacts,
+            evolution_source=evolution_source,
+            candidate_factory=candidate_factory,
+            metric_callables=metric_callables,
+            reference_analysis_results=reference_analysis_results,
+            analysis_result_paths=analysis_result_paths,
+            analysis_reuse_artifacts=analysis_reuse_artifacts,
+            analysis_root=analysis_root,
+            package_output_root=package_output_root,
+            consumed_artifacts=consumed_artifacts,
+            reused_artifacts=reused_artifacts,
+            executed=executed,
+            produced_artifacts=produced_artifacts,
+        )
+        evolution_path = write_evolution_run_json(
+            state,
+            output_root=evolution_root,
+            input_roots=_evolution_input_roots(config, generated_during_evolution, analysis_root),
+        )
+        produced_artifacts.append(_artifact_record("evolution_run", str(evolution_path)))
+        generation_record = state.generations[-1] if state.generations else None
+        survivor_candidate_ids = (
+            tuple(ref.candidate_id for ref in generation_record.survivor_refs)
+            if generation_record is not None
+            else ()
+        )
+        rejected_candidate_ids = (
+            tuple(ref.candidate_id for ref in generation_record.rejected_refs)
+            if generation_record is not None
+            else ()
+        )
+        return _EvolutionStageOutput(
+            evolution_path=evolution_path,
+            generation_record=generation_record,
+            survivor_candidate_ids=survivor_candidate_ids,
+            rejected_candidate_ids=rejected_candidate_ids,
+        )
+
+    def _run_postprocessing_stage(
+        self,
+        *,
+        stage_plan: _WorkflowStagePlan,
+        analysis_collection: AnalysisResultCollection | None,
+        analysis_result_paths: Sequence[Path],
+        analysis_sources: Sequence[str | Path | Mapping[str, Any]],
+        comparison_result_sources: Sequence[str | Path | Mapping[str, Any]],
+        loaded_comparison_results: Sequence[ComparisonResult],
+        evolution_source: str | Path | Mapping[str, Any] | None,
+        derived_root: Path,
+        warnings: list[str],
+        executed: list[str],
+        produced_artifacts: list[dict[str, Any]],
+    ) -> _PostprocessingStageOutput:
+        config = self.config
+        ranking_json_path: Path | None = None
+        ranking_csv_path: Path | None = None
+        pareto_json_path: Path | None = None
+        pareto_csv_path: Path | None = None
+        analysis_csv_path: Path | None = None
+        comparison_json_paths: list[Path] = []
+        comparison_csv_paths: list[Path] = []
+        visualization_paths: list[Path] = []
+        ranking_result = None
+        pareto_result = None
+        computed_comparison_results: list[ComparisonResult] = []
+
+        if stage_plan.postprocessing_requested("ranking"):
+            collection = _require_collection(analysis_collection)
+            ranking_config = config.analyzer.ranking or RankingConfig(
+                score_components={"cost.structural_cost": 1.0},
+                combination="weighted_sum",
+                ascending=True,
+            )
+            ranking_result = rank_analysis_results(collection, config=ranking_config)
+            if not ranking_result.ranked_candidate_ids and len(collection):
+                raise WorkflowConfigError(
+                    "requested ranking metric is missing or unavailable: "
+                    + "; ".join(ranking_result.warnings),
+                )
+            ranking_json = write_ranking_json(
+                ranking_result,
+                output_root=derived_root,
+                run_id=config.run_id,
+                input_roots=_postprocessing_input_roots(config, analysis_result_paths, analysis_sources),
+            )
+            ranking_csv = write_ranking_csv(
+                ranking_result,
+                output_root=derived_root,
+                run_id=config.run_id,
+                input_roots=_postprocessing_input_roots(config, analysis_result_paths, analysis_sources),
+            )
+            ranking_json_path = ranking_json.path
+            ranking_csv_path = ranking_csv.path
+            warnings.extend(ranking_result.warnings)
+            executed.append("ranking")
+            produced_artifacts.extend([ranking_json.to_dict(), ranking_csv.to_dict()])
+
+        if stage_plan.postprocessing_requested("pareto"):
+            collection = _require_collection(analysis_collection)
+            pareto_config = config.analyzer.pareto or ParetoConfig()
+            pareto_result = compute_pareto_classifications(collection, config=pareto_config)
+            if not pareto_result.frontier_candidate_ids and len(collection) and pareto_result.warnings:
+                raise WorkflowConfigError(
+                    "requested Pareto objective is missing or unavailable: "
+                    + "; ".join(pareto_result.warnings),
+                )
+            pareto_json = write_pareto_json(
+                pareto_result,
+                output_root=derived_root,
+                run_id=config.run_id,
+                input_roots=_postprocessing_input_roots(config, analysis_result_paths, analysis_sources),
+            )
+            pareto_json_path = pareto_json.path
+            produced_artifacts.append(pareto_json.to_dict())
+            warnings.extend(pareto_result.warnings)
+            executed.append("pareto")
+            if stage_plan.postprocessing_requested("export_csv"):
+                pareto_csv = write_pareto_csv(
+                    pareto_result,
+                    output_root=derived_root,
+                    run_id=config.run_id,
+                    input_roots=_postprocessing_input_roots(config, analysis_result_paths, analysis_sources),
+                )
+                pareto_csv_path = pareto_csv.path
+                produced_artifacts.append(pareto_csv.to_dict())
+
+        if stage_plan.postprocessing_requested("comparison"):
+            if not config.comparisons:
+                raise WorkflowConfigError("requested comparison requires explicit comparison sources.")
+            for comparison_config in config.comparisons:
+                sources = tuple(
+                    ComparisonSource.from_sources(
+                        source.source_id,
+                        source.analysis_results,
+                        role=source.role,
+                        label=source.label,
+                        metadata=source.metadata,
+                    )
+                    for source in comparison_config.sources
+                )
+                comparison = compare_analysis_collections(
+                    sources,
+                    config=comparison_config.config,
+                )
+                computed_comparison_results.append(comparison)
+                comparison_json = write_comparison_json(
+                    comparison,
+                    output_root=derived_root,
+                    run_id=config.run_id,
+                    input_roots=_comparison_input_roots(config, comparison_config),
+                )
+                comparison_json_paths.append(comparison_json.path)
+                produced_artifacts.append(comparison_json.to_dict())
+                if stage_plan.postprocessing_requested("export_csv"):
+                    comparison_csv = write_comparison_csv(
+                        comparison,
+                        output_root=derived_root,
+                        run_id=config.run_id,
+                        input_roots=_comparison_input_roots(config, comparison_config),
+                    )
+                    comparison_csv_paths.append(comparison_csv.path)
+                    produced_artifacts.append(comparison_csv.to_dict())
+            executed.append("comparison")
+
+        if stage_plan.postprocessing_requested("export_csv"):
+            if loaded_comparison_results and not stage_plan.postprocessing_requested("comparison"):
+                for comparison in loaded_comparison_results:
+                    comparison_csv = write_comparison_csv(
+                        comparison,
+                        output_root=derived_root,
+                        run_id=config.run_id,
+                        input_roots=_comparison_result_input_roots(config, comparison_result_sources),
+                    )
+                    comparison_csv_paths.append(comparison_csv.path)
+                    produced_artifacts.append(comparison_csv.to_dict())
+            elif not any(
+                stage_plan.postprocessing_requested(operation)
+                for operation in ("ranking", "pareto", "comparison")
+            ):
+                collection = _require_collection(analysis_collection)
+                analysis_csv = write_analysis_results_csv(
+                    collection,
+                    output_root=derived_root,
+                    run_id=config.run_id,
+                    input_roots=_postprocessing_input_roots(config, analysis_result_paths, analysis_sources),
+                )
+                analysis_csv_path = analysis_csv.path
+                produced_artifacts.append(analysis_csv.to_dict())
+            executed.append("export_csv")
+
+        if stage_plan.postprocessing_requested("visualization"):
+            visualization_paths.extend(
+                _write_requested_visualizations(
+                    config=config,
+                    derived_root=derived_root,
+                    analysis_collection=analysis_collection,
+                    ranking_result=ranking_result,
+                    pareto_result=pareto_result,
+                    comparison_results=(
+                        tuple(computed_comparison_results)
+                        or tuple(loaded_comparison_results)
+                    ),
+                    evolution_source=evolution_source,
+                    input_roots=_postprocessing_input_roots(config, analysis_result_paths, analysis_sources),
+                ),
+            )
+            produced_artifacts.extend(_path_records("figure", visualization_paths))
+            executed.append("visualization")
+
+        return _PostprocessingStageOutput(
+            ranking_json_path=ranking_json_path,
+            ranking_csv_path=ranking_csv_path,
+            pareto_json_path=pareto_json_path,
+            pareto_csv_path=pareto_csv_path,
+            analysis_csv_path=analysis_csv_path,
+            comparison_json_paths=tuple(comparison_json_paths),
+            comparison_csv_paths=tuple(comparison_csv_paths),
+            visualization_paths=tuple(visualization_paths),
+        )
+
     def _run_evolution(
         self,
         *,
@@ -812,6 +1390,7 @@ class WorkflowRunner:
         candidate_artifacts: Sequence[_CandidateArtifact],
         evolution_source: str | Path | Mapping[str, Any] | None,
         candidate_factory: Any | None,
+        metric_callables: Mapping[str, Any] | None,
         reference_analysis_results: Sequence[Mapping[str, Any]],
         analysis_result_paths: Sequence[Path],
         analysis_reuse_artifacts: Sequence[_AnalysisResultArtifact],
@@ -833,7 +1412,10 @@ class WorkflowRunner:
             for artifact in candidate_artifacts
             if artifact.uri is not None
         }
-        analysis_by_candidate_id: dict[str, dict[str, Any]] = {}
+        analysis_by_candidate_id: dict[str, dict[str, Any]] = {
+            document["candidate_ref"]["candidate_id"]: dict(document)
+            for document in reference_analysis_results
+        }
         if analysis_collection is not None:
             analysis_by_candidate_id.update(
                 {
@@ -857,6 +1439,10 @@ class WorkflowRunner:
                 source_path=source_path,
                 config=config,
             )
+            _validate_candidate_documents_against_constraints(
+                candidate_lookup.values(),
+                config.generation.constraints,
+            )
         else:
             collection = _require_collection(analysis_collection)
             candidate_refs = _candidate_refs_for_collection(
@@ -864,13 +1450,64 @@ class WorkflowRunner:
                 candidate_artifacts=candidate_artifacts,
                 uri_by_candidate_id=candidate_uri_lookup,
             )
-            selection = self._select(collection, reference_analysis_results)
+            if config.evolver.trajectory_thresholds:
+                threshold_trajectories, selection = _initialize_threshold_trajectory_state(
+                    config,
+                    collection,
+                )
+                progress_configuration = None
+                threshold_improvements = {
+                    threshold_id: False
+                    for threshold_id in sorted(threshold_trajectories)
+                }
+                continuation_refs = _aggregate_candidate_refs(
+                    trajectory.parent_refs
+                    for trajectory in threshold_trajectories.values()
+                )
+            else:
+                threshold_trajectories = {}
+                selection = self._select(collection, reference_analysis_results)
+                _, progress_configuration, continuation_refs = (
+                    _single_progress_for_generation(
+                        config=config,
+                        state=None,
+                        collection=collection,
+                        selection=selection,
+                        analysis_by_candidate_id=analysis_by_candidate_id,
+                    )
+                )
+                threshold_improvements = None
             analysis_by_candidate_id.update(
                 {
                     document["candidate_ref"]["candidate_id"]: document
                     for document in collection.documents
                 },
             )
+            stopping_decision = _stopping_decision_for_generation(
+                config=config,
+                state=None,
+                generation_index=0,
+                candidate_count=len(candidate_refs),
+                analysis_result_count=len(collection.documents),
+                survivor_count=len(continuation_refs or selection.survivor_refs),
+                strict_improvement=True,
+                threshold_improvements=threshold_improvements,
+                consume_patience=False,
+            )
+            if threshold_trajectories:
+                threshold_trajectories = apply_threshold_patience_state(
+                    threshold_trajectories,
+                    StoppingState.from_mapping(
+                        stopping_decision.metadata.get("stopping_state")
+                    ).threshold_states,
+                )
+            initial_extra_configuration: dict[str, Any] = {}
+            if threshold_trajectories:
+                initial_extra_configuration["threshold_trajectories"] = (
+                    threshold_trajectories_to_mapping(threshold_trajectories)
+                )
+            if progress_configuration is not None:
+                initial_extra_configuration["progress"] = progress_configuration
             generation = _generation_record(
                 generation_index=0,
                 candidate_refs=candidate_refs,
@@ -883,6 +1520,8 @@ class WorkflowRunner:
                 ),
                 parent_refs=(),
                 run_id=config.run_id,
+                extra_configuration=initial_extra_configuration,
+                stopping_decision=stopping_decision,
             )
             state = _new_evolution_state(
                 config=config,
@@ -893,7 +1532,16 @@ class WorkflowRunner:
 
         while _should_extend_evolution(config, state, candidate_factory):
             next_generation = state.generations[-1].generation_index + 1
+            machine = (
+                EvolutionStateMachine.from_run_state(state)
+                .plan_generation(next_generation)
+            )
             parent_refs = _parent_refs_for_next_generation(config, state, next_generation)
+            previous_threshold_states = (
+                _trajectory_states_from_state(state)
+                if config.evolver.trajectory_thresholds
+                else {}
+            )
             if not parent_refs:
                 raise WorkflowConfigError("invalid resume state: latest generation has no parent candidates.")
             policy = _mutation_policy_for_generation(config, next_generation)
@@ -904,6 +1552,7 @@ class WorkflowRunner:
                 parent_candidates=candidate_lookup,
             )
             children = []
+            child_parent_by_id: dict[str, str] = {}
             for request in requests:
                 parent = candidate_lookup.get(request.parent_candidate_id)
                 if parent is None:
@@ -911,9 +1560,55 @@ class WorkflowRunner:
                         "unresolved artifact reference for evolution parent: "
                         f"{request.parent_candidate_id}",
                     )
-                child = produce_candidate_from_request(request, parent, candidate_factory)
+                child = _produce_candidate_with_constraints(
+                    request,
+                    parent,
+                    candidate_factory,
+                    config=config,
+                )
                 children.append(child)
-            children, dedup_report = _deduplicate_offspring(children, config.evolver.offspring_deduplication)
+                child_parent_by_id[child["candidate_id"]] = request.parent_candidate_id
+
+            if previous_threshold_states:
+                raw_children = list(children)
+                child_by_id = {
+                    child["candidate_id"]: child
+                    for child in raw_children
+                }
+                trajectory_raw_ids = _trajectory_children_by_id(
+                    states=previous_threshold_states,
+                    child_parent_by_id=child_parent_by_id,
+                    candidate_ids=tuple(child_by_id),
+                )
+                trajectory_child_ids: dict[str, tuple[str, ...]] = {}
+                trajectory_deduplication: dict[str, Any] = {}
+                kept_union: set[str] = set()
+                for threshold_id, trajectory_ids in sorted(trajectory_raw_ids.items()):
+                    subset = [
+                        child_by_id[candidate_id]
+                        for candidate_id in trajectory_ids
+                    ]
+                    kept, trajectory_report = _deduplicate_offspring(
+                        subset,
+                        config.evolver.offspring_deduplication,
+                    )
+                    kept_ids = tuple(child["candidate_id"] for child in kept)
+                    trajectory_child_ids[threshold_id] = kept_ids
+                    kept_union.update(kept_ids)
+                    if trajectory_report is not None:
+                        trajectory_deduplication[threshold_id] = trajectory_report.to_dict()
+                children = [
+                    child for child in raw_children
+                    if child["candidate_id"] in kept_union
+                ]
+                dedup_report = None
+            else:
+                trajectory_child_ids = {}
+                trajectory_deduplication = {}
+                children, dedup_report = _deduplicate_offspring(
+                    children,
+                    config.evolver.offspring_deduplication,
+                )
             package = write_canonical_staged_package_json(
                 children,
                 config=self._canonical_staged_package_config(
@@ -931,12 +1626,14 @@ class WorkflowRunner:
                 candidate_uri_lookup[candidate["candidate_id"]] = str(path)
                 candidate_lookup[candidate["candidate_id"]] = candidate
 
+            machine = machine.record_candidates_generated()
+            machine = machine.request_analysis()
             analyzer_config = self._analyzer_config((package.package_root,), analysis_root)
             analysis_run = self._run_analysis(
                 candidates=tuple(package.candidates),
                 input_sources=(package.staged_package_path,),
                 analyzer_config=analyzer_config,
-                metric_callables=None,
+                metric_callables=metric_callables,
                 package_output_root=package_output_root,
                 package_id=f"{config.run_id}-g{next_generation:03d}-analysis-reuse-miss-package",
                 reuse_artifacts=(
@@ -955,15 +1652,56 @@ class WorkflowRunner:
                 analysis_run.documents,
                 collection_id=f"{config.run_id}:g{next_generation:03d}:analysis",
             )
-            selection = self._select(
-                child_collection,
-                _selection_reference_results(
-                    config,
-                    state,
-                    analysis_by_candidate_id,
-                    reference_analysis_results,
-                ),
-            )
+            machine = machine.record_analysis_complete()
+            if previous_threshold_states:
+                (
+                    threshold_trajectories,
+                    threshold_improvements,
+                    selection,
+                ) = _advance_threshold_trajectory_state(
+                    config=config,
+                    state=state,
+                    collection=child_collection,
+                    analysis_by_candidate_id=analysis_by_candidate_id,
+                    child_ids_by_trajectory=trajectory_child_ids,
+                    generation_index=next_generation,
+                )
+                strict_improvement = any(threshold_improvements.values())
+                progress_configuration = None
+                continuation_refs = _aggregate_candidate_refs(
+                    trajectory.parent_refs
+                    for trajectory in threshold_trajectories.values()
+                    if not trajectory.exhausted
+                )
+            else:
+                threshold_trajectories = {}
+                threshold_improvements = None
+                selection = self._select(
+                    child_collection,
+                    _selection_reference_results(
+                        config,
+                        state,
+                        analysis_by_candidate_id,
+                        reference_analysis_results,
+                    ),
+                )
+                (
+                    strict_improvement,
+                    progress_configuration,
+                    accumulated_progress_refs,
+                ) = _single_progress_for_generation(
+                    config=config,
+                    state=state,
+                    collection=child_collection,
+                    selection=selection,
+                    analysis_by_candidate_id=analysis_by_candidate_id,
+                )
+                continuation_refs = (
+                    selection.survivor_refs
+                    or accumulated_progress_refs
+                    or selection.archive_refs
+                )
+            machine = machine.record_selection_complete()
             analysis_by_candidate_id.update(
                 {
                     document["candidate_ref"]["candidate_id"]: document
@@ -974,6 +1712,45 @@ class WorkflowRunner:
                 CandidateRef.from_candidate_document(candidate, candidate_uri=candidate_uri_lookup.get(candidate["candidate_id"]))
                 for candidate in package.candidates
             )
+            stopping_decision = _stopping_decision_for_generation(
+                config=config,
+                state=state,
+                generation_index=next_generation,
+                candidate_count=len(child_refs),
+                analysis_result_count=len(child_collection.documents),
+                survivor_count=len(continuation_refs),
+                strict_improvement=strict_improvement,
+                threshold_improvements=threshold_improvements,
+                duplicate_only=(
+                    dedup_report is not None
+                    and dedup_report.input_count > 0
+                    and dedup_report.kept_count == 0
+                ),
+            )
+            if threshold_trajectories:
+                threshold_trajectories = apply_threshold_patience_state(
+                    threshold_trajectories,
+                    StoppingState.from_mapping(
+                        stopping_decision.metadata.get("stopping_state")
+                    ).threshold_states,
+                )
+
+            generation_extra_configuration: dict[str, Any] = {}
+            if dedup_report is not None:
+                generation_extra_configuration["offspring_deduplication"] = (
+                    dedup_report.to_dict()
+                )
+            if trajectory_deduplication:
+                generation_extra_configuration[
+                    "trajectory_offspring_deduplication"
+                ] = trajectory_deduplication
+            if threshold_trajectories:
+                generation_extra_configuration["threshold_trajectories"] = (
+                    threshold_trajectories_to_mapping(threshold_trajectories)
+                )
+            if progress_configuration is not None:
+                generation_extra_configuration["progress"] = progress_configuration
+
             generation = _generation_record(
                 generation_index=next_generation,
                 candidate_refs=child_refs,
@@ -982,11 +1759,7 @@ class WorkflowRunner:
                 analysis_uris=_analysis_uri_map_from_documents(analysis_run.documents, analysis_paths),
                 parent_refs=tuple(parent_refs),
                 run_id=config.run_id,
-                extra_configuration=(
-                    {"offspring_deduplication": dedup_report.to_dict()}
-                    if dedup_report is not None
-                    else None
-                ),
+                extra_configuration=generation_extra_configuration,
                 extra_events=(
                     (
                         EvolutionEvent(
@@ -998,8 +1771,9 @@ class WorkflowRunner:
                     if dedup_report is not None
                     else ()
                 ),
+                stopping_decision=stopping_decision,
             )
-            state = _state_with_generation(config, state, generation)
+            state = machine.append_generation(generation).run_state
 
         return _state_completed(config, state), tuple(generated_paths)
 
@@ -1051,6 +1825,440 @@ class WorkflowRunner:
         )
 
 
+def _workflow_stage_plan(config: WorkflowConfig) -> _WorkflowStagePlan:
+    return _WorkflowStagePlan(
+        scientific=config.scientific_execution,
+        postprocessing=config.postprocessing,
+    )
+
+
+def _workflow_event_recorder(
+    config: WorkflowConfig,
+    *,
+    event_sink: Callable[[WorkflowEvent], Any] | None,
+) -> WorkflowEventRecorder:
+    event_log_path = (
+        Path(config.output_root) / config.run_id / "observability" / "events.jsonl"
+        if config.observability.event_log_enabled
+        else None
+    )
+    return WorkflowEventRecorder(
+        run_id=config.run_id,
+        event_sink=event_sink,
+        event_log_path=event_log_path,
+        observer_error_policy=config.observability.observer_error_policy,
+    )
+
+
+def _load_resume_checkpoint(config: WorkflowConfig) -> dict[str, Any] | None:
+    source = config.resume.checkpoint
+    if source is None:
+        return None
+    checkpoint = read_workflow_checkpoint_json(source)
+    if checkpoint["run_id"] != config.run_id:
+        raise WorkflowConfigError(
+            "checkpoint run_id does not match workflow.run_id: "
+            f"{checkpoint['run_id']!r} != {config.run_id!r}",
+        )
+    expected = workflow_checkpoint_fingerprint(config)
+    actual = dict(checkpoint["compatibility"]).get("workflow_fingerprint")
+    if actual != expected:
+        raise WorkflowConfigError(
+            "checkpoint is incompatible with the requested workflow configuration: "
+            f"workflow_fingerprint mismatch ({actual!r} != {expected!r}).",
+        )
+    return checkpoint
+
+
+def _validate_checkpoint_stage_resume(
+    stage_plan: _WorkflowStagePlan,
+    checkpoint: Mapping[str, Any] | None,
+) -> None:
+    if checkpoint is None:
+        return
+    completed = set(dict(checkpoint["workflow"]).get("completed_stages", ()))
+    repeated = [
+        stage
+        for stage in stage_plan.scientific
+        if stage in {"generate", "analyze"} and stage in completed
+    ]
+    if repeated:
+        raise WorkflowConfigError(
+            "checkpoint resume must not request already completed scientific "
+            f"stage(s): {', '.join(repeated)}.",
+        )
+
+
+def _checkpoint_artifact_sources(
+    checkpoint: Mapping[str, Any] | None,
+) -> _CheckpointArtifactSources:
+    if checkpoint is None:
+        return _CheckpointArtifactSources()
+    refs = dict(dict(checkpoint.get("artifacts", {})).get("refs", {}))
+    return _CheckpointArtifactSources(
+        candidates=_uris_from_ref_list(refs.get("candidates", ())),
+        staged_packages=_uris_from_ref_list(refs.get("staged_packages", ())),
+        analysis_results=_uris_from_ref_list(refs.get("analysis_results", ())),
+        comparison_results=_uris_from_ref_list(refs.get("comparison_results", ())),
+        evolution_run=_uri_from_ref(refs.get("evolution_run")),
+    )
+
+
+def _workflow_checkpoint_path(run_root: Path) -> Path:
+    return run_root / "checkpoints" / "latest.json"
+
+
+def _workflow_checkpoint_artifact_refs(
+    *,
+    candidate_artifacts: Sequence[_CandidateArtifact],
+    staged_artifacts: Sequence[Mapping[str, Any]],
+    analysis_result_paths: Sequence[Path],
+    analysis_sources: Sequence[str | Path | Mapping[str, Any]],
+    comparison_result_sources: Sequence[str | Path | Mapping[str, Any]],
+    evolution_source: str | Path | Mapping[str, Any] | None,
+    ranking_json_path: Path | None,
+    ranking_csv_path: Path | None,
+    pareto_json_path: Path | None,
+    pareto_csv_path: Path | None,
+    analysis_csv_path: Path | None,
+    comparison_json_paths: Sequence[Path],
+    comparison_csv_paths: Sequence[Path],
+    visualization_paths: Sequence[Path],
+) -> dict[str, Any]:
+    return {
+        "candidates": _unique_ref_records(
+            _artifact_record(
+                "candidate",
+                artifact.uri,
+                document_id=artifact.document["candidate_id"],
+            )
+            for artifact in candidate_artifacts
+            if artifact.uri is not None
+        ),
+        "staged_packages": _unique_ref_records(
+            _artifact_record(
+                "staged_package",
+                package.get("uri"),
+                document_id=dict(package.get("document", {})).get("package_id"),
+            )
+            for package in staged_artifacts
+            if package.get("uri") is not None
+        ),
+        "analysis_results": _unique_ref_records(
+            (
+                *_path_records("analysis_result", tuple(analysis_result_paths)),
+                *_analysis_source_records_for_checkpoint(analysis_sources),
+            ),
+        ),
+        "comparison_results": _unique_ref_records(
+            _source_records_for_checkpoint("comparison_result", comparison_result_sources),
+        ),
+        "evolution_run": (
+            _artifact_record("evolution_run", _source_uri(evolution_source))
+            if evolution_source is not None
+            else None
+        ),
+        "derived": {
+            "ranking_json": _path_record_or_none("ranking", ranking_json_path),
+            "ranking_csv": _path_record_or_none("ranking_csv", ranking_csv_path),
+            "pareto_json": _path_record_or_none("pareto", pareto_json_path),
+            "pareto_csv": _path_record_or_none("pareto_csv", pareto_csv_path),
+            "analysis_csv": _path_record_or_none("analysis_csv", analysis_csv_path),
+            "comparison_json": _path_records("comparison_result", tuple(comparison_json_paths)),
+            "comparison_csv": _path_records("comparison_csv", tuple(comparison_csv_paths)),
+            "figures": _path_records("figure", tuple(visualization_paths)),
+        },
+    }
+
+
+def _analysis_source_records_for_checkpoint(
+    sources: Sequence[str | Path | Mapping[str, Any]],
+) -> tuple[dict[str, Any], ...]:
+    records: list[dict[str, Any]] = []
+    for source in sources:
+        if isinstance(source, Mapping):
+            continue
+        path = Path(source).expanduser()
+        if path.is_dir():
+            records.extend(_path_records("analysis_result", sorted(path.glob("*.json"))))
+        else:
+            records.append(_artifact_record("analysis_result", str(path)))
+    return tuple(records)
+
+
+def _source_records_for_checkpoint(
+    kind: str,
+    sources: Sequence[str | Path | Mapping[str, Any]],
+) -> tuple[dict[str, Any], ...]:
+    return tuple(
+        _artifact_record(kind, _source_uri(source))
+        for source in sources
+        if not isinstance(source, Mapping)
+    )
+
+
+def _unique_ref_records(records: Iterable[Mapping[str, Any]]) -> tuple[dict[str, Any], ...]:
+    unique: dict[str, dict[str, Any]] = {}
+    for record in records:
+        uri = record.get("uri")
+        if not isinstance(uri, str) or not uri:
+            continue
+        unique.setdefault(uri, dict(record))
+    return tuple(unique.values())
+
+
+def _path_record_or_none(kind: str, path: Path | None) -> dict[str, Any] | None:
+    if path is None:
+        return None
+    return _artifact_record(kind, str(path))
+
+
+def _uris_from_ref_list(value: Any) -> tuple[str, ...]:
+    if not isinstance(value, Sequence) or isinstance(value, (str, bytes, bytearray)):
+        return ()
+    uris: list[str] = []
+    for item in value:
+        uri = _uri_from_ref(item)
+        if uri is not None:
+            uris.append(uri)
+    return tuple(dict.fromkeys(uris))
+
+
+def _uri_from_ref(value: Any) -> str | None:
+    if not isinstance(value, Mapping):
+        return None
+    uri = value.get("uri")
+    return uri if isinstance(uri, str) and uri else None
+
+
+def _workflow_manifest_artifact_paths(
+    *,
+    generated_package,
+    analysis_result_paths: Sequence[Path],
+    evolution_source: str | Path | Mapping[str, Any] | None,
+    ranking_json_path: Path | None,
+    ranking_csv_path: Path | None,
+    pareto_json_path: Path | None,
+    pareto_csv_path: Path | None,
+    analysis_csv_path: Path | None,
+    comparison_json_paths: Sequence[Path],
+    comparison_csv_paths: Sequence[Path],
+    visualization_paths: Sequence[Path],
+    checkpoint_path: Path | None,
+    event_log_path: Path | None,
+    traceability_json_path: Path,
+    traceability_csv_path: Path,
+    report_json_path: Path | None,
+    report_markdown_path: Path | None,
+) -> dict[str, Any]:
+    evolution_uri = _source_uri(evolution_source)
+    return {
+        "candidate_paths": (
+            [str(path) for path in generated_package.candidate_paths]
+            if generated_package is not None
+            else []
+        ),
+        "staged_package_path": (
+            str(generated_package.staged_package_path)
+            if generated_package is not None
+            else None
+        ),
+        "analysis_result_paths": [str(path) for path in analysis_result_paths],
+        "evolution_run_path": evolution_uri,
+        "ranking_json_path": str(ranking_json_path) if ranking_json_path is not None else None,
+        "ranking_csv_path": str(ranking_csv_path) if ranking_csv_path is not None else None,
+        "pareto_json_path": str(pareto_json_path) if pareto_json_path is not None else None,
+        "pareto_csv_path": str(pareto_csv_path) if pareto_csv_path is not None else None,
+        "analysis_csv_path": str(analysis_csv_path) if analysis_csv_path is not None else None,
+        "comparison_json_paths": [str(path) for path in comparison_json_paths],
+        "comparison_csv_paths": [str(path) for path in comparison_csv_paths],
+        "visualization_paths": [str(path) for path in visualization_paths],
+        "checkpoint_path": str(checkpoint_path) if checkpoint_path is not None else None,
+        "event_log_path": str(event_log_path) if event_log_path is not None else None,
+        "traceability_json_path": str(traceability_json_path),
+        "traceability_csv_path": str(traceability_csv_path),
+        "report_json_path": str(report_json_path) if report_json_path is not None else None,
+        "report_markdown_path": (
+            str(report_markdown_path)
+            if report_markdown_path is not None
+            else None
+        ),
+    }
+
+
+def _workflow_traceability_rows(
+    *,
+    run_id: str,
+    candidate_ids: Sequence[str],
+    candidate_artifacts: Sequence[_CandidateArtifact],
+    analysis_collection: AnalysisResultCollection | None,
+    evolution_source: str | Path | Mapping[str, Any] | None,
+    final_stopping_reason: str | None,
+) -> tuple[dict[str, Any], ...]:
+    candidate_by_id = {
+        artifact.document["candidate_id"]: artifact.document
+        for artifact in candidate_artifacts
+    }
+    for candidate_id, document in _traceability_candidate_documents(evolution_source).items():
+        candidate_by_id.setdefault(candidate_id, document)
+    analysis_by_candidate_id: dict[str, Mapping[str, Any]] = {}
+    if analysis_collection is not None:
+        analysis_by_candidate_id = {
+            document["candidate_ref"]["candidate_id"]: document
+            for document in analysis_collection.documents
+        }
+    for candidate_id, document in _traceability_analysis_documents(evolution_source).items():
+        analysis_by_candidate_id.setdefault(candidate_id, document)
+    evolution_by_candidate_id = _traceability_evolution_roles(evolution_source)
+    ordered_ids = tuple(
+        dict.fromkeys(
+            [
+                *candidate_ids,
+                *analysis_by_candidate_id.keys(),
+                *evolution_by_candidate_id.keys(),
+            ],
+        ),
+    )
+    return tuple(
+        _workflow_traceability_row(
+            run_id=run_id,
+            candidate_id=candidate_id,
+            candidate=candidate_by_id.get(candidate_id),
+            analysis=analysis_by_candidate_id.get(candidate_id),
+            evolution=evolution_by_candidate_id.get(candidate_id, {}),
+            final_stopping_reason=final_stopping_reason,
+        )
+        for candidate_id in ordered_ids
+    )
+
+
+def _workflow_traceability_row(
+    *,
+    run_id: str,
+    candidate_id: str,
+    candidate: Mapping[str, Any] | None,
+    analysis: Mapping[str, Any] | None,
+    evolution: Mapping[str, Any],
+    final_stopping_reason: str | None,
+) -> dict[str, Any]:
+    identity = dict(candidate.get("identity", {})) if candidate is not None else {}
+    lineage = dict(candidate.get("lineage", {})) if candidate is not None else {}
+    candidate_ref = dict(analysis.get("candidate_ref", {})) if analysis is not None else {}
+    metrics = _analysis_metric_values(analysis)
+    cost = dict(analysis.get("cost", {})) if analysis is not None else {}
+    return {
+        "run_id": run_id,
+        "candidate_id": candidate_id,
+        "structural_hash": identity.get("structural_hash") or candidate_ref.get("structural_hash") or evolution.get("structural_hash"),
+        "lineage_hash": identity.get("lineage_hash") or evolution.get("lineage_hash"),
+        "generation": lineage.get("generation", evolution.get("generation")),
+        "parent_candidate_id": lineage.get("parent_candidate_id"),
+        "analysis_result_id": (
+            analysis.get("analysis_result_id")
+            if analysis is not None
+            else evolution.get("analysis_result_id")
+        ),
+        "expressibility": metrics.get("expressibility"),
+        "trainability": metrics.get("trainability"),
+        "structural_cost": cost.get("structural_cost"),
+        "survivor": bool(evolution.get("survivor", False)),
+        "rejected": bool(evolution.get("rejected", False)),
+        "archive": bool(evolution.get("archive", False)),
+        "final_stopping_reason": final_stopping_reason,
+    }
+
+
+def _analysis_metric_values(analysis: Mapping[str, Any] | None) -> dict[str, Any]:
+    if analysis is None:
+        return {}
+    values: dict[str, Any] = {}
+    for metric in analysis.get("metrics", ()):
+        if not isinstance(metric, Mapping):
+            continue
+        name = str(metric.get("name", "")).strip()
+        if not name:
+            continue
+        values[name] = metric.get("value") if metric.get("status") == "computed" else None
+    return values
+
+
+def _traceability_candidate_documents(
+    evolution_source: str | Path | Mapping[str, Any] | None,
+) -> dict[str, dict[str, Any]]:
+    document, source_path = _traceability_evolution_document_with_path(evolution_source)
+    if document is None:
+        return {}
+    return _candidate_documents_from_state(
+        _state_from_evolution_document(document),
+        source_path=source_path,
+    )
+
+
+def _traceability_analysis_documents(
+    evolution_source: str | Path | Mapping[str, Any] | None,
+) -> dict[str, dict[str, Any]]:
+    document, source_path = _traceability_evolution_document_with_path(evolution_source)
+    if document is None:
+        return {}
+    return _analysis_result_documents_from_state(
+        _state_from_evolution_document(document),
+        source_path=source_path,
+    )
+
+
+def _traceability_evolution_roles(
+    evolution_source: str | Path | Mapping[str, Any] | None,
+) -> dict[str, dict[str, Any]]:
+    document, _source_path = _traceability_evolution_document_with_path(evolution_source)
+    if document is None:
+        return {}
+    roles: dict[str, dict[str, Any]] = {}
+    for generation in document.get("generations", ()):
+        generation_index = generation.get("generation_index")
+        for ref in generation.get("candidate_refs", ()):
+            candidate_id = ref["candidate_id"]
+            roles.setdefault(candidate_id, {})
+            roles[candidate_id]["generation"] = generation_index
+            roles[candidate_id]["structural_hash"] = ref.get("structural_hash")
+            roles[candidate_id]["lineage_hash"] = ref.get("lineage_hash")
+        for field, role_name in (
+            ("survivor_refs", "survivor"),
+            ("rejected_refs", "rejected"),
+            ("archive_refs", "archive"),
+        ):
+            for ref in generation.get(field, ()):
+                roles.setdefault(ref["candidate_id"], {})
+                roles[ref["candidate_id"]][role_name] = True
+        for ref in generation.get("analysis_result_refs", ()):
+            roles.setdefault(ref["candidate_id"], {})
+            roles[ref["candidate_id"]]["analysis_result_id"] = ref.get("analysis_result_id")
+    return roles
+
+
+def _workflow_final_stopping_reason(
+    evolution_source: str | Path | Mapping[str, Any] | None,
+) -> str | None:
+    document, _source_path = _traceability_evolution_document_with_path(evolution_source)
+    if document is None:
+        return None
+    decision = dict(dict(document.get("metadata", {})).get("workflow", {})).get("final_stopping_decision")
+    if isinstance(decision, Mapping):
+        reason = decision.get("reason")
+        return reason if isinstance(reason, str) else None
+    return None
+
+
+def _traceability_evolution_document_with_path(
+    evolution_source: str | Path | Mapping[str, Any] | None,
+) -> tuple[dict[str, Any] | None, Path | None]:
+    if evolution_source is None:
+        return None, None
+    document, source_path = _evolution_document_with_path(evolution_source)
+    if document.get("schema_version") != "verfeinert.evolution_run.v1":
+        raise WorkflowConfigError("traceability evolution input is not an EvolutionRun artifact.")
+    return document, source_path
+
+
 def _load_candidate_artifacts(
     sources: Sequence[str | Path | Mapping[str, Any]],
 ) -> list[_CandidateArtifact]:
@@ -1064,6 +2272,33 @@ def _load_candidate_artifacts(
             ),
         )
     return artifacts
+
+
+def _validate_candidate_artifacts_against_constraints(
+    artifacts: Sequence[_CandidateArtifact],
+    constraints: Any | None,
+) -> None:
+    _validate_candidate_documents_against_constraints(
+        (artifact.document for artifact in artifacts),
+        constraints,
+    )
+
+
+def _validate_candidate_documents_against_constraints(
+    candidates: Iterable[Mapping[str, Any]],
+    constraints: Any | None,
+) -> None:
+    if constraints is None:
+        return
+    for candidate in candidates:
+        try:
+            validate_candidate_constraints(candidate, constraints)
+        except GeneratorValidationError as exc:
+            candidate_id = dict(candidate).get("candidate_id", "<unknown>")
+            raise WorkflowConfigError(
+                "candidate violates workflow generation.constraints: "
+                f"{candidate_id}: {exc}",
+            ) from exc
 
 
 def _load_staged_package_artifacts(
@@ -1442,6 +2677,19 @@ def _write_requested_visualizations(
     evolution_source: str | Path | Mapping[str, Any] | None,
     input_roots: Sequence[str | Path],
 ) -> tuple[Path, ...]:
+    if config.visualization.profile == "publication":
+        paths = write_workflow_publication_visualizations(
+            config=config,
+            derived_root=derived_root,
+            analysis_collection=analysis_collection,
+            pareto_result=pareto_result,
+            evolution_source=evolution_source,
+            input_roots=input_roots,
+        )
+        if not paths:
+            raise WorkflowConfigError("requested visualization has no supported input artifact.")
+        return paths
+
     from verfeinert.ansatz_analyzer.visualization import (
         DEFAULT_STYLE,
         plot_comparison_objective_space,
@@ -1574,47 +2822,46 @@ def _generation_record(
     run_id: str,
     extra_configuration: Mapping[str, Any] | None = None,
     extra_events: Sequence[EvolutionEvent] = (),
+    stopping_decision: StoppingDecision | None = None,
 ) -> GenerationRecord:
-    ingestion = ingest_analysis_results(
-        candidate_refs,
-        collection.documents,
-        uri_by_analysis_result_id=analysis_uris,
-    )
-    if ingestion.missing_candidate_ids or ingestion.unexpected_candidate_ids:
-        raise WorkflowConfigError(
-            "analysis results do not match evolution candidates: "
-            f"missing={list(ingestion.missing_candidate_ids)}, "
-            f"unexpected={list(ingestion.unexpected_candidate_ids)}",
+    generation_configuration = {
+        "workflow_run_id": run_id,
+        **dict(extra_configuration or {}),
+    }
+    try:
+        return build_analyzed_generation_record(
+            generation_index=generation_index,
+            candidate_refs=candidate_refs,
+            analysis_result_documents=collection.documents,
+            selection=selection,
+            analysis_uris=analysis_uris,
+            parent_refs=parent_refs,
+            generation_configuration=generation_configuration,
+            extra_events=extra_events,
+            stopping_decision=stopping_decision,
+            analysis_event_type="workflow_generation_analyzed",
+            selection_event_type="workflow_selection_completed",
+            stopping_event_type="workflow_stopping_decision",
         )
-    return GenerationRecord(
-        generation_index=generation_index,
-        candidate_refs=tuple(candidate_refs),
-        parent_refs=tuple(parent_refs),
-        survivor_refs=selection.survivor_refs,
-        rejected_refs=selection.rejected_refs,
-        archive_refs=selection.archive_refs,
-        analysis_result_refs=ingestion.analysis_result_refs,
-        configuration={
-            "workflow_run_id": run_id,
-            "selection": selection.configuration,
-            **dict(extra_configuration or {}),
-        },
-        events=(
-            EvolutionEvent(
-                event_type="workflow_generation_analyzed",
-                status="completed",
-                metadata={
-                    "candidate_count": len(tuple(candidate_refs)),
-                    "analysis_result_count": len(collection.documents),
-                },
-            ),
-            EvolutionEvent(
-                event_type="workflow_selection_completed",
-                policy_id=selection.policy_id,
-                status="completed",
-            ),
-            *tuple(extra_events),
-        ),
+    except EvolutionStateMachineError as exc:
+        raise WorkflowConfigError(
+            str(exc),
+        ) from exc
+
+
+
+def _checkpoint_generation_lifecycle(
+    machine: EvolutionStateMachine,
+    generation: GenerationRecord,
+) -> EvolutionStateMachine:
+    """Validate one complete generation through the canonical evolver lifecycle."""
+    return (
+        machine.plan_generation(generation.generation_index)
+        .record_candidates_generated()
+        .request_analysis()
+        .record_analysis_complete()
+        .record_selection_complete()
+        .append_generation(generation)
     )
 
 
@@ -1635,11 +2882,9 @@ def _new_evolution_state(
         },
         **dict(config.metadata),
     }
-    return EvolutionRunState(
+    machine = EvolutionStateMachine.start(
         evolution_run_id=evolution_run_id,
-        status="running",
         configuration=_evolution_configuration(config),
-        generations=tuple(generations),
         provenance={
             "created_at": config.created_at or _created_at_from_generations(generations),
             "source": "verfeinert.workflow",
@@ -1648,8 +2893,10 @@ def _new_evolution_state(
         metadata=metadata,
         created_at=config.created_at or _created_at_from_generations(generations),
         git_commit=None,
-        execution_metadata=_evolution_execution_metadata(generations),
     )
+    for generation in generations:
+        machine = _checkpoint_generation_lifecycle(machine, generation)
+    return machine.run_state
 
 
 def _state_with_generation(
@@ -1657,30 +2904,54 @@ def _state_with_generation(
     state: EvolutionRunState,
     generation: GenerationRecord,
 ) -> EvolutionRunState:
-    return EvolutionRunState(
-        evolution_run_id=state.evolution_run_id,
-        status="running",
-        configuration=_evolution_configuration(config),
-        generations=(*state.generations, generation),
-        provenance=state.provenance,
-        metadata=state.metadata,
-        created_at=state.created_at,
-        git_commit=state.git_commit,
-        execution_metadata=_evolution_execution_metadata((*state.generations, generation)),
+    """Append through the canonical lifecycle; retained as a compatibility helper."""
+    del config
+    machine = EvolutionStateMachine.from_run_state(state)
+    return _checkpoint_generation_lifecycle(machine, generation).run_state
+
+
+def _final_stopping_decision(config: WorkflowConfig, state: EvolutionRunState) -> dict[str, Any]:
+    latest = state.generations[-1] if state.generations else None
+    latest_decision = _stopping_decision_from_generation(latest)
+    if latest_decision is not None and bool(latest_decision.get("should_stop", False)):
+        return latest_decision
+    if latest is not None and len(state.generations) >= config.evolver.max_generations:
+        decision = StoppingDecision(
+            should_stop=True,
+            reason="max_generations_reached",
+            status="completed",
+            metadata={
+                "generation_index": latest.generation_index,
+                "generation_count": len(state.generations),
+                "stopping_policy": _stopping_policy(config).to_dict(),
+                "stopping_state": _stopping_state_from_state(state).to_dict(),
+            },
+        )
+        return decision.to_dict()
+    decision = StoppingDecision(
+        should_stop=True,
+        reason="no_mutation_continuation_requested",
+        status="completed",
+        metadata={
+            "generation_index": latest.generation_index if latest is not None else None,
+            "generation_count": len(state.generations),
+            "stopping_policy": _stopping_policy(config).to_dict(),
+            "stopping_state": _stopping_state_from_state(state).to_dict(),
+        },
     )
+    return decision.to_dict()
 
 
 def _state_completed(config: WorkflowConfig, state: EvolutionRunState) -> EvolutionRunState:
-    return EvolutionRunState(
-        evolution_run_id=state.evolution_run_id,
-        status="completed",
-        configuration=_evolution_configuration(config),
-        generations=state.generations,
-        provenance=state.provenance,
-        metadata=state.metadata,
-        created_at=state.created_at,
-        git_commit=state.git_commit,
-        execution_metadata=_evolution_execution_metadata(state.generations),
+    final_decision = _final_stopping_decision(config, state)
+    metadata = dict(state.metadata)
+    workflow_metadata = dict(metadata.get("workflow", {}))
+    workflow_metadata["final_stopping_decision"] = final_decision
+    metadata["workflow"] = workflow_metadata
+    return (
+        EvolutionStateMachine.from_run_state(state)
+        .complete(metadata=metadata)
+        .run_state
     )
 
 
@@ -1865,6 +3136,40 @@ def _analysis_result_documents_from_state(
     return documents
 
 
+def _aggregate_candidate_refs(
+    groups: Iterable[Iterable[CandidateRef]],
+) -> tuple[CandidateRef, ...]:
+    by_id: dict[str, CandidateRef] = {}
+    for refs in groups:
+        for ref in refs:
+            by_id.setdefault(ref.candidate_id, ref)
+    return tuple(by_id[candidate_id] for candidate_id in sorted(by_id))
+
+
+def _trajectory_specs(config: WorkflowConfig):
+    data = dict(config.evolver.trajectory_thresholds)
+    if not data:
+        return ()
+    return build_threshold_trajectory_specs(
+        metric_name=str(data["metric_name"]),
+        direction=str(data["direction"]),
+        trajectories=dict(data["trajectories"]),
+    )
+
+
+def _trajectory_states_from_state(
+    state: EvolutionRunState,
+) -> dict[str, ThresholdTrajectoryState]:
+    if not state.generations:
+        return {}
+    payload = state.generations[-1].configuration.get("threshold_trajectories", {})
+    if not isinstance(payload, Mapping):
+        raise WorkflowConfigError(
+            "invalid evolution state: threshold_trajectories must be a mapping."
+        )
+    return threshold_trajectories_from_mapping(payload)
+
+
 def _parent_refs_for_next_generation(
     config: WorkflowConfig,
     state: EvolutionRunState,
@@ -1873,12 +3178,378 @@ def _parent_refs_for_next_generation(
     generations = tuple(state.generations)
     if not generations:
         return ()
+
+    if config.evolver.trajectory_thresholds:
+        active = active_parent_refs_by_trajectory(
+            _trajectory_states_from_state(state)
+        )
+        return _aggregate_candidate_refs(active.values())
+
     if config.evolver.initial_parent_policy == "all_generation_zero_candidates" and next_generation == 1:
         return tuple(generations[0].candidate_refs)
     latest = generations[-1]
     if config.evolver.selection_mode == "strict_pareto_feedback" and next_generation > 1:
-        return tuple(latest.survivor_refs)
+        return tuple(latest.survivor_refs or latest.archive_refs)
     return tuple(latest.survivor_refs or latest.archive_refs or latest.candidate_refs)
+
+
+def _analysis_results_for_refs(
+    refs: Iterable[CandidateRef],
+    analysis_by_candidate_id: Mapping[str, Mapping[str, Any]],
+) -> tuple[Mapping[str, Any], ...]:
+    documents = []
+    missing = []
+    for ref in refs:
+        document = analysis_by_candidate_id.get(ref.candidate_id)
+        if document is None:
+            missing.append(ref.candidate_id)
+        else:
+            documents.append(document)
+    if missing:
+        raise WorkflowConfigError(
+            "cannot reconstruct accumulated evolution progress: unresolved "
+            f"AnalysisResult(s) for {sorted(missing)}"
+        )
+    return tuple(documents)
+
+
+def _trajectory_selection_view(
+    results: Sequence[Mapping[str, Any]],
+    states: Mapping[str, ThresholdTrajectoryState],
+    *,
+    policy_id: str,
+) -> SelectionResult:
+    survivor_refs = _aggregate_candidate_refs(
+        state.survivor_refs for state in states.values()
+    )
+    archive_refs = _aggregate_candidate_refs(
+        state.archive_refs for state in states.values()
+    )
+    survivor_ids = {ref.candidate_id for ref in survivor_refs}
+    decisions = tuple(
+        SelectionDecision(
+            candidate_id=str(result["candidate_ref"]["candidate_id"]),
+            analysis_result_id=str(result["analysis_result_id"]),
+            selected=str(result["candidate_ref"]["candidate_id"]) in survivor_ids,
+            reason=(
+                "selected_by_threshold_trajectory"
+                if str(result["candidate_ref"]["candidate_id"]) in survivor_ids
+                else "not_selected_by_threshold_trajectory"
+            ),
+        )
+        for result in sorted(
+            results,
+            key=lambda item: (
+                str(item["candidate_ref"]["candidate_id"]),
+                str(item["analysis_result_id"]),
+            ),
+        )
+    )
+    rejected_refs = tuple(
+        CandidateRef(
+            candidate_id=str(result["candidate_ref"]["candidate_id"]),
+            candidate_uri=dict(result["candidate_ref"]).get("candidate_uri"),
+            structural_hash=dict(result["candidate_ref"]).get("structural_hash"),
+            lineage_hash=dict(result["candidate_ref"]).get("lineage_hash"),
+        )
+        for result in sorted(
+            results,
+            key=lambda item: str(item["candidate_ref"]["candidate_id"]),
+        )
+        if str(result["candidate_ref"]["candidate_id"]) not in survivor_ids
+    )
+    return SelectionResult(
+        policy_id=policy_id,
+        survivor_refs=survivor_refs,
+        rejected_refs=rejected_refs,
+        archive_refs=archive_refs,
+        decisions=decisions,
+        analysis_result_refs=tuple(
+            AnalysisResultRef.from_analysis_result_document(result)
+            for result in results
+        ),
+        configuration={
+            "mode": "independent_threshold_trajectories",
+            "trajectory_ids": sorted(states),
+        },
+    )
+
+
+def _initialize_threshold_trajectory_state(
+    config: WorkflowConfig,
+    collection: AnalysisResultCollection,
+) -> tuple[dict[str, ThresholdTrajectoryState], SelectionResult]:
+    objectives = tuple(
+        ObjectiveSpec(item["name"], item["direction"])  # type: ignore[arg-type]
+        for item in config.evolver.objectives
+    )
+    states = initialize_threshold_trajectories(
+        specs=_trajectory_specs(config),
+        analysis_results=collection.documents,
+        objectives=objectives,
+    )
+    if config.evolver.initial_parent_policy == "all_generation_zero_candidates":
+        states = {
+            threshold_id: ThresholdTrajectoryState(
+                threshold_id=state.threshold_id,
+                metric_name=state.metric_name,
+                direction=state.direction,
+                threshold=state.threshold,
+                generation_index=state.generation_index,
+                parent_refs=state.eligible_candidate_refs,
+                eligible_candidate_refs=state.eligible_candidate_refs,
+                survivor_refs=state.survivor_refs,
+                archive_refs=state.archive_refs,
+                improved=False,
+                exhausted=False,
+            )
+            for threshold_id, state in states.items()
+        }
+    return states, _trajectory_selection_view(
+        collection.documents,
+        states,
+        policy_id=f"{config.evolver.policy_id}:threshold-trajectories:g0",
+    )
+
+
+def _trajectory_children_by_id(
+    *,
+    states: Mapping[str, ThresholdTrajectoryState],
+    child_parent_by_id: Mapping[str, str],
+    candidate_ids: Iterable[str],
+) -> dict[str, tuple[str, ...]]:
+    ids = tuple(candidate_ids)
+    result = {}
+    for threshold_id, state in sorted(states.items()):
+        if state.exhausted:
+            continue
+        parent_ids = {ref.candidate_id for ref in state.parent_refs}
+        result[threshold_id] = tuple(
+            candidate_id
+            for candidate_id in ids
+            if child_parent_by_id.get(candidate_id) in parent_ids
+        )
+    return result
+
+
+def _advance_threshold_trajectory_state(
+    *,
+    config: WorkflowConfig,
+    state: EvolutionRunState,
+    collection: AnalysisResultCollection,
+    analysis_by_candidate_id: Mapping[str, Mapping[str, Any]],
+    child_ids_by_trajectory: Mapping[str, Sequence[str]],
+    generation_index: int,
+):
+    previous_states = _trajectory_states_from_state(state)
+    objectives = tuple(
+        ObjectiveSpec(item["name"], item["direction"])  # type: ignore[arg-type]
+        for item in config.evolver.objectives
+    )
+    current_by_id = {
+        str(document["candidate_ref"]["candidate_id"]): document
+        for document in collection.documents
+    }
+    updated = {}
+    improvements = {}
+
+    for threshold_id, previous in sorted(previous_states.items()):
+        if previous.exhausted:
+            updated[threshold_id] = previous
+            continue
+
+        allowed_ids = set(child_ids_by_trajectory.get(threshold_id, ()))
+        trajectory_results = tuple(
+            current_by_id[candidate_id]
+            for candidate_id in sorted(allowed_ids)
+            if candidate_id in current_by_id
+        )
+        eligible = []
+        for result in trajectory_results:
+            value = metric_value(result, previous.metric_name)
+            if value is None:
+                continue
+            passes = (
+                float(value) <= previous.threshold
+                if previous.direction == "at_most"
+                else float(value) >= previous.threshold
+            )
+            if passes:
+                eligible.append(result)
+
+        reference_results = _analysis_results_for_refs(
+            previous.archive_refs,
+            analysis_by_candidate_id,
+        )
+        trajectory_selection = select_strict_pareto_feedback(
+            trajectory_results,
+            objectives=objectives,
+            reference_results=reference_results,
+            thresholds={previous.metric_name: previous.threshold},
+            threshold_direction=previous.direction,
+            strict_ties=config.evolver.strict_ties,
+            policy_id=f"{config.evolver.policy_id}:{threshold_id}:g{generation_index}",
+        )
+        combined_lookup = {
+            **dict(analysis_by_candidate_id),
+            **current_by_id,
+        }
+        archive_documents = _analysis_results_for_refs(
+            trajectory_selection.archive_refs,
+            combined_lookup,
+        )
+        previous_signature = frontier_signature(
+            reference_results,
+            objectives=objectives,
+        )
+        current_signature = frontier_signature(
+            archive_documents,
+            objectives=objectives,
+        )
+        improved = current_signature != previous_signature
+        continuation_parents = (
+            trajectory_selection.survivor_refs
+            or trajectory_selection.archive_refs
+        )
+        updated[threshold_id] = ThresholdTrajectoryState(
+            threshold_id=previous.threshold_id,
+            metric_name=previous.metric_name,
+            direction=previous.direction,
+            threshold=previous.threshold,
+            generation_index=generation_index,
+            parent_refs=tuple(continuation_parents),
+            eligible_candidate_refs=tuple(
+                CandidateRef(
+                    candidate_id=str(result["candidate_ref"]["candidate_id"]),
+                    candidate_uri=dict(result["candidate_ref"]).get("candidate_uri"),
+                    structural_hash=dict(result["candidate_ref"]).get("structural_hash"),
+                    lineage_hash=dict(result["candidate_ref"]).get("lineage_hash"),
+                )
+                for result in eligible
+            ),
+            survivor_refs=trajectory_selection.survivor_refs,
+            archive_refs=trajectory_selection.archive_refs,
+            improved=improved,
+            exhausted=False,
+        )
+        improvements[threshold_id] = improved
+
+    selection = _trajectory_selection_view(
+        collection.documents,
+        updated,
+        policy_id=f"{config.evolver.policy_id}:threshold-trajectories:g{generation_index}",
+    )
+    return updated, improvements, selection
+
+
+def _progress_refs_from_generation(
+    generation: GenerationRecord,
+) -> tuple[CandidateRef, ...]:
+    payload = generation.configuration.get("progress", {})
+    if not isinstance(payload, Mapping):
+        return ()
+    return tuple(
+        CandidateRef.from_ref_document(item)
+        for item in payload.get("archive_refs", ())
+    )
+
+
+def _single_progress_for_generation(
+    *,
+    config: WorkflowConfig,
+    state: EvolutionRunState | None,
+    collection: AnalysisResultCollection,
+    selection: SelectionResult,
+    analysis_by_candidate_id: Mapping[str, Mapping[str, Any]],
+):
+    mode = config.evolver.selection_mode
+    previous_refs = (
+        _progress_refs_from_generation(state.generations[-1])
+        if state is not None and state.generations
+        else ()
+    )
+    previous_results = (
+        _analysis_results_for_refs(previous_refs, analysis_by_candidate_id)
+        if previous_refs
+        else ()
+    )
+
+    if mode == "fitness":
+        progress = accumulated_fitness_progress(
+            previous_results=previous_results,
+            candidate_results=collection.documents,
+            metric_name=config.evolver.metric_name,
+            direction=config.evolver.direction,
+            keep=config.evolver.keep,
+        )
+        return progress.improved, {"kind": "fitness", **progress.to_dict()}, progress.archive_refs
+
+    if mode in {"pareto", "strict_pareto"}:
+        objectives = tuple(
+            ObjectiveSpec(item["name"], item["direction"])  # type: ignore[arg-type]
+            for item in config.evolver.objectives
+        )
+        progress = accumulated_pareto_progress(
+            previous_frontier=previous_results,
+            candidate_results=collection.documents,
+            objectives=objectives,
+        )
+        return progress.improved, {"kind": "pareto", **progress.to_dict()}, progress.archive_refs
+
+    if mode == "strict_pareto_feedback":
+        objectives = tuple(
+            ObjectiveSpec(item["name"], item["direction"])  # type: ignore[arg-type]
+            for item in config.evolver.objectives
+        )
+        current_lookup = {
+            str(document["candidate_ref"]["candidate_id"]): document
+            for document in collection.documents
+        }
+        combined_lookup = {
+            **dict(analysis_by_candidate_id),
+            **current_lookup,
+        }
+        archive_documents = _analysis_results_for_refs(
+            selection.archive_refs,
+            combined_lookup,
+        )
+        previous_signature = (
+            frontier_signature(previous_results, objectives=objectives)
+            if previous_results
+            else ()
+        )
+        current_signature = frontier_signature(
+            archive_documents,
+            objectives=objectives,
+        )
+        improved = current_signature != previous_signature
+        payload = {
+            "kind": "strict_pareto_feedback",
+            "improved": improved,
+            "previous_signature": [list(item) for item in previous_signature],
+            "current_signature": [list(item) for item in current_signature],
+            "archive_refs": [ref.to_ref_dict() for ref in selection.archive_refs],
+        }
+        return improved, payload, tuple(selection.archive_refs)
+
+    if mode == "thresholds":
+        if config.evolver.patience is not None:
+            raise WorkflowConfigError(
+                "governed patience for selection_mode='thresholds' has no "
+                "ordered scientific truth source; use trajectory_thresholds "
+                "with strict_pareto_feedback instead."
+            )
+        return True, {
+            "kind": "legacy_threshold_filter",
+            "improved": True,
+            "archive_refs": [ref.to_ref_dict() for ref in selection.archive_refs],
+        }, tuple(selection.archive_refs)
+
+    raise WorkflowConfigError(
+        f"unsupported evolution selection mode for progress: {mode!r}"
+    )
+
+
 
 
 def _selection_reference_results(
@@ -1928,11 +3599,87 @@ def _deduplicate_offspring(
     ], report
 
 
+def _produce_candidate_with_constraints(
+    request,
+    parent: Mapping[str, Any],
+    candidate_factory: Any,
+    *,
+    config: WorkflowConfig,
+) -> dict[str, Any]:
+    try:
+        if config.generation.constraints is not None:
+            validate_candidate_constraints(parent, config.generation.constraints)
+        child = produce_candidate_from_request(request, parent, candidate_factory)
+        return validate_candidate_constraints(child, config.generation.constraints)
+    except GeneratorValidationError as exc:
+        raise WorkflowConfigError(
+            "mutation produced a candidate that violates workflow generation.constraints: "
+            f"{exc}",
+        ) from exc
+
+
+def _stopping_policy(config: WorkflowConfig) -> StoppingPolicy:
+    return StoppingPolicy(
+        max_generations=config.evolver.max_generations,
+        patience=config.evolver.patience,
+    )
+
+
+def _stopping_state_from_state(state: EvolutionRunState | None) -> StoppingState:
+    if state is None or not state.generations:
+        return StoppingState()
+    latest = state.generations[-1]
+    stopping = dict(latest.configuration.get("stopping", {}))
+    metadata = dict(stopping.get("metadata", {}))
+    return StoppingState.from_mapping(metadata.get("stopping_state"))
+
+
+def _stopping_decision_from_generation(generation: GenerationRecord | None) -> dict[str, Any] | None:
+    if generation is None:
+        return None
+    stopping = generation.configuration.get("stopping")
+    if isinstance(stopping, Mapping):
+        return dict(stopping)
+    return None
+
+
+def _stopping_decision_for_generation(
+    *,
+    config: WorkflowConfig,
+    state: EvolutionRunState | None,
+    generation_index: int,
+    candidate_count: int,
+    analysis_result_count: int,
+    survivor_count: int,
+    strict_improvement: bool,
+    duplicate_only: bool = False,
+    threshold_improvements: Mapping[str, bool] | None = None,
+    consume_patience: bool = True,
+) -> StoppingDecision:
+    return evaluate_stopping_conditions(
+        generation_index=generation_index,
+        policy=_stopping_policy(config),
+        candidate_count=candidate_count,
+        analysis_result_count=analysis_result_count,
+        survivor_count=survivor_count,
+        duplicate_only=duplicate_only,
+        strict_improvement=strict_improvement,
+        patience_state=_stopping_state_from_state(state),
+        threshold_improvements=threshold_improvements,
+        consume_patience=consume_patience,
+    )
+
+
 def _should_extend_evolution(
     config: WorkflowConfig,
     state: EvolutionRunState,
     candidate_factory: Any | None,
 ) -> bool:
+    latest_decision = _stopping_decision_from_generation(
+        state.generations[-1] if state.generations else None,
+    )
+    if latest_decision is not None and bool(latest_decision.get("should_stop", False)):
+        return False
     if len(state.generations) >= config.evolver.max_generations:
         return False
     if not config.evolver.mutation_policy and candidate_factory is None:
@@ -1946,6 +3693,26 @@ def _should_extend_evolution(
             "evolution continuation requires a candidate_factory for new generations.",
         )
     return True
+
+
+def _workflow_candidate_factory(config: WorkflowConfig, candidate_factory: Any | None) -> Any | None:
+    if candidate_factory is not None or not config.evolver.mutation_policy:
+        return candidate_factory
+    factory_config = dict(config.evolver.mutation_policy.get("candidate_factory", {}))
+    factory_type = str(factory_config.get("type", factory_config.get("name", "canonical"))).strip().lower()
+    if factory_type not in {"canonical", "canonical_mutation"}:
+        raise WorkflowConfigError(
+            "evolver.mutation_policy.candidate_factory.type must be canonical.",
+        )
+    return CanonicalMutationFactory(
+        source_label="verfeinert.workflow.canonical_mutation_factory",
+        created_at=config.created_at,
+        constraints=config.generation.constraints,
+        metadata={
+            "workflow_run_id": config.run_id,
+            "workflow_candidate_factory": "canonical",
+        },
+    )
 
 
 def _mutation_policy_for_generation(
@@ -1992,38 +3759,56 @@ def _evolution_configuration(config: WorkflowConfig) -> dict[str, Any]:
     selection_policy = config.evolver.to_dict()
     mutation_policy = dict(selection_policy.pop("mutation_policy", {}))
     max_generations = selection_policy.pop("max_generations")
+    patience = selection_policy.pop("patience")
     selection_policy.pop("metadata", None)
+    mutation_configuration = {
+        "policy": mutation_policy,
+        "requested_metrics": list(config.analyzer.selected_metrics),
+    }
+    if config.generation.constraints is not None:
+        mutation_configuration["structural_constraints"] = config.generation.constraints.to_dict()
     return {
         "random_seed": config.random_seed,
         "execution": config.execution.to_dict(),
-        "mutation_policy": {
-            "policy": mutation_policy,
-            "requested_metrics": list(config.analyzer.selected_metrics),
-        },
+        "mutation_policy": mutation_configuration,
         "selection_policy": selection_policy,
-        "stopping_policy": {"max_generations": max_generations},
+        "stopping_policy": {
+            "max_generations": max_generations,
+            "patience": patience,
+        },
     }
 
 
 def _evolution_fingerprint(config: WorkflowConfig) -> str:
     selection_policy = config.evolver.to_dict()
     selection_policy.pop("max_generations", None)
+    patience = selection_policy.pop("patience")
     selection_policy.pop("metadata", None)
-    return stable_hash(
-        {
-            "fingerprint_version": EVOLUTION_FINGERPRINT_VERSION,
-            "campaign_type": config.campaign_type,
-            "random_seed": config.random_seed,
-            "execution": config.execution.to_dict(),
-            "mutation_policy": selection_policy.pop("mutation_policy", {}),
-            "selection_policy": selection_policy,
-            "analyzer": {
-                "selected_metrics": list(config.analyzer.selected_metrics),
-                "structural_cost": config.analyzer.structural_cost.to_dict(),
-                "metric_configs": config.analyzer.metric_configs,
-            },
+    payload = {
+        "fingerprint_version": EVOLUTION_FINGERPRINT_VERSION,
+        "campaign_type": config.campaign_type,
+        "random_seed": config.random_seed,
+        "execution": config.execution.to_dict(),
+        "mutation_policy": selection_policy.pop("mutation_policy", {}),
+        "selection_policy": selection_policy,
+        "analyzer": {
+            "selected_metrics": list(config.analyzer.selected_metrics),
+            "structural_cost": config.analyzer.structural_cost.to_dict(),
+            "metric_configs": config.analyzer.metric_configs,
+            "materialization": config.analyzer.materialization.to_dict(),
+            "permissions": config.analyzer.permissions.to_dict(),
+            "random_seed": (
+                config.analyzer.random_seed
+                if config.analyzer.random_seed is not None
+                else config.random_seed
+            ),
         },
-    )
+    }
+    if config.generation.constraints is not None:
+        payload["structural_constraints"] = config.generation.constraints.to_dict()
+    if patience is not None:
+        payload["stopping_policy"] = {"patience": patience}
+    return stable_hash(payload)
 
 
 def _source_evolution_fingerprint(document: Mapping[str, Any]) -> str:
@@ -2046,15 +3831,7 @@ def _source_evolution_fingerprint(document: Mapping[str, Any]) -> str:
 def _evolution_execution_metadata(
     generations: Sequence[GenerationRecord],
 ) -> dict[str, Any]:
-    return {
-        "analysis_requested": any(generation.analysis_result_refs for generation in generations),
-        "analysis_results_ingested": any(generation.analysis_result_refs for generation in generations),
-        "selection_executed": any(
-            generation.survivor_refs or generation.rejected_refs
-            for generation in generations
-        ),
-        "generation_count": len(generations),
-    }
+    return evolution_execution_metadata(generations)
 
 
 def _created_at_from_generations(generations: Sequence[GenerationRecord]) -> str:
@@ -2106,6 +3883,7 @@ def run_workflow(
     analysis_result_sources: Sequence[str | Path | Mapping[str, Any]] = (),
     evolution_run_source: str | Path | Mapping[str, Any] | None = None,
     candidate_factory: Any | None = None,
+    event_sink: Callable[[WorkflowEvent], Any] | None = None,
 ) -> WorkflowResult:
     """Run a workflow through the public orchestration entry point."""
     return WorkflowRunner(config).run(
@@ -2117,13 +3895,8 @@ def run_workflow(
         analysis_result_sources=analysis_result_sources,
         evolution_run_source=evolution_run_source,
         candidate_factory=candidate_factory,
+        event_sink=event_sink,
     )
-
-
-def _reject_unsupported_scientific_multiprocessing(config: WorkflowConfig) -> None:
-    if config.execution.mode == "sequential" or not config.scientific_execution:
-        return
-    raise WorkflowConfigError(SCIENTIFIC_MULTIPROCESSING_DEFERRED_MESSAGE)
 
 
 __all__ = [

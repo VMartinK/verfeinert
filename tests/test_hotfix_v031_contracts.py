@@ -2,26 +2,26 @@
 
 from __future__ import annotations
 
+import json
 from importlib import metadata
 from pathlib import Path
 import tempfile
 import tomllib
 import unittest
-from unittest import mock
 
 import yaml
 
 import verfeinert
 from verfeinert._version import PACKAGE_NAME, SOURCE_TREE_VERSION
 from verfeinert.ansatz_analyzer import (
+    AnalysisPipeline,
     AnalyzerConfig,
-    AnalyzerConfigError,
     StructuralCostConfig,
 )
 from verfeinert.ansatz_evolver import EvolverConfig
 from verfeinert.core import CoreValidationError
 from verfeinert.core.config import ExecutionConfig
-from verfeinert.workflow import WorkflowConfig, WorkflowConfigError, WorkflowRunner
+from verfeinert.workflow import WorkflowConfig, WorkflowRunner
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -77,38 +77,42 @@ class HotfixV031ContractTests(unittest.TestCase):
         self.assertEqual(citation["version"], expected)
         self.assertIn(f"## v{expected} -", changelog)
 
-    def test_direct_analyzer_rejects_scientific_multiprocessing(self) -> None:
+    def test_direct_analyzer_accepts_supported_scientific_multiprocessing(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             input_root = root / "inputs"
             input_root.mkdir()
 
-            with self.assertRaisesRegex(AnalyzerConfigError, "multiprocessing executor primitives"):
-                AnalyzerConfig(
-                    run_id="v031-analyzer",
-                    input_roots=(input_root,),
-                    output_root=root / "outputs",
-                    selected_metrics=("structural_cost",),
-                    structural_cost=StructuralCostConfig(reference_bounds=_bounds()),
-                    execution=ExecutionConfig(
-                        mode="multiprocessing",
-                        parallelize_candidates=True,
-                        worker_count=2,
-                    ),
-                )
+            config = AnalyzerConfig(
+                run_id="v031-analyzer",
+                input_roots=(input_root,),
+                output_root=root / "outputs",
+                selected_metrics=("structural_cost",),
+                structural_cost=StructuralCostConfig(reference_bounds=_bounds()),
+                execution=ExecutionConfig(
+                    mode="multiprocessing",
+                    parallelize_candidates=True,
+                    worker_count=2,
+                ),
+            )
 
-    def test_workflow_rejects_multiprocessing_before_scientific_work(self) -> None:
+            self.assertEqual(config.execution.mode, "multiprocessing")
+            self.assertIsInstance(AnalysisPipeline(config), AnalysisPipeline)
+
+    def test_workflow_runs_multiprocessing_for_supported_analysis(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             output_root = Path(tmp) / "outputs"
             config = WorkflowConfig.from_mapping(_workflow_mapping(output_root))
 
-            with mock.patch.object(
-                WorkflowRunner,
-                "_generate_records",
-                side_effect=AssertionError("generation must not start"),
-            ):
-                with self.assertRaisesRegex(WorkflowConfigError, "multiprocessing executor primitives"):
-                    WorkflowRunner(config).run()
+            result = WorkflowRunner(config).run()
+
+            self.assertEqual(result.executed_operations, ("generate", "analyze"))
+            analysis = json.loads(result.analysis_result_paths[0].read_text(encoding="utf-8"))
+            self.assertEqual(
+                analysis["provenance"]["execution"]["execution_mode"],
+                "multiprocessing",
+            )
+            self.assertEqual(analysis["provenance"]["execution"]["worker_count"], 2)
 
     def test_evolver_config_rejects_scientific_multiprocessing_claims(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

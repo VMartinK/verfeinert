@@ -7,6 +7,7 @@ import json
 from pathlib import Path
 from tempfile import TemporaryDirectory
 import unittest
+from unittest import mock
 
 from verfeinert.core.io import PathValidationError
 from verfeinert.workflow import WorkflowConfig, WorkflowConfigError, WorkflowRunner
@@ -14,6 +15,7 @@ from verfeinert.workflow import WorkflowConfig, WorkflowConfigError, WorkflowRun
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 WORKFLOW_ROOT = PROJECT_ROOT / "verfeinert" / "workflow"
+CANDIDATE_EXAMPLE = PROJECT_ROOT / "tests" / "fixtures" / "schemas" / "candidate_example.json"
 CREATED_AT = "2026-08-06T00:00:00Z"
 
 
@@ -75,6 +77,13 @@ class WorkflowRunnerTests(unittest.TestCase):
             self.assertIsNotNone(result.ranking_json_path)
             self.assertIsNotNone(result.ranking_csv_path)
             self.assertEqual(result.provenance["runner"], "verfeinert.workflow")
+            self.assertEqual(
+                result.provenance["execution"]["stage_plan"],
+                {
+                    "scientific": ["generate", "analyze", "evolve"],
+                    "postprocessing": ["ranking"],
+                },
+            )
             self.assertFalse(result.provenance["execution"]["qnodes_executed_by_runner"])
             self.assertFalse(result.provenance["execution"]["plots_generated_by_runner"])
 
@@ -82,6 +91,46 @@ class WorkflowRunnerTests(unittest.TestCase):
             generation = evolution["generations"][0]
             self.assertEqual(generation["candidate_refs"][0]["candidate_id"], "runner-a02-l1")
             self.assertEqual(generation["analysis_result_refs"][0]["candidate_id"], "runner-a02-l1")
+            self.assertEqual(
+                generation["configuration"]["stopping"]["metadata"]["stopping_policy"],
+                {"max_generations": 1, "patience": None},
+            )
+            final_decision = evolution["metadata"]["workflow"]["final_stopping_decision"]
+            self.assertTrue(final_decision["should_stop"])
+            self.assertEqual(final_decision["reason"], "max_generations_reached")
+            self.assertEqual(final_decision["metadata"]["generation_index"], 0)
+
+    def test_analyze_stage_does_not_implicitly_generate_or_evolve(self) -> None:
+        with TemporaryDirectory() as temp_dir:
+            mapping = _workflow_mapping(Path(temp_dir) / "outputs")
+            mapping["workflow"] = {
+                "scientific_execution": ["analyze"],
+                "postprocessing": [],
+            }
+            mapping["artifacts"] = {"candidates": [str(CANDIDATE_EXAMPLE)]}
+            config = WorkflowConfig.from_mapping(mapping)
+
+            with (
+                mock.patch.object(
+                    WorkflowRunner,
+                    "_run_generation_stage",
+                    side_effect=AssertionError("generation must not run"),
+                ),
+                mock.patch.object(
+                    WorkflowRunner,
+                    "_run_evolution_stage",
+                    side_effect=AssertionError("evolution must not run"),
+                ),
+            ):
+                result = WorkflowRunner(config).run()
+
+            self.assertEqual(result.executed_operations, ("analyze",))
+            self.assertEqual(
+                result.provenance["execution"]["stage_plan"],
+                {"scientific": ["analyze"], "postprocessing": []},
+            )
+            self.assertFalse(result.provenance["execution"]["candidate_generation_executed"])
+            self.assertFalse(result.provenance["execution"]["evolution_exported"])
 
     def test_invalid_configuration_is_rejected(self) -> None:
         with TemporaryDirectory() as temp_dir:

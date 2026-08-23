@@ -5,7 +5,7 @@ from __future__ import annotations
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass
 import multiprocessing
-from typing import Protocol, TypeVar
+from typing import Any, Protocol, TypeVar
 
 from verfeinert.core.config import ExecutionConfig
 from verfeinert.core.validation import CoreValidationError, require_positive_int
@@ -24,6 +24,37 @@ class Executor(Protocol):
         items: Iterable[InputT],
     ) -> list[OutputT]:
         """Apply ``function`` to ``items`` and return results in input order."""
+
+
+class ExecutionError(RuntimeError):
+    """Raised when an executor cannot truthfully complete requested work."""
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        mode: str,
+        reason: str = "execution_failed",
+        worker_count: int | None = None,
+        error_type: str | None = None,
+        error_message: str | None = None,
+    ) -> None:
+        super().__init__(message)
+        self.mode = mode
+        self.reason = reason
+        self.worker_count = worker_count
+        self.error_type = error_type
+        self.error_message = error_message
+
+    def to_dict(self) -> dict[str, Any]:
+        """Return JSON-safe failure metadata without traceback internals."""
+        return {
+            "mode": self.mode,
+            "reason": self.reason,
+            "worker_count": self.worker_count,
+            "error_type": self.error_type,
+            "error_message": self.error_message,
+        }
 
 
 @dataclass(frozen=True)
@@ -61,8 +92,19 @@ class MultiprocessingExecutor:
         item_list = list(items)
         if not item_list:
             return []
-        with multiprocessing.Pool(processes=self.worker_count) as pool:
-            return list(pool.map(function, item_list))
+        try:
+            with multiprocessing.Pool(processes=self.worker_count) as pool:
+                return list(pool.map(function, item_list))
+        except Exception as exc:
+            raise ExecutionError(
+                "multiprocessing execution failed without sequential fallback: "
+                f"{type(exc).__name__}: {exc}",
+                mode="multiprocessing",
+                reason="multiprocessing_execution_failed",
+                worker_count=self.worker_count,
+                error_type=type(exc).__name__,
+                error_message=str(exc),
+            ) from exc
 
 
 def build_executor(config: ExecutionConfig) -> Executor:
@@ -78,6 +120,7 @@ def build_executor(config: ExecutionConfig) -> Executor:
 
 __all__ = [
     "Executor",
+    "ExecutionError",
     "MultiprocessingExecutor",
     "SequentialExecutor",
     "build_executor",

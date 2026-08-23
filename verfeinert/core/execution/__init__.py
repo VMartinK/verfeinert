@@ -2,6 +2,7 @@
 
 from .executors import (
     Executor,
+    ExecutionError,
     MultiprocessingExecutor,
     SequentialExecutor,
     build_executor,
@@ -9,6 +10,7 @@ from .executors import (
 
 __all__ = [
     "Executor",
+    "ExecutionError",
     "MultiprocessingExecutor",
     "SequentialExecutor",
     "build_executor",

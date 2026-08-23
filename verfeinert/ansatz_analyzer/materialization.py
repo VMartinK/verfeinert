@@ -17,10 +17,93 @@ from .validation import validate_candidate_document
 
 MATERIALIZER_VERSION = "verfeinert.ansatz_analyzer.materialization.v1"
 SUPPORTED_GATE_NAMESPACE = "verfeinert.default_gates"
+SUPPORTED_GATE_SPECS = {
+    "rx": (1, 1),
+    "ry": (1, 1),
+    "rz": (1, 1),
+    "x": (1, 0),
+    "y": (1, 0),
+    "z": (1, 0),
+    "h": (1, 0),
+    "cx": (2, 0),
+    "cnot": (2, 0),
+    "cz": (2, 0),
+    "swap": (2, 0),
+    "crx": (2, 1),
+    "cry": (2, 1),
+    "crz": (2, 1),
+    "isingxx": (2, 1),
+    "isingyy": (2, 1),
+    "isingzz": (2, 1),
+}
+SUPPORTED_OPERATION_NAMES = tuple(sorted(SUPPORTED_GATE_SPECS))
+SUPPORTED_PARAMETER_KINDS = ("trainable", "fixed", "literal_operation_parameter")
 
 
 class CircuitMaterializationError(ValueError):
     """Raised when a canonical candidate cannot be materialized."""
+
+    def __init__(self, message: str, *, reason: str = "materialization_failed") -> None:
+        super().__init__(message)
+        self.reason = reason
+
+
+@dataclass(frozen=True)
+class MaterializationCapability:
+    """JSON-safe report of materializer support and configured limits."""
+
+    backend: str
+    device: str
+    interface: str
+    diff_method: str
+    supported_operations: tuple[str, ...]
+    supported_parameter_kinds: tuple[str, ...]
+    limits: dict[str, int | None]
+    candidate_id: str | None = None
+    n_qubits: int | None = None
+    operation_count: int | None = None
+    trainable_parameter_count: int | None = None
+    unsupported_operations: tuple[dict[str, Any], ...] = ()
+    materializer_version: str = MATERIALIZER_VERSION
+
+    @property
+    def within_limits(self) -> bool:
+        """Return whether candidate counts fit configured limits."""
+        if self.n_qubits is not None and _exceeds_limit(self.n_qubits, self.limits.get("max_qubits")):
+            return False
+        if self.operation_count is not None and _exceeds_limit(self.operation_count, self.limits.get("max_operations")):
+            return False
+        if (
+            self.trainable_parameter_count is not None
+            and _exceeds_limit(
+                self.trainable_parameter_count,
+                self.limits.get("max_trainable_parameters"),
+            )
+        ):
+            return False
+        return True
+
+    def to_dict(self) -> dict[str, Any]:
+        """Return JSON-safe capability metadata."""
+        return to_json_safe(
+            {
+                "materializer": "verfeinert.ansatz_analyzer.materialization",
+                "materializer_version": self.materializer_version,
+                "backend": self.backend,
+                "device": self.device,
+                "interface": self.interface,
+                "diff_method": self.diff_method,
+                "supported_operations": list(self.supported_operations),
+                "supported_parameter_kinds": list(self.supported_parameter_kinds),
+                "limits": dict(self.limits),
+                "candidate_id": self.candidate_id,
+                "n_qubits": self.n_qubits,
+                "operation_count": self.operation_count,
+                "trainable_parameter_count": self.trainable_parameter_count,
+                "unsupported_operations": list(self.unsupported_operations),
+                "within_limits": self.within_limits,
+            },
+        )
 
 
 @dataclass(frozen=True)
@@ -38,6 +121,7 @@ class MaterializedCircuit:
     wire_order: tuple[int, ...]
     gate_names: tuple[str, ...]
     operation_ids: tuple[str, ...]
+    limits: dict[str, int | None] = field(default_factory=dict)
     materializer_version: str = MATERIALIZER_VERSION
 
     @property
@@ -61,6 +145,7 @@ class MaterializedCircuit:
                 "gate_names": list(self.gate_names),
                 "operation_ids": list(self.operation_ids),
                 "operation_count": len(self.operation_ids),
+                "limits": dict(self.limits),
                 "qnode_return": "state",
             },
         )
@@ -92,15 +177,23 @@ def materialize_candidate(
     """Materialize a canonical Candidate into a PennyLane state callable."""
     resolved = config or CircuitMaterializationConfig(enabled=True)
     if not resolved.enabled:
-        raise CircuitMaterializationError("circuit materialization is disabled.")
+        raise CircuitMaterializationError(
+            "circuit materialization is disabled.",
+            reason="materialization_disabled",
+        )
     if resolved.backend != "pennylane":
-        raise CircuitMaterializationError(f"unsupported materialization backend: {resolved.backend!r}")
+        raise CircuitMaterializationError(
+            f"unsupported materialization backend: {resolved.backend!r}",
+            reason="unsupported_backend",
+        )
 
-    qml = _require_pennylane()
     view = _candidate_view(candidate)
+    _validate_candidate_limits(view, resolved)
     wire_order = _wire_order(view)
     parameter_bindings, trainable_parameter_ids = _parameter_bindings(view)
+    _validate_trainable_parameter_limit(trainable_parameter_ids, resolved)
     _validate_operations(view, parameter_bindings=parameter_bindings, wire_order=wire_order)
+    qml = _require_pennylane()
     device = qml.device(resolved.device, wires=list(wire_order))
 
     def circuit(parameters):
@@ -134,6 +227,7 @@ def materialize_candidate(
         wire_order=wire_order,
         gate_names=tuple(operation.gate_name for operation in view.operations),
         operation_ids=tuple(operation.operation_id for operation in view.operations),
+        limits=_materialization_limits(resolved),
     )
 
 
@@ -146,6 +240,36 @@ def make_state_callable(
     return materialize_candidate(candidate, config=config).state_callable
 
 
+def inspect_materialization_capability(
+    candidate: CandidateView | Mapping[str, Any] | None = None,
+    *,
+    config: CircuitMaterializationConfig | None = None,
+) -> MaterializationCapability:
+    """Return materializer capabilities and optional candidate support details."""
+    resolved = config or CircuitMaterializationConfig(enabled=True)
+    view = _candidate_view(candidate) if candidate is not None else None
+    unsupported: list[dict[str, Any]] = []
+    if view is not None:
+        for operation in view.operations:
+            support = _operation_support_record(operation)
+            if support is not None:
+                unsupported.append(support)
+    return MaterializationCapability(
+        backend=resolved.backend,
+        device=resolved.device,
+        interface=resolved.interface,
+        diff_method=resolved.diff_method,
+        supported_operations=SUPPORTED_OPERATION_NAMES,
+        supported_parameter_kinds=SUPPORTED_PARAMETER_KINDS,
+        limits=_materialization_limits(resolved),
+        candidate_id=view.candidate_id if view is not None else None,
+        n_qubits=view.n_qubits if view is not None else None,
+        operation_count=len(view.operations) if view is not None else None,
+        trainable_parameter_count=_trainable_parameter_count(view) if view is not None else None,
+        unsupported_operations=tuple(unsupported),
+    )
+
+
 def _candidate_view(candidate: CandidateView | Mapping[str, Any]) -> CandidateView:
     if isinstance(candidate, CandidateView):
         return candidate
@@ -154,10 +278,59 @@ def _candidate_view(candidate: CandidateView | Mapping[str, Any]) -> CandidateVi
     raise TypeError("candidate must be a CandidateView or canonical Candidate mapping.")
 
 
+def _validate_candidate_limits(candidate: CandidateView, config: CircuitMaterializationConfig) -> None:
+    if _exceeds_limit(candidate.n_qubits, config.max_qubits):
+        raise CircuitMaterializationError(
+            "materialization resource limit exceeded: "
+            f"n_qubits={candidate.n_qubits}, max_qubits={config.max_qubits}.",
+            reason="resource_limit_exceeded",
+        )
+    operation_count = len(candidate.operations)
+    if _exceeds_limit(operation_count, config.max_operations):
+        raise CircuitMaterializationError(
+            "materialization resource limit exceeded: "
+            f"operation_count={operation_count}, max_operations={config.max_operations}.",
+            reason="resource_limit_exceeded",
+        )
+
+
+def _validate_trainable_parameter_limit(
+    trainable_parameter_ids: tuple[str, ...],
+    config: CircuitMaterializationConfig,
+) -> None:
+    parameter_count = len(trainable_parameter_ids)
+    if _exceeds_limit(parameter_count, config.max_trainable_parameters):
+        raise CircuitMaterializationError(
+            "materialization resource limit exceeded: "
+            f"trainable_parameter_count={parameter_count}, "
+            f"max_trainable_parameters={config.max_trainable_parameters}.",
+            reason="resource_limit_exceeded",
+        )
+
+
+def _materialization_limits(config: CircuitMaterializationConfig) -> dict[str, int | None]:
+    return {
+        "max_qubits": config.max_qubits,
+        "max_operations": config.max_operations,
+        "max_trainable_parameters": config.max_trainable_parameters,
+    }
+
+
+def _exceeds_limit(value: int, limit: int | None) -> bool:
+    return limit is not None and value > limit
+
+
+def _trainable_parameter_count(candidate: CandidateView | None) -> int | None:
+    if candidate is None:
+        return None
+    return sum(1 for parameter in candidate.parameters if str(parameter.get("kind", "")).lower() == "trainable")
+
+
 def _require_pennylane():
     if importlib.util.find_spec("pennylane") is None:
         raise CircuitMaterializationError(
             "PennyLane is required for analyzer circuit materialization.",
+            reason="backend_dependency_missing",
         )
     return importlib.import_module("pennylane")
 
@@ -222,6 +395,7 @@ def _validate_operations(
             raise CircuitMaterializationError(
                 f"unsupported candidate operation {operation.gate_name!r} "
                 f"at {operation.operation_id!r}.",
+                reason="unsupported_operation",
             )
         expected_wires, expected_parameters = spec
         if len(operation.qubits) != expected_wires:
@@ -373,6 +547,7 @@ def _gate_spec(operation: OperationView) -> tuple[int, int] | None:
             f"namespace={operation.gate_namespace!r}, version={operation.gate_version!r}. "
             f"The v0.3.1 PennyLane materializer supports only legacy omitted "
             f"namespaces or {SUPPORTED_GATE_NAMESPACE!r} without a gate version.",
+            reason="unsupported_semantic_gate_identity",
         )
     if operation.gate_version is not None:
         raise CircuitMaterializationError(
@@ -381,24 +556,60 @@ def _gate_spec(operation: OperationView) -> tuple[int, int] | None:
             f"namespace={operation.gate_namespace!r}, version={operation.gate_version!r}. "
             f"The v0.3.1 PennyLane materializer supports only legacy omitted "
             f"versions for {SUPPORTED_GATE_NAMESPACE!r}.",
+            reason="unsupported_semantic_gate_identity",
         )
-    if gate in {"rx", "ry", "rz"}:
-        return 1, 1
-    if gate in {"x", "y", "z", "h"}:
-        return 1, 0
-    if gate in {"cx", "cnot", "cz", "swap"}:
-        return 2, 0
-    if gate in {"crx", "cry", "crz", "isingxx", "isingyy", "isingzz"}:
-        return 2, 1
+    return SUPPORTED_GATE_SPECS.get(gate)
+
+
+def _operation_support_record(operation: OperationView) -> dict[str, Any] | None:
+    try:
+        spec = _gate_spec(operation)
+    except CircuitMaterializationError as exc:
+        return {
+            "operation_id": operation.operation_id,
+            "gate": operation.gate_name,
+            "reason": exc.reason,
+            "message": str(exc),
+        }
+    if spec is None:
+        return {
+            "operation_id": operation.operation_id,
+            "gate": operation.gate_name,
+            "reason": "unsupported_operation",
+            "message": f"unsupported candidate operation {operation.gate_name!r}.",
+        }
+    expected_wires, expected_parameters = spec
+    if len(operation.qubits) != expected_wires:
+        return {
+            "operation_id": operation.operation_id,
+            "gate": operation.gate_name,
+            "reason": "unsupported_wire_arity",
+            "message": (
+                f"gate {operation.gate_name!r} requires {expected_wires} wire(s), "
+                f"got {len(operation.qubits)}."
+            ),
+        }
+    if len(operation.parameters) != expected_parameters:
+        return {
+            "operation_id": operation.operation_id,
+            "gate": operation.gate_name,
+            "reason": "unsupported_parameter_arity",
+            "message": (
+                f"gate {operation.gate_name!r} requires {expected_parameters} parameter(s), "
+                f"got {len(operation.parameters)}."
+            ),
+        }
     return None
 
 
 __all__ = [
     "CircuitMaterializationError",
     "MATERIALIZER_VERSION",
+    "MaterializationCapability",
     "MaterializedCircuit",
     "SUPPORTED_GATE_NAMESPACE",
     "StateCallableProvider",
+    "inspect_materialization_capability",
     "make_state_callable",
     "materialize_candidate",
 ]

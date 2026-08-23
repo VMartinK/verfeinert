@@ -22,7 +22,21 @@ from .models import (
     EvolutionRunState,
     GenerationRecord,
 )
-from .pipeline import EvolutionPipelineState
+from .policies import (
+    StoppingDecision,
+    StoppingPolicy,
+    StoppingState,
+    ThresholdPatienceState,
+    evaluate_stopping_conditions,
+)
+from .pipeline import (
+    EVOLUTION_LIFECYCLE_STATES,
+    EvolutionPipelineState,
+    EvolutionStateMachine,
+    EvolutionStateMachineError,
+    build_analyzed_generation_record,
+    evolution_execution_metadata,
+)
 from .exporters import export_evolution_run_json, write_evolution_run_json
 from .validation import (
     EvolverValidationError,
@@ -36,9 +50,12 @@ __all__ = [
     "AnalysisResultRef",
     "CandidateFactory",
     "CandidateRef",
+    "EVOLUTION_LIFECYCLE_STATES",
     "EvolutionEvent",
     "EvolutionRunState",
     "EvolutionPipelineState",
+    "EvolutionStateMachine",
+    "EvolutionStateMachineError",
     "EvolverConfig",
     "EvolverExecutionPermissions",
     "EvolverValidationError",
@@ -46,7 +63,14 @@ __all__ = [
     "MutationPolicy",
     "MutationRecipe",
     "MutationRequest",
+    "StoppingDecision",
+    "StoppingPolicy",
+    "StoppingState",
+    "ThresholdPatienceState",
     "build_mutation_requests",
+    "build_analyzed_generation_record",
+    "evaluate_stopping_conditions",
+    "evolution_execution_metadata",
     "expand_mutation_requests",
     "export_evolution_run_json",
     "produce_candidate_from_request",

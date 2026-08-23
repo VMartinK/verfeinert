@@ -82,9 +82,28 @@ This layout preserves a reference-based model: population, mutation,
 selection, evaluation refs, and exporters are separate from analyzer metric
 execution.
 
-In v0.3.x, `EvolverConfig.execution` is sequential-only for public evolver
-state construction. Core multiprocessing primitives exist, but evolver/workflow
-scientific integration is deferred to v0.4.0.
+`EvolverConfig.execution` is sequential-only for direct public evolver state
+construction because the evolver does not execute analyzer metrics or own
+QNode/materialization work. Workflow analysis stages may use analyzer-owned
+candidate-level multiprocessing while the evolver continues to exchange
+canonical candidate and AnalysisResult references.
+
+## State Machine
+
+`EvolutionStateMachine` owns legal generation lifecycle transitions for
+`EvolutionRunState`. It exposes explicit states for initialization, planned
+generation work, generated candidates, pending/complete analysis, completed
+selection, checkpointed generations, and terminal completed/failed/cancelled
+runs. Invalid ordering, wrong generation indices, and attempts to transition
+from terminal states fail before a new EvolutionRun document is produced.
+
+`build_analyzed_generation_record` is the public boundary for materializing a
+selection-complete generation. It links candidate refs to AnalysisResult refs
+with `ingest_analysis_results`, records survivor/rejected/archive refs from
+the selection result, stores stopping decisions in generation configuration,
+and emits generation events without importing analyzer internals or computing
+metrics. Workflow drives these public transitions and continues to own artifact
+routing, candidate document storage, and analyzer execution.
 
 ## Population Representation
 
@@ -129,6 +148,12 @@ If a caller wants to use a custom candidate factory, the factory must accept
 JSON-safe mutation requests and return validated Candidate JSON documents or a
 validated StagedPackage JSON document.
 
+The public generator factory for the standard mutation vocabulary is
+`CanonicalMutationFactory`. It covers `insert`, `replace`, `remove`, `swap`,
+`reorder`, and `layer_propagation` while preserving evolver-owned mutation
+intent and generator-owned operation editing. `InsertGateMutationFactory`
+remains available for existing insert-only integrations.
+
 ## Mutation Model
 
 A mutation policy is declarative configuration. It includes or can include:
@@ -158,6 +183,15 @@ A mutation request records one requested child creation:
 
 Generated child Candidate JSON must carry the resulting parent/root/generation
 and mutation provenance in canonical `lineage`.
+
+Structural constraints are enforced by the generator, not by duplicated
+evolver gate/connectivity logic. A workflow-level `generation.constraints`
+declaration is routed to generator export and candidate-factory APIs. The
+evolver may persist the configured constraint snapshot as part of mutation
+configuration and fingerprints, but concrete validity decisions remain in
+`ansatz_generator.ConstraintSet` and generator-owned candidate validation.
+Custom factories used by workflow are revalidated through that same generator
+API before any child Candidate JSON is persisted.
 
 ## Evaluation Boundary
 
@@ -244,6 +278,22 @@ and future conditions include:
 
 Each stopping decision must record whether the run completed, failed,
 cancelled, or stopped by configured policy.
+
+`StoppingPolicy.patience` is opt-in. `patience=None` preserves v0.3.x
+compatibility: a reported no-improvement condition stops immediately with
+`no_strict_improvement`. An explicit integer enables stateful governed
+patience. With `patience=N`, exactly `N` consecutive non-improving generations
+are allowed and the next non-improving generation stops with
+`patience_exhausted`; therefore `patience=0` stops on the first
+non-improving generation. Any qualifying improvement resets the consecutive
+no-improvement counter to zero and records the improvement generation.
+
+Independent threshold trajectories may carry their own threshold patience
+state. When threshold-specific state is supplied, each threshold updates
+deterministically from its own improvement flag; a threshold-governed decision
+is patience-exhausted only when all active threshold trajectories are
+exhausted. The serialized stopping state is JSON-safe and can be stored in
+EvolutionRun generation configuration for resume/audit.
 
 ## Reproducibility
 

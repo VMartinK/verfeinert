@@ -25,6 +25,7 @@ from verfeinert.core.validation import (
     require_non_negative_int_or_none,
     require_positive_int,
 )
+from verfeinert.ansatz_generator import ConstraintSet, GeneratorValidationError
 
 
 class WorkflowConfigError(CoreValidationError):
@@ -47,6 +48,7 @@ SUPPORTED_POSTPROCESSING_OPERATIONS = (
     "comparison",
     "export_csv",
     "visualization",
+    "report",
 )
 SUPPORTED_WORKFLOW_STAGES = (
     "generate",
@@ -64,6 +66,8 @@ SUPPORTED_WORKFLOW_STAGES = (
     "visualize",
     "visualization",
     "plot",
+    "report",
+    "inspect",
 )
 DEFAULT_LEGACY_STAGES = ("generate", "analyze", "evolve", "rank")
 DEFAULT_SCIENTIFIC_EXECUTION = ("generate", "analyze", "evolve")
@@ -81,7 +85,20 @@ POSTPROCESSING_ALIASES = {
     "visualize": "visualization",
     "visualization": "visualization",
     "plot": "visualization",
+    "report": "report",
+    "inspect": "report",
 }
+SUPPORTED_OBSERVER_ERROR_POLICIES = ("raise", "record_warning")
+SUPPORTED_VISUALIZATION_PROFILES = ("generic", "publication")
+SUPPORTED_PUBLICATION_FIGURE_SETS = ("auto", "individual", "evolution", "global")
+SUPPORTED_PUBLICATION_FIGURES = (
+    "individual_by_layer",
+    "individual_by_lineage",
+    "individual_pareto_by_lineage",
+    "evolution_candidate_counts",
+    "evolution_by_layer",
+)
+SUPPORTED_PUBLICATION_FORMATS = ("png", "pdf", "svg")
 
 
 @dataclass(frozen=True)
@@ -96,6 +113,7 @@ class GenerationStageConfig:
     package_id: str | None = None
     source_label: str = "verfeinert.workflow"
     created_at: str | None = None
+    constraints: ConstraintSet | None = None
     metadata: dict[str, Any] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
@@ -114,6 +132,16 @@ class GenerationStageConfig:
         object.__setattr__(self, "template_ids", template_ids)
         object.__setattr__(self, "layers", layers)
         object.__setattr__(self, "n_qubits", require_positive_int(self.n_qubits, "generation.n_qubits"))
+        constraints = _constraint_set_or_none(self.constraints, "generation.constraints")
+        if (
+            constraints is not None
+            and constraints.connectivity is not None
+            and constraints.connectivity.n_qubits != self.n_qubits
+        ):
+            raise WorkflowConfigError(
+                "generation.constraints.connectivity.n_qubits must match generation.n_qubits.",
+            )
+        object.__setattr__(self, "constraints", constraints)
         object.__setattr__(
             self,
             "candidate_id_prefix",
@@ -137,6 +165,7 @@ class GenerationStageConfig:
             package_id=data.get("package_id"),
             source_label=data.get("source_label", "verfeinert.workflow"),
             created_at=data.get("created_at"),
+            constraints=data.get("constraints", data.get("constraint_set")),
             metadata=dict(data.get("metadata", {})),
         )
 
@@ -151,6 +180,7 @@ class GenerationStageConfig:
             "package_id": self.package_id,
             "source_label": self.source_label,
             "created_at": self.created_at,
+            "constraints": self.constraints.to_dict() if self.constraints is not None else None,
             "metadata": dict(self.metadata),
         }
 
@@ -262,7 +292,9 @@ class EvolutionStageConfig:
     )
     thresholds: dict[str, float] = field(default_factory=dict)
     threshold_direction: str = "at_most"
+    trajectory_thresholds: dict[str, Any] = field(default_factory=dict)
     max_generations: int = 1
+    patience: int | None = None
     mutation_policy: dict[str, Any] = field(default_factory=dict)
     offspring_deduplication: dict[str, Any] = field(default_factory=dict)
     initial_parent_policy: str = "default"
@@ -289,10 +321,61 @@ class EvolutionStageConfig:
         object.__setattr__(self, "thresholds", thresholds)
         if self.threshold_direction not in {"at_most", "at_least"}:
             raise WorkflowConfigError("evolver.threshold_direction must be at_most or at_least.")
+
+        trajectory_thresholds = dict(self.trajectory_thresholds)
+        if trajectory_thresholds:
+            if mode != "strict_pareto_feedback":
+                raise WorkflowConfigError(
+                    "evolver.trajectory_thresholds currently requires "
+                    "selection_mode='strict_pareto_feedback'."
+                )
+            trajectory_metric = _non_empty_text(
+                trajectory_thresholds.get("metric_name"),
+                "evolver.trajectory_thresholds.metric_name",
+            )
+            trajectory_direction = str(
+                trajectory_thresholds.get("direction", "at_most")
+            ).strip().lower()
+            if trajectory_direction not in {"at_most", "at_least"}:
+                raise WorkflowConfigError(
+                    "evolver.trajectory_thresholds.direction must be at_most or at_least."
+                )
+            raw_trajectories = trajectory_thresholds.get("trajectories", {})
+            if not isinstance(raw_trajectories, Mapping) or not raw_trajectories:
+                raise WorkflowConfigError(
+                    "evolver.trajectory_thresholds.trajectories must be a non-empty mapping."
+                )
+            normalized_trajectories: dict[str, float] = {}
+            for trajectory_id, threshold in sorted(raw_trajectories.items()):
+                normalized_id = require_identifier(
+                    str(trajectory_id),
+                    "evolver.trajectory_thresholds.trajectory_id",
+                )
+                if type(threshold) not in {int, float}:
+                    raise WorkflowConfigError(
+                        "evolver.trajectory_thresholds trajectory values must be numeric."
+                    )
+                normalized_trajectories[normalized_id] = float(threshold)
+            trajectory_thresholds = {
+                "metric_name": trajectory_metric,
+                "direction": trajectory_direction,
+                "trajectories": normalized_trajectories,
+            }
+        object.__setattr__(
+            self,
+            "trajectory_thresholds",
+            to_json_safe(trajectory_thresholds),
+        )
+
         object.__setattr__(
             self,
             "max_generations",
             require_positive_int(self.max_generations, "evolver.max_generations"),
+        )
+        object.__setattr__(
+            self,
+            "patience",
+            require_non_negative_int_or_none(self.patience, "evolver.patience"),
         )
         object.__setattr__(self, "mutation_policy", to_json_safe(dict(self.mutation_policy)))
         object.__setattr__(
@@ -322,7 +405,14 @@ class EvolutionStageConfig:
             objectives=tuple(data.get("objectives", ({"name": "structural_cost", "direction": "minimize"},))),
             thresholds=dict(data.get("thresholds", {})),
             threshold_direction=data.get("threshold_direction", "at_most"),
+            trajectory_thresholds=dict(data.get("trajectory_thresholds", {})),
             max_generations=data.get("max_generations", 1),
+            patience=_first_non_none(
+                data.get("patience"),
+                dict(data.get("stopping_policy", {})).get("patience")
+                if isinstance(data.get("stopping_policy", {}), Mapping)
+                else None,
+            ),
             mutation_policy=dict(data.get("mutation_policy", {})),
             offspring_deduplication=dict(data.get("offspring_deduplication", {})),
             initial_parent_policy=data.get("initial_parent_policy", "default"),
@@ -341,7 +431,9 @@ class EvolutionStageConfig:
             "objectives": [dict(item) for item in self.objectives],
             "thresholds": dict(self.thresholds),
             "threshold_direction": self.threshold_direction,
+            "trajectory_thresholds": dict(self.trajectory_thresholds),
             "max_generations": self.max_generations,
+            "patience": self.patience,
             "mutation_policy": dict(self.mutation_policy),
             "offspring_deduplication": dict(self.offspring_deduplication),
             "initial_parent_policy": self.initial_parent_policy,
@@ -545,22 +637,172 @@ class WorkflowResumeConfig:
     """Configuration for evolution continuation or explicit branch creation."""
 
     mode: str = "continue"
+    checkpoint: Any | None = None
 
     def __post_init__(self) -> None:
         mode = _non_empty_text(self.mode, "resume.mode").lower()
         if mode not in {"continue", "branch"}:
             raise WorkflowConfigError("resume.mode must be continue or branch.")
         object.__setattr__(self, "mode", mode)
+        object.__setattr__(self, "checkpoint", to_json_safe(self.checkpoint))
 
     @classmethod
     def from_mapping(cls, mapping: Mapping[str, Any]) -> "WorkflowResumeConfig":
         """Build resume config from parsed YAML/Python data."""
         data = dict(mapping)
-        return cls(mode=data.get("mode", "continue"))
+        return cls(
+            mode=data.get("mode", "continue"),
+            checkpoint=_first_non_none(
+                data.get("checkpoint"),
+                data.get("checkpoint_source"),
+                data.get("workflow_checkpoint"),
+            ),
+        )
 
     def to_dict(self) -> dict[str, Any]:
         """Return JSON-safe resume configuration."""
-        return {"mode": self.mode}
+        return {
+            "mode": self.mode,
+            "checkpoint": to_json_safe(self.checkpoint),
+        }
+
+
+@dataclass(frozen=True)
+class WorkflowCheckpointConfig:
+    """Configuration for durable workflow checkpoint writing."""
+
+    enabled: bool = False
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "enabled", require_bool(self.enabled, "checkpoint.enabled"))
+
+    @classmethod
+    def from_mapping(cls, mapping: Mapping[str, Any]) -> "WorkflowCheckpointConfig":
+        """Build checkpoint config from parsed YAML/Python data."""
+        data = dict(mapping)
+        return cls(enabled=data.get("enabled", False))
+
+    def to_dict(self) -> dict[str, Any]:
+        """Return JSON-safe checkpoint configuration."""
+        return {"enabled": self.enabled}
+
+
+@dataclass(frozen=True)
+class WorkflowObservabilityConfig:
+    """Configuration for workflow lifecycle events."""
+
+    event_log_enabled: bool = False
+    observer_error_policy: str = "raise"
+
+    def __post_init__(self) -> None:
+        object.__setattr__(
+            self,
+            "event_log_enabled",
+            require_bool(self.event_log_enabled, "observability.event_log_enabled"),
+        )
+        policy = _non_empty_text(
+            self.observer_error_policy,
+            "observability.observer_error_policy",
+        ).lower()
+        if policy not in SUPPORTED_OBSERVER_ERROR_POLICIES:
+            raise WorkflowConfigError(
+                "observability.observer_error_policy must be raise or record_warning.",
+            )
+        object.__setattr__(self, "observer_error_policy", policy)
+
+    @classmethod
+    def from_mapping(cls, mapping: Mapping[str, Any]) -> "WorkflowObservabilityConfig":
+        """Build observability config from parsed YAML/Python data."""
+        data = dict(mapping)
+        event_log = data.get("event_log", {})
+        event_log_enabled = data.get("event_log_enabled")
+        if event_log_enabled is None and isinstance(event_log, Mapping):
+            event_log_enabled = event_log.get("enabled")
+        return cls(
+            event_log_enabled=bool(event_log_enabled),
+            observer_error_policy=data.get("observer_error_policy", "raise"),
+        )
+
+    def to_dict(self) -> dict[str, Any]:
+        """Return JSON-safe observability configuration."""
+        return {
+            "event_log_enabled": self.event_log_enabled,
+            "event_log": {"enabled": self.event_log_enabled},
+            "observer_error_policy": self.observer_error_policy,
+        }
+
+
+@dataclass(frozen=True)
+class WorkflowVisualizationConfig:
+    """Configuration for workflow-level visualization orchestration."""
+
+    profile: str = "generic"
+    figure_set: str = "auto"
+    figures: tuple[str, ...] = ()
+    formats: tuple[str, ...] = ("png", "pdf", "svg")
+    overwrite: bool = True
+
+    def __post_init__(self) -> None:
+        profile = _non_empty_text(self.profile, "visualization.profile").lower()
+        if profile not in SUPPORTED_VISUALIZATION_PROFILES:
+            raise WorkflowConfigError(
+                f"visualization.profile must be one of {SUPPORTED_VISUALIZATION_PROFILES}.",
+            )
+        object.__setattr__(self, "profile", profile)
+        figure_set = _non_empty_text(self.figure_set, "visualization.figure_set").lower()
+        if figure_set not in SUPPORTED_PUBLICATION_FIGURE_SETS:
+            raise WorkflowConfigError(
+                f"visualization.figure_set must be one of {SUPPORTED_PUBLICATION_FIGURE_SETS}.",
+            )
+        object.__setattr__(self, "figure_set", figure_set)
+        figures = tuple(
+            _non_empty_text(figure, "visualization.figures").lower()
+            for figure in self.figures
+        )
+        unknown = [figure for figure in figures if figure not in SUPPORTED_PUBLICATION_FIGURES]
+        if unknown:
+            raise WorkflowConfigError(
+                "visualization.figures contains unsupported publication figure(s): "
+                + ", ".join(unknown),
+            )
+        object.__setattr__(self, "figures", tuple(dict.fromkeys(figures)))
+        formats = tuple(
+            _non_empty_text(fmt, "visualization.formats").lower().lstrip(".")
+            for fmt in self.formats
+        )
+        if not formats:
+            raise WorkflowConfigError("visualization.formats must not be empty.")
+        unsupported_formats = [
+            fmt for fmt in formats if fmt not in SUPPORTED_PUBLICATION_FORMATS
+        ]
+        if unsupported_formats:
+            raise WorkflowConfigError(
+                "visualization.formats must be selected from png, pdf, svg.",
+            )
+        object.__setattr__(self, "formats", tuple(dict.fromkeys(formats)))
+        object.__setattr__(self, "overwrite", require_bool(self.overwrite, "visualization.overwrite"))
+
+    @classmethod
+    def from_mapping(cls, mapping: Mapping[str, Any]) -> "WorkflowVisualizationConfig":
+        """Build visualization orchestration config from parsed data."""
+        data = dict(mapping)
+        return cls(
+            profile=data.get("profile", "generic"),
+            figure_set=data.get("figure_set", data.get("figure_profile", "auto")),
+            figures=tuple(data.get("figures", ())),
+            formats=tuple(data.get("formats", data.get("export_formats", ("png", "pdf", "svg")))),
+            overwrite=data.get("overwrite", True),
+        )
+
+    def to_dict(self) -> dict[str, Any]:
+        """Return JSON-safe visualization orchestration configuration."""
+        return {
+            "profile": self.profile,
+            "figure_set": self.figure_set,
+            "figures": list(self.figures),
+            "formats": list(self.formats),
+            "overwrite": self.overwrite,
+        }
 
 
 @dataclass(frozen=True)
@@ -580,6 +822,9 @@ class WorkflowConfig:
     artifacts: WorkflowArtifactInputs = field(default_factory=WorkflowArtifactInputs)
     comparisons: tuple[WorkflowComparisonConfig, ...] = ()
     resume: WorkflowResumeConfig = field(default_factory=WorkflowResumeConfig)
+    checkpoint: WorkflowCheckpointConfig = field(default_factory=WorkflowCheckpointConfig)
+    observability: WorkflowObservabilityConfig = field(default_factory=WorkflowObservabilityConfig)
+    visualization: WorkflowVisualizationConfig = field(default_factory=WorkflowVisualizationConfig)
     analysis_result_reuse: dict[str, Any] = field(default_factory=dict)
     execution: ExecutionConfig = field(default_factory=ExecutionConfig)
     random_seed: int | None = None
@@ -646,6 +891,12 @@ class WorkflowConfig:
         object.__setattr__(self, "comparisons", comparisons)
         if not isinstance(self.resume, WorkflowResumeConfig):
             raise WorkflowConfigError("resume must be WorkflowResumeConfig.")
+        if not isinstance(self.checkpoint, WorkflowCheckpointConfig):
+            raise WorkflowConfigError("checkpoint must be WorkflowCheckpointConfig.")
+        if not isinstance(self.observability, WorkflowObservabilityConfig):
+            raise WorkflowConfigError("observability must be WorkflowObservabilityConfig.")
+        if not isinstance(self.visualization, WorkflowVisualizationConfig):
+            raise WorkflowConfigError("visualization must be WorkflowVisualizationConfig.")
         object.__setattr__(
             self,
             "analysis_result_reuse",
@@ -672,6 +923,9 @@ class WorkflowConfig:
         scientific_execution, postprocessing, stages = _operations_from_mapping(data, campaign_type=campaign_type)
         artifacts = data.get("artifacts", workflow.get("artifacts", {}))
         resume = data.get("resume", workflow.get("resume", {}))
+        checkpoint = data.get("checkpoint", workflow.get("checkpoint", {}))
+        observability = data.get("observability", workflow.get("observability", {}))
+        visualization = data.get("visualization", workflow.get("visualization", {}))
         analysis_result_reuse = _first_non_none(
             data.get("analysis_result_reuse"),
             workflow.get("analysis_result_reuse"),
@@ -703,6 +957,21 @@ class WorkflowConfig:
                 if isinstance(resume, WorkflowResumeConfig)
                 else WorkflowResumeConfig.from_mapping(dict(resume))
             ),
+            checkpoint=(
+                checkpoint
+                if isinstance(checkpoint, WorkflowCheckpointConfig)
+                else WorkflowCheckpointConfig.from_mapping(dict(checkpoint))
+            ),
+            observability=(
+                observability
+                if isinstance(observability, WorkflowObservabilityConfig)
+                else WorkflowObservabilityConfig.from_mapping(dict(observability))
+            ),
+            visualization=(
+                visualization
+                if isinstance(visualization, WorkflowVisualizationConfig)
+                else WorkflowVisualizationConfig.from_mapping(dict(visualization))
+            ),
             analysis_result_reuse=dict(analysis_result_reuse),
             execution=(
                 execution
@@ -732,6 +1001,9 @@ class WorkflowConfig:
                 "postprocessing": list(self.postprocessing),
                 "stages": list(self.stages),
                 "resume": self.resume.to_dict(),
+                "checkpoint": self.checkpoint.to_dict(),
+                "observability": self.observability.to_dict(),
+                "visualization": self.visualization.to_dict(),
                 "analysis_result_reuse": dict(self.analysis_result_reuse),
             },
             "stages": list(self.stages),
@@ -740,6 +1012,9 @@ class WorkflowConfig:
             "evolver": self.evolver.to_dict(),
             "artifacts": self.artifacts.to_dict(),
             "comparisons": [item.to_dict() for item in self.comparisons],
+            "checkpoint": self.checkpoint.to_dict(),
+            "observability": self.observability.to_dict(),
+            "visualization": self.visualization.to_dict(),
             "execution": self.execution.to_dict(),
             "metadata": dict(self.metadata),
         }
@@ -755,6 +1030,19 @@ def _json_mapping(value: object, field_name: str) -> dict[str, Any]:
     if not isinstance(value, Mapping):
         raise WorkflowConfigError(f"{field_name} must be a mapping.")
     return to_json_safe(dict(value))
+
+
+def _constraint_set_or_none(value: object, field_name: str) -> ConstraintSet | None:
+    if value is None:
+        return None
+    if isinstance(value, ConstraintSet):
+        return value
+    if not isinstance(value, Mapping):
+        raise WorkflowConfigError(f"{field_name} must be a mapping or ConstraintSet.")
+    try:
+        return ConstraintSet.from_mapping(value)
+    except (GeneratorValidationError, TypeError, ValueError) as exc:
+        raise WorkflowConfigError(f"{field_name} is invalid: {exc}") from exc
 
 
 def _operations_from_mapping(
@@ -931,7 +1219,9 @@ __all__ = [
     "WorkflowArtifactInputs",
     "WorkflowComparisonConfig",
     "WorkflowComparisonSourceConfig",
+    "WorkflowCheckpointConfig",
     "WorkflowConfig",
     "WorkflowConfigError",
+    "WorkflowObservabilityConfig",
     "WorkflowResumeConfig",
 ]

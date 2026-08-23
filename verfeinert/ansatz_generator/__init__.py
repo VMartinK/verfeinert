@@ -30,7 +30,7 @@ from .compilation import (
     write_candidate_staged_package,
 )
 from .connectivity import Connectivity
-from .constraints import ConstraintSet
+from .constraints import ConstraintSet, validate_candidate_constraints
 from .exporters import (
     CANONICAL_CANDIDATE_HASH_SCHEMA_VERSION,
     CANDIDATE_SCHEMA_VERSION,
@@ -46,8 +46,10 @@ from .exporters import (
     write_staged_package_json,
 )
 from .factories import (
+    CANONICAL_MUTATION_TYPES,
     EDGE_SELECTION_MODES,
     INSERTION_STRATEGIES,
+    CanonicalMutationFactory,
     InsertGateMutationFactory,
 )
 from .lineage import LineageRecord
@@ -82,6 +84,7 @@ CandidateCompilationBoundary = compile_candidate_records
 
 __all__ = [
     "CANONICAL_CANDIDATE_HASH_SCHEMA_VERSION",
+    "CANONICAL_MUTATION_TYPES",
     "CANDIDATE_HASH_SCHEMA_VERSION",
     "CANDIDATE_MANIFEST_SCHEMA_VERSION",
     "CANDIDATE_METADATA_SCHEMA_VERSION",
@@ -96,6 +99,7 @@ __all__ = [
     "CandidateJsonExportConfig",
     "CandidateRecord",
     "CandidateValidationIssue",
+    "CanonicalMutationFactory",
     "CompiledCandidateRecord",
     "Connectivity",
     "ConstraintSet",
@@ -141,6 +145,7 @@ __all__ = [
     "structural_hash_operations",
     "swap_first_last_gate_on_wire",
     "validate_campaign_spec",
+    "validate_candidate_constraints",
     "write_callable_module",
     "write_canonical_staged_package_json",
     "write_candidate_json",

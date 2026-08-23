@@ -24,7 +24,7 @@ class ExternalValidationScriptTests(unittest.TestCase):
         command = build_install_command("/tmp/venv/bin/python", PROJECT_ROOT)
 
         self.assertEqual(command[:4], ("/tmp/venv/bin/python", "-m", "pip", "install"))
-        self.assertEqual(command[-1], str(PROJECT_ROOT.resolve(strict=False)))
+        self.assertEqual(command[-1], f"{PROJECT_ROOT.resolve(strict=False)}[visualization]")
 
     def test_validation_steps_use_public_examples_and_output_root(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -36,16 +36,25 @@ class ExternalValidationScriptTests(unittest.TestCase):
                 work_root=Path(tmp) / "work",
             )
 
-        self.assertEqual([step.name for step in steps], [
-            "public-imports-and-packaged-schemas",
-            "cx01-smoke-example",
-            "mixt5g-smoke-example",
-        ])
+        self.assertEqual(
+            [step.name for step in steps],
+            [
+                "public-imports-and-packaged-schemas",
+                "cx01-full-lite-cli-workflow",
+                "cx01-full-lite-output-check",
+                "mixt5g-full-lite-cli-workflow",
+                "mixt5g-full-lite-output-check",
+            ],
+        )
         commands = [" ".join(step.command) for step in steps]
-        self.assertIn("run_cx01_reproduction.py", commands[1])
-        self.assertIn("run_mixt5g_reproduction.py", commands[2])
+        self.assertIn("verfeinert run", commands[1])
+        self.assertIn("cx01_full_lite_workflow.yaml", commands[1])
+        self.assertIn("cx01-full-lite-declarative", commands[2])
+        self.assertIn("verfeinert run", commands[3])
+        self.assertIn("mixt5g_full_lite_workflow.yaml", commands[3])
+        self.assertIn("mixt5g-full-lite-declarative", commands[4])
         self.assertIn(str(output_root), commands[1])
-        self.assertIn(str(output_root), commands[2])
+        self.assertIn(str(output_root), commands[3])
 
     def test_venv_python_is_platform_specific_path(self) -> None:
         path = venv_python("/tmp/example-venv")

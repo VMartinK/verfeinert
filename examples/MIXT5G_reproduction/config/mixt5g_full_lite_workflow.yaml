@@ -1,0 +1,138 @@
+run:
+  run_id: mixt5g-full-lite-declarative
+  created_at: "2026-08-21T00:00:00Z"
+  random_seed: 12345
+
+paths:
+  output_root: outputs
+
+workflow:
+  campaign_type: evolutionary
+  scientific_execution: [generate, analyze, evolve]
+  postprocessing: [ranking, pareto, export_csv, visualization, report]
+  checkpoint:
+    enabled: true
+  observability:
+    event_log:
+      enabled: true
+  analysis_result_reuse:
+    enabled: true
+
+generation:
+  family: sanz19
+  template_ids: [A04, A07]
+  layers: [1]
+  n_qubits: 4
+  candidate_id_prefix: mixtlite
+  source_label: mixt5g_declarative_full_lite
+  metadata:
+    reproduction: mixt5g
+    profile: full_lite
+    declarative_workflow: true
+
+analyzer:
+  selected_metrics: [structural_cost, expressibility, trainability]
+  permissions:
+    allow_expensive_metrics: true
+    allow_qnode_execution: true
+  materialization:
+    enabled: true
+    backend: pennylane
+    device: default.qubit
+    interface: autograd
+    diff_method: best
+  structural_cost:
+    reference_id: mixt5g-full-lite-reference
+    reference_bounds:
+      parameter_count:
+        min: 1
+        max: 96
+      depth:
+        min: 1
+        max: 192
+      two_qubit_operation_count:
+        min: 0
+        max: 64
+    component_weights:
+      parameter_count: 1
+      depth: 1
+      two_qubit_operation_count: 1
+    allow_operation_count_as_depth_proxy: true
+  metric_configs:
+    expressibility:
+      n_pairs: 3
+      n_bins: 3
+      rng_seed: 12345
+    trainability:
+      n_repeats: 2
+      rng_seed: 12345
+  ranking:
+    score_components:
+      expressibility: 1
+      trainability: 1
+    combination: product
+    ascending: false
+  pareto:
+    objectives:
+      - metric_name: expressibility
+        direction: maximize
+      - metric_name: trainability
+        direction: maximize
+    cost_thresholds: [1.0, 0.2, 0.1]
+
+evolver:
+  selection_mode: fitness
+  policy_id: mixt5g-full-lite-fitness-selection
+  metric_name: structural_cost
+  direction: minimize
+  objectives:
+    - name: expressibility
+      direction: maximize
+    - name: trainability
+      direction: maximize
+  thresholds:
+    structural_cost: 10.0
+  threshold_direction: at_most
+  strict_ties: true
+  keep: 1
+  max_generations: 3
+  patience: 5
+  initial_parent_policy: all_generation_zero_candidates
+  offspring_deduplication:
+    enabled: true
+    key: structural_hash
+    keep: first
+  mutation_policy:
+    policy_id: mixt5g-full-lite-insert-schedule
+    variants_per_parent: 1
+    candidate_factory:
+      type: canonical
+    recipes:
+      - recipe_id: crx_insert
+        mutation_type: insert
+        parameters:
+          gate: crx
+          edge: [0, 1]
+          insertion_strategy: before_first_multiqubit
+          candidate_id_template: "{root_candidate_id}_g{generation:03d}-{recipe_id}-v{variant_ordinal:03d}"
+    generation_overrides:
+      "2":
+        recipes:
+          - recipe_id: crz_insert
+            mutation_type: insert
+            parameters:
+              gate: crz
+              edge: [0, 1]
+              insertion_strategy: before_first_multiqubit
+              candidate_id_template: "{root_candidate_id}_g{generation:03d}-{recipe_id}-v{variant_ordinal:03d}"
+
+visualization:
+  profile: publication
+  figure_set: evolution
+  formats: [png]
+  overwrite: true
+
+metadata:
+  example: mixt5g_reproduction
+  profile: full_lite
+  declarative_workflow: true

@@ -33,9 +33,10 @@ runtime dependencies and are not imported by `core`.
 - evolver population, archive, or selection logic;
 - project-specific paths, notebooks, figures, or generated outputs.
 
-The multiprocessing executor is a primitive only. In v0.3.x, analyzer and
-workflow scientific pipelines reject multiprocessing requests until scientific
-backend integration has a dedicated contract.
+The multiprocessing executor remains a primitive: it owns ordered process-pool
+mapping and failure wrapping, not scientific interpretation. Analyzer and
+workflow analysis stages consume it for candidate-level multiprocessing, while
+scientific metric semantics stay in `ansatz_analyzer`.
 
 ## Dependency Boundary
 

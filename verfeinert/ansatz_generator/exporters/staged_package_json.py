@@ -16,6 +16,7 @@ from verfeinert.core.schema_resources import schema_registry as packaged_schema_
 from verfeinert.core.validation import CoreValidationError, require_identifier, require_non_empty_text
 
 from ..validation import GeneratorValidationError
+from ..constraints import validate_candidate_constraints
 from .candidate_json import (
     CANDIDATE_SCHEMA_VERSION,
     CandidateJsonExportConfig,
@@ -172,7 +173,7 @@ def export_canonical_staged_package_json(
     config: StagedPackageJsonExportConfig,
 ) -> dict[str, Any]:
     """Return a StagedPackage JSON document from existing canonical Candidates."""
-    validated_candidates = tuple(validate_candidate_json(candidate) for candidate in candidates)
+    validated_candidates = tuple(_validate_candidate_for_config(candidate, config) for candidate in candidates)
     candidate_ids = [candidate["candidate_id"] for candidate in validated_candidates]
     duplicates = sorted({candidate_id for candidate_id in candidate_ids if candidate_ids.count(candidate_id) > 1})
     if duplicates:
@@ -204,7 +205,7 @@ def write_canonical_staged_package_json(
     package_root.mkdir(parents=True, exist_ok=True)
 
     base_package = export_canonical_staged_package_json(candidates, config=config)
-    validated_candidates = tuple(validate_candidate_json(candidate) for candidate in base_package["candidates"])
+    validated_candidates = tuple(_validate_candidate_for_config(candidate, config) for candidate in base_package["candidates"])
     candidate_paths: list[Path] = []
     artifacts: list[dict[str, Any]] = []
     if config.write_individual_candidates:
@@ -252,6 +253,14 @@ def _record_sources(records: Sequence[Mapping[str, Any] | Any]) -> list[dict[str
     if not isinstance(records, Sequence) or isinstance(records, (str, bytes)):
         raise TypeError("records must be a sequence of candidate records.")
     return [_record_mapping(record) for record in records]
+
+
+def _validate_candidate_for_config(
+    candidate: Mapping[str, Any],
+    config: StagedPackageJsonExportConfig,
+) -> dict[str, Any]:
+    validated = validate_candidate_json(candidate)
+    return validate_candidate_constraints(validated, config.candidate_export.constraints)
 
 
 def _candidate_ids(
@@ -320,7 +329,7 @@ def _package_document(
                 "generated_callables_imported": False,
             },
         },
-        "candidates": [validate_candidate_json(candidate) for candidate in candidates],
+        "candidates": [_validate_candidate_for_config(candidate, config) for candidate in candidates],
         "artifacts": [to_json_safe(dict(artifact)) for artifact in artifacts],
         "provenance": {
             "created_at": created_at,

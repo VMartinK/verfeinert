@@ -17,10 +17,13 @@ from verfeinert.ansatz_analyzer import (
 )
 from verfeinert.ansatz_generator import (
     CandidateJsonExportConfig,
+    ConstraintSet,
+    InsertGateMutationFactory,
     StagedPackageJsonExportConfig,
     write_canonical_staged_package_json,
 )
 from verfeinert.workflow import WorkflowConfig, WorkflowConfigError, WorkflowRunner
+from verfeinert.workflow import read_workflow_checkpoint_json
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -48,6 +51,7 @@ def _workflow_mapping(
     max_generations: int = 1,
     keep: int = 1,
     resume_mode: str = "continue",
+    constraints: dict | None = None,
 ) -> dict:
     mapping = {
         "run": {
@@ -85,6 +89,7 @@ def _workflow_mapping(
             "keep": keep,
             "direction": "minimize",
             "max_generations": max_generations,
+            "patience": 10,
             "mutation_policy": {
                 "policy_id": "phase102-mutation",
                 "variants_per_parent": 1,
@@ -92,9 +97,24 @@ def _workflow_mapping(
             },
         },
     }
+    if constraints is not None:
+        mapping["generation"]["constraints"] = constraints
+        mapping["evolver"]["mutation_policy"]["recipes"][0]["parameters"] = {
+            "gate": "cz",
+            "edge": [1, 2],
+            "parameterized": False,
+        }
     if artifacts is not None:
         mapping["artifacts"] = artifacts
     return mapping
+
+
+def _linear_constraints() -> dict:
+    return {
+        "allowed_gates": ["rx", "rz", "cx", "cz"],
+        "allowed_inserted_gates": ["cz"],
+        "connectivity": {"n_qubits": 4, "topology": "linear"},
+    }
 
 
 def _candidate_document() -> dict:
@@ -172,6 +192,36 @@ def _write_staged_package(root: Path) -> Path:
     return result.staged_package_path
 
 
+def _evolution_summary(path: Path) -> dict:
+    document = json.loads(path.read_text(encoding="utf-8"))
+    return {
+        "status": document["run_metadata"]["status"],
+        "final_stopping_decision": document["metadata"]["workflow"]["final_stopping_decision"],
+        "generations": [
+            {
+                "generation_index": generation["generation_index"],
+                "candidate_ids": [
+                    ref["candidate_id"] for ref in generation["candidate_refs"]
+                ],
+                "analysis_candidate_ids": [
+                    ref["candidate_id"] for ref in generation["analysis_result_refs"]
+                ],
+                "survivor_ids": [
+                    ref["candidate_id"] for ref in generation["survivor_refs"]
+                ],
+                "rejected_ids": [
+                    ref["candidate_id"] for ref in generation.get("rejected_refs", [])
+                ],
+                "archive_ids": [
+                    ref["candidate_id"] for ref in generation.get("archive_refs", [])
+                ],
+                "stopping": generation["configuration"].get("stopping"),
+            }
+            for generation in document["generations"]
+        ],
+    }
+
+
 class RecordingFactory:
     def __init__(self) -> None:
         self.calls: list[tuple[str, int]] = []
@@ -234,6 +284,25 @@ class WorkflowPhase102ArtifactOrchestrationTests(unittest.TestCase):
             with self.assertRaises(WorkflowConfigError):
                 WorkflowConfig.from_mapping(mapping)
 
+    def test_checkpoint_config_roundtrips_resume_source(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            mapping = _workflow_mapping(
+                Path(tmp) / "out",
+                run_id="checkpoint-config",
+                scientific_execution=("analyze",),
+            )
+            mapping["workflow"]["checkpoint"] = {"enabled": True}
+            mapping["workflow"]["resume"]["checkpoint"] = str(Path(tmp) / "checkpoint.json")
+
+            config = WorkflowConfig.from_mapping(mapping)
+            roundtripped = WorkflowConfig.from_mapping(config.to_dict())
+
+            self.assertTrue(roundtripped.checkpoint.enabled)
+            self.assertEqual(
+                roundtripped.resume.checkpoint,
+                str(Path(tmp) / "checkpoint.json"),
+            )
+
     def test_individual_generate_analyze_does_not_create_evolution_run(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             result = WorkflowRunner(
@@ -291,6 +360,23 @@ class WorkflowPhase102ArtifactOrchestrationTests(unittest.TestCase):
             self.assertEqual(len(result.analysis_result_paths), 1)
             self.assertFalse(result.provenance["execution"]["candidate_generation_executed"])
 
+    def test_candidate_artifact_violating_generation_constraints_is_rejected(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            mapping = _workflow_mapping(
+                Path(tmp) / "out",
+                run_id="candidate-constraint-reject",
+                scientific_execution=("analyze",),
+                artifacts={"candidates": [str(CANDIDATE_EXAMPLE)]},
+                constraints={
+                    "allowed_gates": ["rx", "rz"],
+                    "allowed_inserted_gates": ["cz"],
+                },
+            )
+
+            with mock.patch.object(AnalysisPipeline, "run_and_write", side_effect=AssertionError("analyzer must not run")):
+                with self.assertRaisesRegex(WorkflowConfigError, "violates workflow generation.constraints"):
+                    WorkflowRunner(WorkflowConfig.from_mapping(mapping)).run()
+
     def test_staged_package_enters_directly_at_analyze(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             package_path = _write_staged_package(Path(tmp) / "inputs")
@@ -309,6 +395,166 @@ class WorkflowPhase102ArtifactOrchestrationTests(unittest.TestCase):
             self.assertIsNone(result.staged_package_path)
             self.assertEqual(result.candidate_ids, ("reference-a02-l1-parent",))
             self.assertEqual(len(result.analysis_result_paths), 1)
+
+    def test_checkpoint_after_generation_resumes_analysis_without_regeneration(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            generate_mapping = _workflow_mapping(
+                root / "out",
+                run_id="checkpoint-generate",
+                scientific_execution=("generate",),
+            )
+            generate_mapping["workflow"]["checkpoint"] = {"enabled": True}
+            generated = WorkflowRunner(WorkflowConfig.from_mapping(generate_mapping)).run()
+
+            self.assertTrue(generated.checkpoint_path.is_file())
+            checkpoint = read_workflow_checkpoint_json(generated.checkpoint_path)
+            self.assertEqual(checkpoint["workflow"]["completed_stages"], ["generate"])
+            self.assertFalse(list(generated.checkpoint_path.parent.glob("*.tmp")))
+
+            resume_mapping = _workflow_mapping(
+                root / "out",
+                run_id="checkpoint-generate",
+                scientific_execution=("analyze",),
+            )
+            resume_mapping["workflow"]["resume"]["checkpoint"] = str(generated.checkpoint_path)
+            with (
+                mock.patch.object(
+                    WorkflowRunner,
+                    "_run_generation_stage",
+                    side_effect=AssertionError("generation must not rerun"),
+                ),
+                mock.patch.object(
+                    WorkflowRunner,
+                    "_run_evolution_stage",
+                    side_effect=AssertionError("evolution must not run"),
+                ),
+            ):
+                resumed = WorkflowRunner(WorkflowConfig.from_mapping(resume_mapping)).run()
+
+            self.assertEqual(resumed.executed_operations, ("analyze",))
+            self.assertEqual(resumed.candidate_ids, ("phase102-a02-l1",))
+            self.assertEqual(len(resumed.analysis_result_paths), 1)
+            self.assertEqual(
+                {item["kind"] for item in resumed.reused_artifacts},
+                {"workflow_checkpoint"},
+            )
+
+    def test_checkpoint_resume_rejects_completed_generate_stage_request(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            generate_mapping = _workflow_mapping(
+                root / "out",
+                run_id="checkpoint-repeat-stage",
+                scientific_execution=("generate",),
+            )
+            generate_mapping["workflow"]["checkpoint"] = {"enabled": True}
+            generated = WorkflowRunner(WorkflowConfig.from_mapping(generate_mapping)).run()
+
+            resume_mapping = _workflow_mapping(
+                root / "out",
+                run_id="checkpoint-repeat-stage",
+                scientific_execution=("generate", "analyze"),
+            )
+            resume_mapping["workflow"]["resume"]["checkpoint"] = str(generated.checkpoint_path)
+            with self.assertRaisesRegex(WorkflowConfigError, "already completed"):
+                WorkflowRunner(WorkflowConfig.from_mapping(resume_mapping)).run()
+
+    def test_checkpoint_after_analysis_resumes_evolution_equivalent_to_uninterrupted(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            continuous = WorkflowRunner(
+                WorkflowConfig.from_mapping(
+                    _workflow_mapping(
+                        root / "continuous",
+                        run_id="checkpoint-equivalence",
+                        campaign_type="evolutionary",
+                        scientific_execution=("generate", "analyze", "evolve"),
+                        max_generations=2,
+                    ),
+                ),
+            ).run(candidate_factory=RecordingFactory())
+
+            staged_mapping = _workflow_mapping(
+                root / "resumed",
+                run_id="checkpoint-equivalence",
+                campaign_type="evolutionary",
+                scientific_execution=("generate", "analyze"),
+                max_generations=2,
+            )
+            staged_mapping["workflow"]["checkpoint"] = {"enabled": True}
+            staged = WorkflowRunner(WorkflowConfig.from_mapping(staged_mapping)).run()
+
+            resume_mapping = _workflow_mapping(
+                root / "resumed",
+                run_id="checkpoint-equivalence",
+                campaign_type="evolutionary",
+                scientific_execution=("evolve",),
+                max_generations=2,
+            )
+            resume_mapping["workflow"]["resume"]["checkpoint"] = str(staged.checkpoint_path)
+            resumed_factory = RecordingFactory()
+            resumed = WorkflowRunner(WorkflowConfig.from_mapping(resume_mapping)).run(
+                candidate_factory=resumed_factory,
+            )
+
+            self.assertEqual(len(resumed_factory.calls), 1)
+            self.assertEqual(
+                _evolution_summary(resumed.evolution_run_path),
+                _evolution_summary(continuous.evolution_run_path),
+            )
+
+    def test_checkpoint_resume_rejects_changed_metric_contract(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            generate_mapping = _workflow_mapping(
+                root / "out",
+                run_id="checkpoint-metric-mismatch",
+                scientific_execution=("generate",),
+            )
+            generate_mapping["workflow"]["checkpoint"] = {"enabled": True}
+            generated = WorkflowRunner(WorkflowConfig.from_mapping(generate_mapping)).run()
+
+            resume_mapping = _workflow_mapping(
+                root / "out",
+                run_id="checkpoint-metric-mismatch",
+                scientific_execution=("analyze",),
+            )
+            resume_mapping["workflow"]["resume"]["checkpoint"] = str(generated.checkpoint_path)
+            resume_mapping["analyzer"]["selected_metrics"] = ["structural_cost", "expressibility"]
+            with self.assertRaisesRegex(WorkflowConfigError, "workflow_fingerprint mismatch"):
+                WorkflowRunner(WorkflowConfig.from_mapping(resume_mapping)).run()
+
+    def test_checkpoint_resume_fails_closed_for_corruption_and_hash_mismatch(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            corrupt = _write_json(root / "bad-checkpoint.json", {"schema_version": "wrong"})
+            mapping = _workflow_mapping(
+                root / "out",
+                run_id="checkpoint-corrupt",
+                scientific_execution=("analyze",),
+            )
+            mapping["workflow"]["resume"]["checkpoint"] = str(corrupt)
+            with self.assertRaisesRegex(WorkflowConfigError, "WorkflowCheckpoint"):
+                WorkflowRunner(WorkflowConfig.from_mapping(mapping)).run()
+
+            generate_mapping = _workflow_mapping(
+                root / "hash-out",
+                run_id="checkpoint-hash",
+                scientific_execution=("generate",),
+            )
+            generate_mapping["workflow"]["checkpoint"] = {"enabled": True}
+            generated = WorkflowRunner(WorkflowConfig.from_mapping(generate_mapping)).run()
+            generated.candidate_paths[0].write_text("changed\n", encoding="utf-8")
+
+            resume_mapping = _workflow_mapping(
+                root / "hash-out",
+                run_id="checkpoint-hash",
+                scientific_execution=("analyze",),
+            )
+            resume_mapping["workflow"]["resume"]["checkpoint"] = str(generated.checkpoint_path)
+            with self.assertRaisesRegex(WorkflowConfigError, "hash mismatch"):
+                WorkflowRunner(WorkflowConfig.from_mapping(resume_mapping)).run()
 
     def test_analysis_result_ranking_reuses_artifact_without_scientific_execution(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -456,6 +702,181 @@ class WorkflowPhase102ArtifactOrchestrationTests(unittest.TestCase):
             self.assertEqual(relationship["source_evolution_run_id"], "source-run-evolution")
             self.assertEqual(relationship["source_generation"], 1)
             self.assertEqual(branch_doc["generations"][0], source_doc["generations"][0])
+
+    def test_generation_constraints_roundtrip_and_evolution_resume_compatibility(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            mapping = _workflow_mapping(
+                root / "out",
+                run_id="constraint-config",
+                campaign_type="evolutionary",
+                scientific_execution=("generate", "analyze", "evolve"),
+                max_generations=2,
+                constraints=_linear_constraints(),
+            )
+            config = WorkflowConfig.from_mapping(mapping)
+
+            self.assertEqual(
+                WorkflowConfig.from_mapping(config.to_dict()).generation.constraints.to_dict(),
+                config.generation.constraints.to_dict(),
+            )
+
+            factory = InsertGateMutationFactory(
+                constraints=config.generation.constraints,
+                created_at=CREATED_AT,
+            )
+            result = WorkflowRunner(config).run(candidate_factory=factory)
+
+            first_doc = json.loads(result.evolution_run_path.read_text(encoding="utf-8"))
+            self.assertEqual([generation["generation_index"] for generation in first_doc["generations"]], [0, 1])
+            self.assertEqual(
+                first_doc["configuration"]["mutation_policy"]["structural_constraints"],
+                config.generation.constraints.to_dict(),
+            )
+
+            resumed_config = WorkflowConfig.from_mapping(
+                _workflow_mapping(
+                    root / "out",
+                    run_id="constraint-config",
+                    campaign_type="evolutionary",
+                    scientific_execution=("evolve",),
+                    artifacts={"evolution_run": str(result.evolution_run_path)},
+                    max_generations=3,
+                    constraints=_linear_constraints(),
+                ),
+            )
+            resumed = WorkflowRunner(resumed_config).run(
+                candidate_factory=InsertGateMutationFactory(
+                    constraints=resumed_config.generation.constraints,
+                    created_at=CREATED_AT,
+                ),
+            )
+            resumed_doc = json.loads(resumed.evolution_run_path.read_text(encoding="utf-8"))
+            self.assertEqual([generation["generation_index"] for generation in resumed_doc["generations"]], [0, 1, 2])
+            self.assertEqual(resumed_doc["metadata"]["workflow"]["relationship"]["type"], "continuation")
+
+    def test_changed_generation_constraints_require_explicit_branch(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            source_mapping = _workflow_mapping(
+                root / "out",
+                run_id="constraint-source",
+                campaign_type="evolutionary",
+                scientific_execution=("generate", "analyze", "evolve"),
+                max_generations=2,
+                constraints=_linear_constraints(),
+            )
+            source_config = WorkflowConfig.from_mapping(source_mapping)
+            source = WorkflowRunner(source_config).run(
+                candidate_factory=InsertGateMutationFactory(
+                    constraints=source_config.generation.constraints,
+                    created_at=CREATED_AT,
+                ),
+            )
+
+            changed = _linear_constraints()
+            changed["connectivity"] = {
+                "n_qubits": 4,
+                "edges": [[0, 1], [2, 3]],
+            }
+            with self.assertRaisesRegex(WorkflowConfigError, "branch required"):
+                WorkflowRunner(
+                    WorkflowConfig.from_mapping(
+                        _workflow_mapping(
+                            root / "out",
+                            run_id="constraint-source",
+                            campaign_type="evolutionary",
+                            scientific_execution=("evolve",),
+                            artifacts={"evolution_run": str(source.evolution_run_path)},
+                            max_generations=3,
+                            constraints=changed,
+                        ),
+                    ),
+                ).run(
+                    candidate_factory=InsertGateMutationFactory(
+                        constraints=ConstraintSet.from_mapping(changed),
+                        created_at=CREATED_AT,
+                    ),
+                )
+
+    def test_metric_callables_propagate_into_evolution_generation_analysis(self) -> None:
+        """Explicit metric callables must survive every evolutionary analysis call."""
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            mapping = _workflow_mapping(
+                root / "out",
+                run_id="metric-callables-evolution",
+                campaign_type="evolutionary",
+                scientific_execution=("generate", "analyze", "evolve"),
+                max_generations=2,
+            )
+            runner = WorkflowRunner(WorkflowConfig.from_mapping(mapping))
+
+            def explicit_state_callable(parameters):
+                return parameters
+
+            metric_callables = {"sentinel-candidate": explicit_state_callable}
+
+            with mock.patch.object(
+                runner,
+                "_run_analysis",
+                wraps=runner._run_analysis,
+            ) as run_analysis:
+                runner.run(
+                    candidate_factory=RecordingFactory(),
+                    metric_callables=metric_callables,
+                )
+
+            self.assertGreaterEqual(run_analysis.call_count, 2)
+            received = [
+                call.kwargs.get("metric_callables")
+                for call in run_analysis.call_args_list
+            ]
+            self.assertTrue(
+                all(value is metric_callables for value in received),
+                msg=f"metric_callables propagation mismatch: {received!r}",
+            )
+
+    def test_evolution_continue_rejects_changed_analyzer_scientific_identity(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            cases = (
+                ("materialization", lambda mapping: mapping["analyzer"].update({"materialization": {"enabled": True}})),
+                ("permissions", lambda mapping: mapping["analyzer"].update({"permissions": {"allow_expensive_metrics": False, "allow_qnode_execution": True}})),
+                ("analyzer-random-seed", lambda mapping: mapping["analyzer"].update({"random_seed": 23})),
+            )
+
+            for case_name, mutate in cases:
+                with self.subTest(case=case_name):
+                    case_root = root / case_name
+                    run_id = f"fingerprint-{case_name}"
+                    source = WorkflowRunner(
+                        WorkflowConfig.from_mapping(
+                            _workflow_mapping(
+                                case_root / "out",
+                                run_id=run_id,
+                                campaign_type="evolutionary",
+                                scientific_execution=("generate", "analyze", "evolve"),
+                                max_generations=1,
+                            ),
+                        ),
+                    ).run(candidate_factory=RecordingFactory())
+
+                    continue_mapping = _workflow_mapping(
+                        case_root / "out",
+                        run_id=run_id,
+                        campaign_type="evolutionary",
+                        scientific_execution=("evolve",),
+                        artifacts={"evolution_run": str(source.evolution_run_path)},
+                        max_generations=2,
+                    )
+                    mutate(continue_mapping)
+
+                    with self.assertRaisesRegex(WorkflowConfigError, "branch required"):
+                        WorkflowRunner(
+                            WorkflowConfig.from_mapping(continue_mapping),
+                        ).run(candidate_factory=RecordingFactory())
+
 
 
 if __name__ == "__main__":

@@ -2,6 +2,56 @@
 
 All notable changes to Verfeinert will be documented in this file.
 
+## v0.4.0 - 2026-08-21 - Declarative Scientific Workflow Productization
+
+### Workflow Product Surface
+
+- Added config-first `verfeinert validate`, `verfeinert run`,
+  `verfeinert resume`, and `verfeinert inspect` CLI commands over public
+  workflow APIs.
+- Completed explicit workflow stage semantics for `generate`, `analyze`,
+  `evolve`, ranking, Pareto, comparison, CSV export, visualization, and
+  deterministic reports.
+- Added strict workflow checkpoint/resume over durable JSON artifacts with
+  compatibility fingerprints and artifact hash validation.
+- Added workflow event logs, deterministic manifests, traceability JSON/CSV,
+  machine-readable reports, and Markdown report rendering.
+
+### Scientific Execution And Determinism
+
+- Added analyzer-owned Candidate-to-PennyLane materialization with explicit
+  permissions, resource limits, capability failures, and precedence for
+  caller-supplied state callables.
+- Added real candidate-level multiprocessing for analyzer/workflow analysis
+  stages with fail-closed worker errors and deterministic per-candidate RNG
+  behavior.
+- Added a dedicated reproducibility equivalence gate comparing sequential run
+  A/B, sequential versus multiprocessing, and uninterrupted versus
+  checkpoint/resume final state.
+
+### Evolution And Mutation
+
+- Completed campaign-neutral mutation policy execution through generator-owned
+  canonical mutation factories for insert, replace, remove, swap, reorder, and
+  layer/template propagation.
+- Unified stopping and patience governance, including deterministic
+  no-improvement state and independent threshold trajectory serialization.
+- Moved generation transitions into the evolver state-machine boundary while
+  keeping analyzer metric execution outside the evolver.
+
+### Public Reproduction Examples
+
+- Added declarative full-lite CX-01 and MIXT-5G workflow configs that run from
+  an installed package through the CLI without campaign-specific Python.
+- External validation now installs with visualization support, runs both
+  full-lite workflows through the installed console script, checks computed
+  expressibility/trainability metrics, and verifies imports resolve from
+  site-packages.
+
+Scientific metric definitions, structural-cost semantics, Pareto/ranking
+semantics, strict-Pareto behavior, and the frozen publication visualization
+contract are unchanged. Global F/F2 visualizations remain out of contract.
+
 ## v0.3.2 - 2026-08-21 - Visualization Publication Contract Hardening
 
 ### Visualization

@@ -18,12 +18,18 @@ from .exporters import (
     CANDIDATE_SCHEMA_VERSION,
 )
 from .exporters.candidate_json import validate_candidate_json
+from .constraints import (
+    ConstraintSet,
+    validate_candidate_constraints,
+    validate_mutation_constraints,
+)
 from .operations import DEFAULT_GATE_REGISTRY
 from .validation import GeneratorValidationError
 
 
 INSERTION_STRATEGIES = ("before_first_multiqubit", "append")
 EDGE_SELECTION_MODES = ("first", "variant_index_cycle", "parent_index_cycle")
+CANONICAL_MUTATION_TYPES = ("insert", "replace", "remove", "swap", "reorder", "layer_propagation")
 
 
 @dataclass(frozen=True)
@@ -41,9 +47,10 @@ class InsertGateMutationFactory:
     default_edges: tuple[tuple[int, int], ...] = ()
     default_insertion_strategy: str = "before_first_multiqubit"
     default_edge_selection: str = "parent_index_cycle"
-    default_candidate_id_template: str = "{root_candidate_id}_g{generation:03d}-{recipe_id}-v{variant_ordinal:03d}"
+    default_candidate_id_template: str = "{root_candidate_id}_g{generation:03d}-{recipe_id}-p{parent_ordinal:03d}-v{variant_ordinal:03d}"
     source_label: str = "verfeinert.ansatz_generator.insert_gate_mutation_factory"
     created_at: str | None = None
+    constraints: ConstraintSet | None = None
     metadata: Mapping[str, Any] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
@@ -65,11 +72,15 @@ class InsertGateMutationFactory:
                 f"default_edge_selection must be one of {EDGE_SELECTION_MODES}.",
             )
         object.__setattr__(self, "source_label", require_non_empty_text(self.source_label, "source_label"))
+        if self.constraints is not None and not isinstance(self.constraints, ConstraintSet):
+            object.__setattr__(self, "constraints", ConstraintSet.from_mapping(self.constraints))  # type: ignore[arg-type]
         object.__setattr__(self, "metadata", to_json_safe(dict(self.metadata)))
 
     def __call__(self, request: Any, parent_candidate: Mapping[str, Any]) -> dict[str, Any]:
         """Return a validated canonical child Candidate JSON document."""
         parent = validate_candidate_json(parent_candidate)
+        if self.constraints is not None:
+            validate_candidate_constraints(parent, self.constraints)
         parameters = _request_parameters(request)
         metadata = _request_metadata(request)
         gate = _gate_name(parameters.get("gate") or parameters.get("mutation_gate") or self.default_gate)
@@ -81,6 +92,8 @@ class InsertGateMutationFactory:
             default_edges=self.default_edges,
             default_edge_selection=self.default_edge_selection,
         )
+        if self.constraints is not None:
+            _validate_insert_intent(gate, qubits, self.constraints)
         insertion_strategy = str(parameters.get("insertion_strategy") or self.default_insertion_strategy)
         if insertion_strategy not in INSERTION_STRATEGIES:
             raise GeneratorValidationError(f"insertion_strategy must be one of {INSERTION_STRATEGIES}.")
@@ -141,7 +154,155 @@ class InsertGateMutationFactory:
                 "input_hashes": {},
             },
         }
-        return validate_candidate_json(child)
+        validated = validate_candidate_json(child)
+        return validate_mutation_constraints(parent, validated, self.constraints)
+
+
+@dataclass(frozen=True)
+class CanonicalMutationFactory:
+    """Apply campaign-neutral structural mutation requests to Candidate JSON.
+
+    The factory is a public generator-owned counterpart to evolver mutation
+    requests. It handles the supported mutation families without making the
+    evolver edit operations directly.
+    """
+
+    default_gate: str | None = None
+    default_qubits: tuple[int, ...] | None = None
+    default_edges: tuple[tuple[int, int], ...] = ()
+    default_insertion_strategy: str = "before_first_multiqubit"
+    default_edge_selection: str = "parent_index_cycle"
+    default_candidate_id_template: str = "{root_candidate_id}_g{generation:03d}-{recipe_id}-p{parent_ordinal:03d}-v{variant_ordinal:03d}"
+    source_label: str = "verfeinert.ansatz_generator.canonical_mutation_factory"
+    created_at: str | None = None
+    constraints: ConstraintSet | None = None
+    metadata: Mapping[str, Any] = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        if self.default_gate is not None:
+            object.__setattr__(self, "default_gate", _gate_name(self.default_gate))
+        if self.default_qubits is not None:
+            object.__setattr__(self, "default_qubits", _qubits(self.default_qubits, "default_qubits"))
+        object.__setattr__(
+            self,
+            "default_edges",
+            tuple(_edge(edge, "default_edges") for edge in self.default_edges),
+        )
+        if self.default_insertion_strategy not in INSERTION_STRATEGIES:
+            raise GeneratorValidationError(
+                f"default_insertion_strategy must be one of {INSERTION_STRATEGIES}.",
+            )
+        if self.default_edge_selection not in EDGE_SELECTION_MODES:
+            raise GeneratorValidationError(
+                f"default_edge_selection must be one of {EDGE_SELECTION_MODES}.",
+            )
+        object.__setattr__(self, "source_label", require_non_empty_text(self.source_label, "source_label"))
+        if self.constraints is not None and not isinstance(self.constraints, ConstraintSet):
+            object.__setattr__(self, "constraints", ConstraintSet.from_mapping(self.constraints))  # type: ignore[arg-type]
+        object.__setattr__(self, "metadata", to_json_safe(dict(self.metadata)))
+
+    def __call__(self, request: Any, parent_candidate: Mapping[str, Any]) -> dict[str, Any]:
+        """Return a validated canonical child Candidate JSON document."""
+        mutation_type = str(_request_attr(request, "mutation_type")).strip().lower()
+        if mutation_type not in CANONICAL_MUTATION_TYPES:
+            raise GeneratorValidationError(
+                f"mutation_type must be one of {CANONICAL_MUTATION_TYPES}.",
+            )
+        if mutation_type == "insert":
+            return self._insert_factory()(request, parent_candidate)
+        if mutation_type == "layer_propagation":
+            return self._insert_factory()(
+                _request_with_parameter_defaults(
+                    request,
+                    {"propagation_policy": "repeat_mutated_single_layer"},
+                ),
+                parent_candidate,
+            )
+
+        parent = validate_candidate_json(parent_candidate)
+        if self.constraints is not None:
+            validate_candidate_constraints(parent, self.constraints)
+        parameters = _request_parameters(request)
+        metadata = _request_metadata(request)
+        result = _structural_mutation_circuit(
+            parent["circuit"],
+            mutation_type=mutation_type,
+            parameters=parameters,
+            request_metadata=metadata,
+        )
+        lineage_parameters = {
+            **parameters,
+            **result["mutation_metadata"],
+        }
+        operation_label = str(result["operation"] or mutation_type)
+        child_id = _child_candidate_id(
+            lineage_parameters,
+            metadata,
+            request=request,
+            parent=parent,
+            gate=operation_label,
+            default_template=self.default_candidate_id_template,
+        )
+        lineage = _child_lineage(
+            child_id=child_id,
+            request=request,
+            parent=parent,
+            gate=operation_label,
+            parameters=lineage_parameters,
+        )
+        child = {
+            "schema_version": CANDIDATE_SCHEMA_VERSION,
+            "candidate_id": child_id,
+            "identity": {
+                "structural_hash": _mutation_structural_hash(
+                    result["circuit"],
+                    canonicalize_equivalent_insertions=False,
+                ),
+                "lineage_hash": stable_hash(lineage),
+                "hash_schema_version": parent["identity"].get(
+                    "hash_schema_version",
+                    CANONICAL_CANDIDATE_HASH_SCHEMA_VERSION,
+                ),
+            },
+            "circuit": result["circuit"],
+            "lineage": lineage,
+            "metadata": to_json_safe(
+                {
+                    **dict(parent.get("metadata", {})),
+                    **dict(self.metadata),
+                    "generator_source": "verfeinert.ansatz_generator",
+                    "mutation_factory": "canonical",
+                    "mutation_recipe_id": _request_attr(request, "recipe_id"),
+                    **result["mutation_metadata"],
+                },
+            ),
+            "provenance": {
+                "created_at": self.created_at or _utc_timestamp(),
+                "source": {
+                    "kind": "mutation",
+                    "label": self.source_label,
+                },
+                "software_version": __version__,
+                "git_commit": None,
+                "input_hashes": {},
+            },
+        }
+        validated = validate_candidate_json(child)
+        return validate_mutation_constraints(parent, validated, self.constraints)
+
+    def _insert_factory(self) -> InsertGateMutationFactory:
+        return InsertGateMutationFactory(
+            default_gate=self.default_gate,
+            default_qubits=self.default_qubits,
+            default_edges=self.default_edges,
+            default_insertion_strategy=self.default_insertion_strategy,
+            default_edge_selection=self.default_edge_selection,
+            default_candidate_id_template=self.default_candidate_id_template,
+            source_label=self.source_label,
+            created_at=self.created_at,
+            constraints=self.constraints,
+            metadata={**dict(self.metadata), "mutation_factory": "canonical"},
+        )
 
 
 def _mutated_circuit(
@@ -551,6 +712,286 @@ def _operation_metadata(
     return to_json_safe(payload)
 
 
+def _structural_mutation_circuit(
+    parent_circuit: Mapping[str, Any],
+    *,
+    mutation_type: str,
+    parameters: Mapping[str, Any],
+    request_metadata: Mapping[str, Any],
+) -> dict[str, Any]:
+    circuit = copy.deepcopy(dict(parent_circuit))
+    operations = [copy.deepcopy(dict(operation)) for operation in circuit["operations"]]
+    circuit_parameters = [dict(parameter) for parameter in circuit.get("parameters", [])]
+    if mutation_type == "replace":
+        mutated, metadata, circuit_parameters = _replace_operation(
+            operations,
+            parameters,
+            request_metadata=request_metadata,
+            circuit_parameters=circuit_parameters,
+        )
+    elif mutation_type == "remove":
+        mutated, metadata = _remove_operation(operations, parameters, request_metadata=request_metadata)
+    elif mutation_type == "swap":
+        mutated, metadata = _swap_operations(operations, parameters, request_metadata=request_metadata)
+    elif mutation_type == "reorder":
+        mutated, metadata = _reorder_operation(operations, parameters, request_metadata=request_metadata)
+    else:
+        raise GeneratorValidationError(f"unsupported structural mutation_type {mutation_type!r}.")
+
+    mutated = _renumber_operations(mutated)
+    if bool(parameters.get("renumber_parameters", True)):
+        mutated, circuit_parameters = _renumber_parameter_references(mutated, circuit_parameters)
+    return {
+        "circuit": {
+            "n_qubits": int(circuit["n_qubits"]),
+            "wire_order": list(circuit.get("wire_order") or range(int(circuit["n_qubits"]))),
+            "parameters": circuit_parameters,
+            "operations": mutated,
+        },
+        "operation": metadata.get("mutation_operation"),
+        "mutation_metadata": to_json_safe(metadata),
+    }
+
+
+def _replace_operation(
+    operations: Sequence[Mapping[str, Any]],
+    parameters: Mapping[str, Any],
+    *,
+    request_metadata: Mapping[str, Any],
+    circuit_parameters: list[dict[str, Any]],
+) -> tuple[list[dict[str, Any]], dict[str, Any], list[dict[str, Any]]]:
+    records = [copy.deepcopy(dict(operation)) for operation in operations]
+    target_index = _target_index(records, parameters, request_metadata=request_metadata)
+    if target_index is None:
+        return records, _mutation_metadata("replace", "skipped_noop", None, None, None), circuit_parameters
+    target = copy.deepcopy(records[target_index])
+    old_gate = _canonical_operation_gate(target)
+    new_gate = _gate_name(
+        parameters.get("replacement_gate")
+        or parameters.get("new_gate")
+        or parameters.get("gate")
+        or parameters.get("mutation_gate")
+    )
+    qubits = tuple(_operation_qubits(target))
+    gate_def = DEFAULT_GATE_REGISTRY.get(new_gate)
+    if gate_def.n_wires != len(qubits):
+        raise GeneratorValidationError(
+            "replace mutation is invalid: "
+            f"gate {new_gate!r} expects {gate_def.n_wires} qubit(s), target has {len(qubits)}.",
+        )
+    if new_gate == old_gate and not _has_explicit_parameter_change(parameters):
+        return (
+            records,
+            _mutation_metadata("replace", "skipped_noop", target_index, target_index, target),
+            circuit_parameters,
+        )
+
+    operation_parameters, circuit_parameters = _operation_parameters(
+        new_gate,
+        parameters,
+        circuit_parameters,
+    )
+    target_gate = target.get("gate")
+    target_namespace = target_gate.get("namespace") if isinstance(target_gate, Mapping) else None
+    target["gate"] = {
+        "name": new_gate,
+        "namespace": str(parameters.get("gate_namespace") or target_namespace or "verfeinert.default_gates"),
+    }
+    target["parameters"] = operation_parameters
+    target["role"] = _operation_role(new_gate, qubits)
+    metadata = dict(target.get("metadata", {}))
+    metadata.update(
+        {
+            "mutation_family": "replace",
+            "replaced_gate": old_gate,
+            "replacement_gate": new_gate,
+            "target_index": target_index,
+        },
+    )
+    target["metadata"] = to_json_safe(metadata)
+    mutated = list(records)
+    mutated[target_index] = target
+    status = "skipped_noop" if _canonical_operation_hash(records) == _canonical_operation_hash(mutated) else "valid_mutation"
+    return (
+        mutated,
+        _mutation_metadata("replace", status, target_index, target_index, target, operation=new_gate),
+        circuit_parameters,
+    )
+
+
+def _remove_operation(
+    operations: Sequence[Mapping[str, Any]],
+    parameters: Mapping[str, Any],
+    *,
+    request_metadata: Mapping[str, Any],
+) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    records = [copy.deepcopy(dict(operation)) for operation in operations]
+    target_index = _target_index(records, parameters, request_metadata=request_metadata)
+    if target_index is None:
+        return records, _mutation_metadata("remove", "skipped_noop", None, None, None)
+    if len(records) <= 1:
+        raise GeneratorValidationError("remove mutation is invalid: removing the target would empty the circuit.")
+    target = records[target_index]
+    mutated = [operation for index, operation in enumerate(records) if index != target_index]
+    return mutated, _mutation_metadata("remove", "valid_mutation", target_index, None, target)
+
+
+def _swap_operations(
+    operations: Sequence[Mapping[str, Any]],
+    parameters: Mapping[str, Any],
+    *,
+    request_metadata: Mapping[str, Any],
+) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    records = [copy.deepcopy(dict(operation)) for operation in operations]
+    first = _target_index(records, parameters, request_metadata=request_metadata)
+    second = _secondary_index(records, parameters, request_metadata=request_metadata)
+    target = records[first] if first is not None else None
+    if first is None or second is None or first == second:
+        return records, _mutation_metadata("swap", "skipped_noop", first, second, target)
+    mutated = list(records)
+    mutated[first], mutated[second] = mutated[second], mutated[first]
+    status = "skipped_noop" if _canonical_operation_hash(records) == _canonical_operation_hash(mutated) else "valid_mutation"
+    return mutated, _mutation_metadata("swap", status, first, second, target)
+
+
+def _reorder_operation(
+    operations: Sequence[Mapping[str, Any]],
+    parameters: Mapping[str, Any],
+    *,
+    request_metadata: Mapping[str, Any],
+) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    records = [copy.deepcopy(dict(operation)) for operation in operations]
+    target_index = _target_index(records, parameters, request_metadata=request_metadata)
+    if target_index is None:
+        return records, _mutation_metadata("reorder", "skipped_noop", None, None, None)
+    destination = _destination_index(records, parameters)
+    target = records[target_index]
+    if target_index == destination:
+        return records, _mutation_metadata("reorder", "skipped_noop", target_index, destination, target)
+    remaining = [operation for index, operation in enumerate(records) if index != target_index]
+    mutated = remaining[:destination] + [target] + remaining[destination:]
+    status = "skipped_noop" if _canonical_operation_hash(records) == _canonical_operation_hash(mutated) else "valid_mutation"
+    return mutated, _mutation_metadata("reorder", status, target_index, destination, target)
+
+
+def _target_index(
+    operations: Sequence[Mapping[str, Any]],
+    parameters: Mapping[str, Any],
+    *,
+    request_metadata: Mapping[str, Any],
+) -> int | None:
+    for key in ("target_index", "operation_index", "mutation_target_gate_index", "source_index"):
+        if parameters.get(key) is not None:
+            return _operation_index(parameters[key], len(operations), field_name=key)
+    for key in ("wire", "target_wire"):
+        if parameters.get(key) is not None:
+            return _first_operation_index_on_wire(operations, int(parameters[key]))
+    if request_metadata.get("target_index") is not None:
+        return _operation_index(request_metadata["target_index"], len(operations), field_name="metadata.target_index")
+    return 0 if operations else None
+
+
+def _secondary_index(
+    operations: Sequence[Mapping[str, Any]],
+    parameters: Mapping[str, Any],
+    *,
+    request_metadata: Mapping[str, Any],
+) -> int | None:
+    for key in ("swap_with_index", "other_index", "destination_index", "new_index"):
+        if parameters.get(key) is not None:
+            return _operation_index(parameters[key], len(operations), field_name=key)
+    for key in ("wire", "target_wire"):
+        if parameters.get(key) is not None:
+            return _last_operation_index_on_wire(operations, int(parameters[key]))
+    if request_metadata.get("other_index") is not None:
+        return _operation_index(request_metadata["other_index"], len(operations), field_name="metadata.other_index")
+    return len(operations) - 1 if operations else None
+
+
+def _destination_index(operations: Sequence[Mapping[str, Any]], parameters: Mapping[str, Any]) -> int:
+    for key in ("destination_index", "new_index", "mutation_new_position"):
+        if parameters.get(key) is not None:
+            return _operation_index(parameters[key], len(operations), field_name=key)
+    return len(operations) - 1
+
+
+def _operation_index(value: Any, operation_count: int, *, field_name: str) -> int:
+    if type(value) is bool:
+        raise GeneratorValidationError(f"{field_name} must be an operation index.")
+    index = int(value)
+    if index < 0 or index >= operation_count:
+        raise GeneratorValidationError(f"{field_name} must be within the operation range.")
+    return index
+
+
+def _first_operation_index_on_wire(operations: Sequence[Mapping[str, Any]], wire: int) -> int | None:
+    for index, operation in enumerate(operations):
+        if wire in _operation_qubits(operation):
+            return index
+    return None
+
+
+def _last_operation_index_on_wire(operations: Sequence[Mapping[str, Any]], wire: int) -> int | None:
+    for index in range(len(operations) - 1, -1, -1):
+        if wire in _operation_qubits(operations[index]):
+            return index
+    return None
+
+
+def _operation_qubits(operation: Mapping[str, Any]) -> tuple[int, ...]:
+    raw = operation.get("qubits", operation.get("wires"))
+    if raw is None:
+        return ()
+    if isinstance(raw, int):
+        return (int(raw),)
+    return tuple(int(item) for item in raw)
+
+
+def _canonical_operation_gate(operation: Mapping[str, Any]) -> str:
+    gate = operation.get("gate")
+    if isinstance(gate, Mapping):
+        gate = gate.get("name")
+    return DEFAULT_GATE_REGISTRY.normalize(str(gate))
+
+
+def _has_explicit_parameter_change(parameters: Mapping[str, Any]) -> bool:
+    return any(key in parameters for key in ("parameters", "params", "parameterized", "parameter_count"))
+
+
+def _canonical_operation_hash(operations: Sequence[Mapping[str, Any]]) -> str:
+    return stable_hash(
+        [
+            _structural_operation_signature(operation)
+            for operation in _renumber_operations(operations)
+        ],
+    )
+
+
+def _mutation_metadata(
+    family: str,
+    status: str,
+    original_position: int | None,
+    new_position: int | None,
+    target: Mapping[str, Any] | None,
+    *,
+    operation: str | None = None,
+) -> dict[str, Any]:
+    target_gate = _canonical_operation_gate(target) if target is not None else None
+    target_qubits = list(_operation_qubits(target)) if target is not None else []
+    return {
+        "mutation_family": family,
+        "mutation_status": status,
+        "no_op_status": "skipped_noop" if status == "skipped_noop" else "not_noop",
+        "mutation_original_position": original_position,
+        "mutation_new_position": new_position,
+        "mutation_target_gate_index": original_position,
+        "mutation_target_gate_name": target_gate,
+        "mutation_target_wires": target_qubits,
+        "mutation_target_n_qubits": len(target_qubits),
+        "mutation_operation": operation or target_gate or family,
+    }
+
+
 def _child_lineage(
     *,
     child_id: str,
@@ -660,6 +1101,44 @@ def _request_parameters(request: Any) -> dict[str, Any]:
     return dict(_request_attr(request, "parameters") or {})
 
 
+def _request_with_parameter_defaults(request: Any, defaults: Mapping[str, Any]) -> dict[str, Any]:
+    if isinstance(request, Mapping):
+        payload = dict(request)
+    else:
+        to_dict = getattr(request, "to_dict", None)
+        payload = dict(to_dict()) if callable(to_dict) else {
+            "request_id": _request_attr(request, "request_id"),
+            "parent_candidate_id": _request_attr(request, "parent_candidate_id"),
+            "generation_index": _request_attr(request, "generation_index"),
+            "mutation_type": _request_attr(request, "mutation_type"),
+            "policy_id": _request_attr(request, "policy_id"),
+            "recipe_id": _request_attr(request, "recipe_id"),
+            "variant_index": _request_attr(request, "variant_index"),
+            "parent_candidate_uri": _request_attr(request, "parent_candidate_uri"),
+            "root_candidate_id": _request_attr(request, "root_candidate_id"),
+            "parameters": _request_parameters(request),
+            "metadata": _request_metadata(request),
+        }
+    payload["parameters"] = {
+        **dict(defaults),
+        **dict(payload.get("parameters") or {}),
+    }
+    return payload
+
+
+def _validate_insert_intent(gate: str, qubits: tuple[int, ...], constraints: ConstraintSet) -> None:
+    if not constraints.is_inserted_gate_allowed(gate):
+        raise GeneratorValidationError(
+            "mutation violates structural constraints: "
+            f"inserted gate {gate!r} is not allowed.",
+        )
+    if len(qubits) == 2 and not constraints.is_edge_allowed(qubits[0], qubits[1]):
+        raise GeneratorValidationError(
+            "mutation violates structural constraints: "
+            f"inserted edge {list(qubits)!r} is not allowed.",
+        )
+
+
 def _request_metadata(request: Any) -> dict[str, Any]:
     return dict(_request_attr(request, "metadata") or {})
 
@@ -725,4 +1204,10 @@ def _utc_timestamp() -> str:
     return datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
 
 
-__all__ = ["EDGE_SELECTION_MODES", "INSERTION_STRATEGIES", "InsertGateMutationFactory"]
+__all__ = [
+    "CANONICAL_MUTATION_TYPES",
+    "EDGE_SELECTION_MODES",
+    "INSERTION_STRATEGIES",
+    "CanonicalMutationFactory",
+    "InsertGateMutationFactory",
+]

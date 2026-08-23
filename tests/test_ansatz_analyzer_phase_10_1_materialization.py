@@ -15,11 +15,13 @@ import verfeinert
 from verfeinert.ansatz_analyzer import (
     AnalysisPipeline,
     AnalyzerConfig,
+    AnalyzerConfigError,
     AnalyzerExecutionPermissions,
     CircuitMaterializationConfig,
     CircuitMaterializationError,
     OperationView,
     StructuralCostConfig,
+    inspect_materialization_capability,
     materialize_candidate,
     validate_analysis_result_document,
 )
@@ -353,6 +355,81 @@ class AnalyzerPhase101MaterializationTests(unittest.TestCase):
             ),
         )
 
+    def test_materialization_capability_reports_supported_operations_and_limits(self) -> None:
+        candidate = _canonical_candidate(
+            candidate_id="phase101-capability",
+            n_qubits=2,
+            parameters=[{"parameter_id": "theta-a", "kind": "trainable", "symbol": "a"}],
+            operations=[
+                _op("op-000", "rx", [0], [_ref("theta-a")]),
+                _op("op-001", "mystery", [1]),
+            ],
+        )
+        config = CircuitMaterializationConfig(
+            enabled=True,
+            max_qubits=1,
+            max_operations=4,
+            max_trainable_parameters=1,
+        )
+
+        capability = inspect_materialization_capability(candidate, config=config)
+        payload = capability.to_dict()
+
+        self.assertIn("rx", payload["supported_operations"])
+        self.assertIn("swap", payload["supported_operations"])
+        self.assertEqual(payload["supported_parameter_kinds"], ["trainable", "fixed", "literal_operation_parameter"])
+        self.assertEqual(payload["limits"]["max_qubits"], 1)
+        self.assertFalse(payload["within_limits"])
+        self.assertEqual(payload["candidate_id"], "phase101-capability")
+        self.assertEqual(payload["unsupported_operations"][0]["gate"], "mystery")
+        self.assertEqual(payload["unsupported_operations"][0]["reason"], "unsupported_operation")
+
+    def test_materialization_config_limits_roundtrip(self) -> None:
+        config = CircuitMaterializationConfig.from_mapping(
+            {
+                "enabled": True,
+                "max_qubits": 3,
+                "max_operations": 12,
+                "max_trainable_parameters": 5,
+            },
+        )
+
+        self.assertEqual(
+            CircuitMaterializationConfig.from_mapping(config.to_dict()).to_dict(),
+            config.to_dict(),
+        )
+        with self.assertRaises(AnalyzerConfigError):
+            CircuitMaterializationConfig(max_operations=-1)
+
+    def test_materialization_resource_limits_fail_closed(self) -> None:
+        two_qubit = _canonical_candidate(candidate_id="phase101-limit-qubits", n_qubits=2)
+        with self.assertRaisesRegex(CircuitMaterializationError, "max_qubits=1"):
+            materialize_candidate(
+                two_qubit,
+                config=CircuitMaterializationConfig(enabled=True, max_qubits=1),
+            )
+
+        many_operations = _canonical_candidate(
+            candidate_id="phase101-limit-operations",
+            operations=[_op("op-000", "x", [0]), _op("op-001", "h", [0])],
+        )
+        with self.assertRaisesRegex(CircuitMaterializationError, "max_operations=1"):
+            materialize_candidate(
+                many_operations,
+                config=CircuitMaterializationConfig(enabled=True, max_operations=1),
+            )
+
+        trainable = _canonical_candidate(
+            candidate_id="phase101-limit-parameters",
+            parameters=[{"parameter_id": "theta-a", "kind": "trainable", "symbol": "a"}],
+            operations=[_op("op-000", "rx", [0], [_ref("theta-a")])],
+        )
+        with self.assertRaisesRegex(CircuitMaterializationError, "max_trainable_parameters=0"):
+            materialize_candidate(
+                trainable,
+                config=CircuitMaterializationConfig(enabled=True, max_trainable_parameters=0),
+            )
+
     def test_unsupported_operation_fails_clearly(self) -> None:
         candidate = _canonical_candidate(
             candidate_id="phase101-unsupported",
@@ -516,6 +593,20 @@ class AnalyzerPhase101MaterializationTests(unittest.TestCase):
         self.assertEqual(metric["status"], "skipped")
         self.assertIn("allow_qnode_execution", metric["metadata"]["reason"])
         self.assertFalse(metric["metadata"]["qnodes_executed"])
+
+    def test_materialization_limit_failure_is_machine_readable(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            config = _analysis_config(
+                Path(tmp),
+                selected_metrics=("expressibility",),
+                materialization=CircuitMaterializationConfig(enabled=True, max_qubits=1),
+            )
+            payload = AnalysisPipeline(config).run(CANDIDATE_EXAMPLE)[0].to_dict()
+
+        metric = payload["metrics"][0]
+        self.assertEqual(metric["status"], "failed")
+        self.assertEqual(metric["metadata"]["materialization_error_reason"], "resource_limit_exceeded")
+        self.assertIn("max_qubits=1", metric["error"])
 
     def test_workflow_passes_materialization_config_to_analyzer(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
