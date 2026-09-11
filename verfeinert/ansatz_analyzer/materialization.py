@@ -123,11 +123,51 @@ class MaterializedCircuit:
     operation_ids: tuple[str, ...]
     limits: dict[str, int | None] = field(default_factory=dict)
     materializer_version: str = MATERIALIZER_VERSION
+    circuit_body: Any = field(default=None, repr=False, compare=False)
+    qml_device: Any = field(default=None, repr=False, compare=False)
+    observable_cache: dict[int, Any] = field(default_factory=dict, repr=False, compare=False)
 
     @property
     def backend_label(self) -> str:
         """Return a compact backend label suitable for metric metadata."""
         return f"{self.backend}:{self.device}"
+
+    @property
+    def supports_parameter_broadcasting(self) -> bool:
+        """Return whether ``state_callable`` accepts a ``(batch, n_params)`` array."""
+        return self.circuit_body is not None
+
+    def observable_qnode(self, observable: Any):
+        """Return a cached QNode computing ``<psi(theta)|observable|psi(theta)>``.
+
+        The QNode shares the materialized circuit body and device, so it
+        accepts the same trainable-parameter vector (or a broadcast
+        ``(batch, n_params)`` array) as ``state_callable``.
+        """
+        if self.circuit_body is None or self.qml_device is None:
+            raise CircuitMaterializationError(
+                "observable QNodes require a circuit materialized by this module.",
+                reason="observable_unavailable",
+            )
+        key = id(observable)
+        cached = self.observable_cache.get(key)
+        if cached is not None:
+            return cached
+        qml = _require_pennylane()
+        body = self.circuit_body
+
+        def circuit(parameters):
+            body(parameters)
+            return qml.expval(observable)
+
+        qnode = qml.QNode(
+            circuit,
+            self.qml_device,
+            interface=self.interface,
+            diff_method=self.diff_method,
+        )
+        self.observable_cache[key] = qnode
+        return qnode
 
     def to_metadata(self) -> dict[str, Any]:
         """Return JSON-safe materialization metadata without runtime objects."""
@@ -173,8 +213,16 @@ def materialize_candidate(
     candidate: CandidateView | Mapping[str, Any],
     *,
     config: CircuitMaterializationConfig | None = None,
+    rotation_overrides: Mapping[str, str] | None = None,
 ) -> MaterializedCircuit:
-    """Materialize a canonical Candidate into a PennyLane state callable."""
+    """Materialize a canonical Candidate into a PennyLane state callable.
+
+    ``rotation_overrides`` optionally maps an ``operation_id`` of a
+    single-qubit rotation (``rx``/``ry``/``rz``) to the rotation gate that
+    should be applied instead. The mapping is looked up every time the circuit
+    is executed, so a mutable mapping can be updated between calls; this is
+    what gate-selection optimizers such as Rotoselect rely on.
+    """
     resolved = config or CircuitMaterializationConfig(enabled=True)
     if not resolved.enabled:
         raise CircuitMaterializationError(
@@ -196,13 +244,22 @@ def materialize_candidate(
     qml = _require_pennylane()
     device = qml.device(resolved.device, wires=list(wire_order))
 
-    def circuit(parameters):
+    def circuit_body(parameters):
         parameter_vector = _parameter_vector(
             parameters,
             expected_count=len(trainable_parameter_ids),
         )
         for operation in view.operations:
-            _apply_operation(qml, operation, parameter_vector, parameter_bindings)
+            _apply_operation(
+                qml,
+                operation,
+                parameter_vector,
+                parameter_bindings,
+                rotation_overrides=rotation_overrides,
+            )
+
+    def circuit(parameters):
+        circuit_body(parameters)
         return qml.state()
 
     qnode = qml.QNode(
@@ -228,6 +285,8 @@ def materialize_candidate(
         gate_names=tuple(operation.gate_name for operation in view.operations),
         operation_ids=tuple(operation.operation_id for operation in view.operations),
         limits=_materialization_limits(resolved),
+        circuit_body=circuit_body,
+        qml_device=device,
     )
 
 
@@ -424,25 +483,64 @@ def _validate_operations(
 
 
 def _parameter_vector(parameters, *, expected_count: int):
+    """Validate a parameter vector or a ``(batch, expected_count)`` broadcast array."""
     if parameters is None:
         if expected_count == 0:
             return ()
         raise CircuitMaterializationError(
             f"state callable expected {expected_count} trainable parameter(s), got None.",
         )
-    try:
-        count = len(parameters)
-    except TypeError as exc:
+    shape = _parameter_shape(parameters)
+    if shape is None:
         if expected_count == 1:
             return (parameters,)
         raise CircuitMaterializationError(
             f"state callable expected {expected_count} trainable parameter(s).",
-        ) from exc
-    if count != expected_count:
+        )
+    if len(shape) == 2:
+        if shape[1] != expected_count:
+            raise CircuitMaterializationError(
+                f"state callable expected {expected_count} trainable parameter(s) per batch row, "
+                f"got {shape[1]}.",
+            )
+        return _BroadcastParameters(parameters)
+    if len(shape) != 1:
         raise CircuitMaterializationError(
-            f"state callable expected {expected_count} trainable parameter(s), got {count}.",
+            "state callable parameters must be a vector or a (batch, n_params) array.",
+        )
+    if shape[0] != expected_count:
+        raise CircuitMaterializationError(
+            f"state callable expected {expected_count} trainable parameter(s), got {shape[0]}.",
         )
     return parameters
+
+
+class _BroadcastParameters:
+    """Column view over a ``(batch, n_params)`` array for PennyLane broadcasting."""
+
+    __slots__ = ("array",)
+
+    def __init__(self, array) -> None:
+        self.array = array
+
+    def __getitem__(self, index):
+        return self.array[:, int(index)]
+
+
+def _parameter_shape(parameters) -> tuple[int, ...] | None:
+    shape = getattr(parameters, "shape", None)
+    if shape is not None:
+        return tuple(int(item) for item in shape)
+    try:
+        count = len(parameters)
+    except TypeError:
+        return None
+    if count and all(getattr(item, "shape", None) is not None and len(item.shape) == 1 for item in parameters):
+        return (count, int(parameters[0].shape[0]))
+    return (count,)
+
+
+ROTATION_GATES = ("rx", "ry", "rz")
 
 
 def _apply_operation(
@@ -450,9 +548,19 @@ def _apply_operation(
     operation: OperationView,
     parameter_vector,
     parameter_bindings: Mapping[str, Mapping[str, Any]],
+    rotation_overrides: Mapping[str, str] | None = None,
 ) -> None:
     gate = operation.gate_name
     wires = list(operation.qubits)
+    if rotation_overrides and gate in ROTATION_GATES:
+        override = rotation_overrides.get(operation.operation_id)
+        if override is not None:
+            override = str(override).lower()
+            if override not in ROTATION_GATES:
+                raise CircuitMaterializationError(
+                    f"rotation override for {operation.operation_id!r} must be one of {ROTATION_GATES}, got {override!r}.",
+                )
+            gate = override
     if gate == "rx":
         qml.RX(_operation_parameter(operation, 0, parameter_vector, parameter_bindings), wires=wires[0])
     elif gate == "ry":
@@ -607,6 +715,7 @@ __all__ = [
     "MATERIALIZER_VERSION",
     "MaterializationCapability",
     "MaterializedCircuit",
+    "ROTATION_GATES",
     "SUPPORTED_GATE_NAMESPACE",
     "StateCallableProvider",
     "inspect_materialization_capability",

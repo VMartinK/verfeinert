@@ -1,0 +1,91 @@
+# Manuscript-protocol evaluation of the full Sanz19 family for an arbitrary
+# number of qubits. Override any of these from the CLI without editing the file:
+#
+#   verfeinert run examples/paper_protocol/config/tfim_paper_protocol_n6.yaml \
+#       --output-root outputs/paper-n8 --n-qubits 8 --hamiltonian heisenberg \
+#       --hamiltonian-param Jz=1.5 --trials 5
+#
+# Expressibility: 10000 fidelity pairs, 75 equal-mass bins, Expr' = -log10 DKL.
+# Trainability:   3000 uniformly sampled parameter vectors, mean gradient variance.
+# Both metrics:   5 independent trials -> mean and sample standard deviation.
+# Cost:           alpha, beta, gamma = 0.0894, 0.1966, 0.7140 (IBM Heron r2 model),
+#                 min-max normalized over the analyzed family (bounds derived
+#                 automatically, so the same file works for any n_qubits).
+run:
+  run_id: tfim-paper-protocol-n6
+  random_seed: 2026
+
+paths:
+  output_root: outputs
+
+workflow:
+  campaign_type: individual
+  scientific_execution: [generate, analyze]
+  postprocessing: [ranking, pareto, export_csv, report]
+  checkpoint:
+    enabled: true
+
+generation:
+  family: sanz19
+  template_ids: [A01, A02, A03, A04, A05, A06, A07, A08, A09, A10, A11, A12, A13, A14, A15, A16, A17, A18, A19]
+  layers: [1, 2, 3]
+  n_qubits: 6
+  candidate_id_prefix: paper
+  source_label: paper_protocol_family
+
+analyzer:
+  selected_metrics: [structural_cost, expressibility, trainability]
+  permissions:
+    allow_expensive_metrics: true
+    allow_qnode_execution: true
+  materialization:
+    enabled: true
+    backend: pennylane
+    device: default.qubit
+    interface: autograd
+    diff_method: best
+  structural_cost:
+    reference_id: paper-family
+    component_weights:
+      parameter_count: 0.0894
+      depth: 0.1966
+      two_qubit_operation_count: 0.7140
+    allow_operation_count_as_depth_proxy: true
+  metric_configs:
+    expressibility:
+      n_pairs: 10000
+      n_bins: 75
+      bin_strategy: equal_mass
+      parameter_low: 0.0
+      parameter_high: 6.283185307179586
+      n_trials: 5
+      rng_seed: 2026
+    trainability:
+      n_repeats: 3000
+      n_trials: 5
+      average_over: all
+      parameter_low: 0.0
+      parameter_high: 6.283185307179586
+      hamiltonian: tfim
+      hamiltonian_parameters:
+        J: 1.0
+        h: 1.0
+      hamiltonian_boundary: open
+      rng_seed: 2026
+  ranking:
+    score_components:
+      expressibility: 1
+      trainability: 1
+    combination: product
+    ascending: false
+  pareto:
+    objectives:
+      - metric_name: expressibility
+        direction: maximize
+      - metric_name: trainability
+        direction: maximize
+    cost_thresholds: [1.0, 0.2, 0.1]
+
+metadata:
+  example: paper_protocol
+  manuscript: "Sanz et al., Efficiently Architecting VQAs: Expressibility-Trainability-Resources Pareto-Optimality"

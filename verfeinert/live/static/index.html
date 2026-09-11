@@ -1,0 +1,738 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Verfeinert · Evolución de ansätze en vivo</title>
+<style>
+  :root {
+    --bg: #0b1020; --bg-2: #111832; --panel: #151d3a; --panel-2: #1b2547; --line: #26315c;
+    --text: #e7ecff; --muted: #8e9ac4; --accent: #38d9c6; --accent-2: #f6b73c; --danger: #ff6b8b;
+    --good: #5ee6a1; --gen0: #7aa2ff; --shadow: 0 10px 30px rgba(0,0,0,.35);
+    --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  }
+  * { box-sizing: border-box; }
+  [hidden] { display: none !important; }
+  select[multiple] { background: var(--bg-2); color: var(--text); }
+  select[multiple] option { padding: 3px 6px; }
+  select[multiple] option:checked { background: rgba(56,217,198,.25) linear-gradient(0deg, rgba(56,217,198,.25), rgba(56,217,198,.25)); color: var(--text); }
+  html, body { margin: 0; background: var(--bg); color: var(--text); font: 14px/1.45 -apple-system, BlinkMacSystemFont, "Segoe UI", Inter, Roboto, sans-serif; }
+  a { color: var(--accent); }
+  header { display: flex; align-items: center; gap: 16px; padding: 18px 28px; border-bottom: 1px solid var(--line);
+           background: linear-gradient(90deg, #0f1733, #0b1020 60%); position: sticky; top: 0; z-index: 5; }
+  header h1 { font-size: 20px; margin: 0; letter-spacing: .3px; }
+  header h1 span { color: var(--accent); }
+  header .sub { color: var(--muted); font-size: 12px; }
+  header .spacer { flex: 1; }
+  .pill { border: 1px solid var(--line); border-radius: 999px; padding: 4px 10px; font-size: 12px; color: var(--muted); background: var(--bg-2); }
+  .pill.live { color: var(--good); border-color: rgba(94,230,161,.4); }
+  .pill.live::before { content: "●"; margin-right: 6px; animation: blink 1.2s infinite; }
+  @keyframes blink { 50% { opacity: .2; } }
+  main { display: grid; grid-template-columns: 360px 1fr; gap: 20px; padding: 20px 28px 60px; max-width: 1700px; margin: 0 auto; }
+  @media (max-width: 1100px) { main { grid-template-columns: 1fr; } }
+  .card { background: var(--panel); border: 1px solid var(--line); border-radius: 14px; box-shadow: var(--shadow); padding: 18px; }
+  .card h2 { font-size: 14px; text-transform: uppercase; letter-spacing: 1.2px; color: var(--muted); margin: 0 0 12px; }
+  .card h3 { font-size: 13px; margin: 14px 0 8px; color: var(--text); }
+  .stack { display: flex; flex-direction: column; gap: 20px; }
+  label { display: block; font-size: 12px; color: var(--muted); margin: 10px 0 4px; }
+  input[type=number], input[type=text], select { width: 100%; background: var(--bg-2); color: var(--text); border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; font-size: 13px; }
+  input:focus, select:focus { outline: 2px solid rgba(56,217,198,.4); border-color: var(--accent); }
+  .row { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+  .row3 { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 10px; }
+  .ham-grid { display: grid; grid-template-columns: 1fr; gap: 8px; }
+  .ham { border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px; cursor: pointer; background: var(--bg-2); transition: .15s; }
+  .ham:hover { border-color: var(--accent); }
+  .ham.active { border-color: var(--accent); background: rgba(56,217,198,.08); box-shadow: inset 0 0 0 1px rgba(56,217,198,.3); }
+  .ham .name { font-weight: 600; }
+  .ham .def { font-family: var(--mono); font-size: 11px; color: var(--muted); margin-top: 3px; }
+  .params { display: grid; grid-template-columns: repeat(auto-fit, minmax(90px, 1fr)); gap: 8px; margin-top: 6px; }
+  .templates { display: grid; grid-template-columns: repeat(5, 1fr); gap: 6px; }
+  .tpl { text-align: center; padding: 6px 0; border: 1px solid var(--line); border-radius: 8px; background: var(--bg-2); cursor: pointer; font-size: 12px; user-select: none; }
+  .tpl.active { border-color: var(--accent-2); color: var(--accent-2); background: rgba(246,183,60,.08); }
+  .tpl-actions { display: flex; gap: 8px; margin: 8px 0 0; }
+  .tpl-actions button { flex: 1; }
+  button { background: var(--bg-2); color: var(--text); border: 1px solid var(--line); border-radius: 9px; padding: 8px 12px; font-size: 13px; cursor: pointer; transition: .15s; }
+  button:hover { border-color: var(--accent); }
+  button.primary { background: linear-gradient(135deg, #2ec4b6, #38d9c6); color: #05231f; border: none; font-weight: 700; padding: 12px; width: 100%; font-size: 14px; }
+  button.primary:disabled { opacity: .5; cursor: not-allowed; }
+  button.danger { border-color: rgba(255,107,139,.5); color: var(--danger); }
+  button.small { padding: 5px 9px; font-size: 12px; }
+  .kpis { display: grid; grid-template-columns: repeat(5, 1fr); gap: 12px; }
+  @media (max-width: 1400px) { .kpis { grid-template-columns: repeat(3, 1fr); } }
+  .kpi { background: var(--bg-2); border: 1px solid var(--line); border-radius: 12px; padding: 12px 14px; }
+  .kpi .v { font-size: 22px; font-weight: 700; font-family: var(--mono); }
+  .kpi .l { font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: .8px; }
+  .kpi .s { font-size: 11px; color: var(--muted); font-family: var(--mono); }
+  .progress { height: 8px; background: var(--bg-2); border-radius: 999px; overflow: hidden; border: 1px solid var(--line); margin: 12px 0 4px; }
+  .progress > div { height: 100%; width: 0; background: linear-gradient(90deg, var(--accent), var(--accent-2)); transition: width .4s; }
+  .status-line { font-size: 12px; color: var(--muted); font-family: var(--mono); min-height: 18px; }
+  .charts { display: grid; grid-template-columns: 3fr 2fr; gap: 20px; }
+  @media (max-width: 1300px) { .charts { grid-template-columns: 1fr; } }
+  svg text { fill: var(--muted); font-size: 11px; font-family: var(--mono); }
+  .chart-wrap { width: 100%; overflow-x: auto; }
+  table { width: 100%; border-collapse: collapse; font-size: 12.5px; }
+  th, td { padding: 7px 8px; border-bottom: 1px solid var(--line); text-align: left; white-space: nowrap; }
+  th { color: var(--muted); font-weight: 600; font-size: 11px; text-transform: uppercase; letter-spacing: .6px; position: sticky; top: 0; background: var(--panel); }
+  tbody tr { cursor: pointer; }
+  tbody tr:hover { background: rgba(56,217,198,.06); }
+  tbody tr.selected { background: rgba(246,183,60,.12); }
+  td.num { font-family: var(--mono); text-align: right; }
+  .tag { display: inline-block; padding: 1px 7px; border-radius: 999px; font-size: 11px; border: 1px solid var(--line); color: var(--muted); }
+  .tag.best { color: var(--accent-2); border-color: rgba(246,183,60,.5); }
+  .tag.pareto { color: var(--accent); border-color: rgba(56,217,198,.5); }
+  .tag.infeasible { color: var(--danger); border-color: rgba(255,107,139,.5); }
+  .table-wrap { max-height: 380px; overflow: auto; border: 1px solid var(--line); border-radius: 10px; }
+  .feed { max-height: 260px; overflow: auto; font-family: var(--mono); font-size: 12px; display: flex; flex-direction: column; gap: 4px; }
+  .feed div { padding: 4px 8px; border-left: 2px solid var(--line); background: var(--bg-2); border-radius: 0 6px 6px 0; }
+  .feed .best { border-left-color: var(--accent-2); }
+  .feed .gen { border-left-color: var(--accent); }
+  .feed .warn { border-left-color: var(--danger); }
+  .circuit-box { overflow-x: auto; background: var(--bg-2); border: 1px solid var(--line); border-radius: 10px; padding: 10px; }
+  .muted { color: var(--muted); }
+  .mono { font-family: var(--mono); }
+  .two { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 20px; }
+  .two.lb { grid-template-columns: minmax(0, 2.2fr) minmax(0, 1fr); }
+  @media (max-width: 1300px) { .two { grid-template-columns: 1fr; } }
+  .vqe-select { max-height: 180px; overflow: auto; border: 1px solid var(--line); border-radius: 10px; padding: 6px 10px; background: var(--bg-2); font-size: 12.5px; }
+  .vqe-select label { display: flex; align-items: center; gap: 8px; margin: 4px 0; color: var(--text); cursor: pointer; }
+  .amp-bars { display: grid; gap: 4px; font-family: var(--mono); font-size: 12px; }
+  .amp { display: grid; grid-template-columns: 90px 1fr 70px; align-items: center; gap: 8px; }
+  .amp .bar { height: 12px; background: var(--bg-2); border-radius: 4px; overflow: hidden; border: 1px solid var(--line); }
+  .amp .bar > div { height: 100%; background: linear-gradient(90deg, var(--accent), var(--gen0)); }
+  .hint { font-size: 11.5px; color: var(--muted); margin-top: 6px; }
+  details summary { cursor: pointer; color: var(--muted); font-size: 12px; }
+  .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+  code { font-family: var(--mono); background: var(--bg-2); padding: 1px 5px; border-radius: 4px; }
+</style>
+</head>
+<body>
+<header>
+  <div>
+    <h1><span>Verfeinert</span> · Evolución de ansätze en vivo</h1>
+    <div class="sub">Expresividad × Entrenabilidad × Coste · protocolo del manuscrito (medias ± desviación estándar sobre trials independientes)</div>
+  </div>
+  <div class="spacer"></div>
+  <span id="statusPill" class="pill">inactivo</span>
+  <span id="versionPill" class="pill">v—</span>
+</header>
+
+<main>
+  <!-- ======================= CONFIG ======================= -->
+  <aside class="stack">
+    <section class="card">
+      <h2>1 · Hamiltoniano objetivo</h2>
+      <div id="hamGrid" class="ham-grid"></div>
+      <div id="hamParams" class="params"></div>
+      <label>Condición de contorno</label>
+      <select id="boundary"><option value="open">abierta (cadena)</option><option value="periodic">periódica (anillo)</option></select>
+    </section>
+
+    <section class="card">
+      <h2>2 · Sistema y muestreo</h2>
+      <div class="row3">
+        <div><label>Qubits (n)</label><input id="nQubits" type="number" min="2" max="16" value="4"></div>
+        <div><label>Trials</label><input id="nTrials" type="number" min="1" max="20" value="3"></div>
+        <div><label>Semilla</label><input id="seed" type="number" value="12345"></div>
+      </div>
+      <label>Protocolo de muestreo</label>
+      <select id="protocol">
+        <option value="paper">Paper · 10 000 pares / 75 bins · 3 000 muestras</option>
+        <option value="fast">Rápido · 1 000 pares / 30 bins · 300 muestras</option>
+        <option value="custom">Personalizado</option>
+      </select>
+      <div id="customSampling" class="row3" hidden>
+        <div><label>Pares (Expr)</label><input id="nPairs" type="number" min="10" value="2000"></div>
+        <div><label>Bins</label><input id="nBins" type="number" min="2" value="75"></div>
+        <div><label>Muestras (Train)</label><input id="nSamples" type="number" min="10" value="1000"></div>
+      </div>
+      <div class="hint">El paper usa 3–5 trials; cada uno repite el muestreo completo con semillas independientes.</div>
+    </section>
+
+    <section class="card">
+      <h2>3 · Población inicial (Sanz19)</h2>
+      <div id="templates" class="templates"></div>
+      <div class="tpl-actions">
+        <button class="small" id="tplAll">Todas</button>
+        <button class="small" id="tplNone">Ninguna</button>
+        <button class="small" id="tplPareto">Pareto del paper</button>
+      </div>
+      <label>Capas (L), separadas por comas</label>
+      <input id="layers" type="text" value="1">
+    </section>
+
+    <section class="card">
+      <h2>4 · Evolución</h2>
+      <div class="row">
+        <div><label>Generaciones</label><input id="generations" type="number" min="0" max="200" value="5"></div>
+        <div><label>Élite (padres)</label><input id="elite" type="number" min="1" max="50" value="4"></div>
+      </div>
+      <div class="row">
+        <div><label>Hijos por padre</label><input id="children" type="number" min="1" max="30" value="3"></div>
+        <div><label>Umbral de coste (opcional)</label><input id="costThreshold" type="number" step="0.05" min="0.01" placeholder="p. ej. 0.2"></div>
+      </div>
+      <div class="row">
+        <div><label>Procesos paralelos</label><input id="workers" type="number" min="1" max="64" value="1"></div>
+        <div><label>Mutaciones</label>
+          <select id="mutations" multiple size="4"><option value="insert" selected>insertar puerta</option><option value="replace" selected>reemplazar puerta</option><option value="remove" selected>eliminar puerta</option><option value="swap" selected>intercambiar</option></select>
+        </div>
+      </div>
+      <div class="hint">Score = Expr′ × Trainability (paper). El coste normalizado usa los pesos α, β, γ del hardware IBM Heron r2 con normalización min-max de la población inicial.</div>
+      <div style="margin-top:14px; display:flex; gap:10px;">
+        <button class="primary" id="startBtn">▶ Iniciar evolución</button>
+        <button class="danger" id="cancelBtn" disabled>■</button>
+      </div>
+      <div id="configError" class="hint" style="color:var(--danger)"></div>
+    </section>
+  </aside>
+
+  <!-- ======================= LIVE ======================= -->
+  <div class="stack">
+    <section class="card">
+      <h2>Estado de la búsqueda</h2>
+      <div class="kpis">
+        <div class="kpi"><div class="l">Generación</div><div class="v" id="kGen">—</div><div class="s" id="kGenSub">de —</div></div>
+        <div class="kpi"><div class="l">Circuitos evaluados</div><div class="v" id="kEval">0</div><div class="s" id="kEvalSub">&nbsp;</div></div>
+        <div class="kpi"><div class="l">Mejor score</div><div class="v" id="kBest">—</div><div class="s" id="kBestSub">&nbsp;</div></div>
+        <div class="kpi"><div class="l">Mejor Expr′ / Train</div><div class="v" id="kET">—</div><div class="s" id="kETSub">&nbsp;</div></div>
+        <div class="kpi"><div class="l">Tiempo</div><div class="v" id="kTime">0 s</div><div class="s" id="kTimeSub">&nbsp;</div></div>
+      </div>
+      <div class="progress"><div id="progressBar"></div></div>
+      <div class="status-line" id="statusLine">Configura el Hamiltoniano, el número de qubits y los trials, y pulsa «Iniciar evolución».</div>
+    </section>
+
+    <section class="charts">
+      <div class="card">
+        <h2>Plano expresividad – entrenabilidad</h2>
+        <div class="chart-wrap"><svg id="scatter" width="100%" height="360" viewBox="0 0 760 360"></svg></div>
+        <div class="hint">Cada punto es un circuito (color = generación). Barras = ±1 σ sobre trials. Línea discontinua = frente de Pareto empírico; ★ = mejor score. Haz clic en un punto para ver el circuito.</div>
+      </div>
+      <div class="card">
+        <h2>Mejor score por generación</h2>
+        <div class="chart-wrap"><svg id="progressChart" width="100%" height="360" viewBox="0 0 480 360"></svg></div>
+        <div class="hint">Línea: mejor score global; puntos: mejor de cada generación.</div>
+      </div>
+    </section>
+
+    <section class="two lb">
+      <div class="card">
+        <h2>Clasificación (leaderboard)</h2>
+        <div class="table-wrap">
+          <table id="leaderboard">
+            <thead><tr><th>#</th><th>Circuito</th><th>Gen</th><th class="num">Score</th><th class="num">Expr′ ± σ</th><th class="num">Train ± σ</th><th class="num">Coste</th><th class="num">|P|</th><th class="num">Prof.</th><th class="num">2q</th><th></th></tr></thead>
+            <tbody></tbody>
+          </table>
+        </div>
+        <div style="display:flex; gap:8px; margin-top:10px;">
+          <button class="small" id="exportBtn" disabled>Exportar JSON de la búsqueda</button>
+        </div>
+      </div>
+      <div class="card">
+        <h2>Registro de eventos</h2>
+        <div id="feed" class="feed"></div>
+      </div>
+    </section>
+
+    <section class="card">
+      <h2>Circuito seleccionado</h2>
+      <div id="circuitMeta" class="hint">Selecciona un circuito en la tabla o en el gráfico.</div>
+      <div class="circuit-box"><svg id="circuitSvg" width="100%" height="120"></svg></div>
+      <div style="margin-top:8px; display:flex; gap:8px;">
+        <button class="small" id="downloadCandidate" disabled>Descargar Candidate JSON</button>
+      </div>
+    </section>
+
+    <!-- ======================= VQE ======================= -->
+    <section class="card">
+      <h2>Validación VQE de los mejores circuitos</h2>
+      <div class="two">
+        <div>
+          <h3>Circuitos a evaluar (por score)</h3>
+          <div id="vqeSelect" class="vqe-select"><span class="muted">Termina o cancela una búsqueda para elegir circuitos.</span></div>
+          <div style="margin-top:8px;">
+            <label>Optimizador</label>
+            <select id="vqeOptimizer"><option value="adam">Adam</option></select>
+            <div class="hint" id="vqeOptimizerHint" style="margin-top:4px;"></div>
+          </div>
+          <div class="row3" style="margin-top:8px;">
+            <div><label>Pasos</label><input id="vqeSteps" type="number" min="1" value="200"></div>
+            <div><label>Learning rate</label><input id="vqeLr" type="number" step="0.01" min="0.001" value="0.05"></div>
+            <div><label>Reinicios</label><input id="vqeRestarts" type="number" min="1" value="5"></div>
+          </div>
+          <div style="margin-top:12px; display:flex; gap:10px;">
+            <button class="primary" id="vqeBtn" disabled>⚛ Ejecutar VQE (Adam)</button>
+            <button class="danger" id="vqeCancelBtn" disabled>■</button>
+          </div>
+          <div class="hint">Configuración del paper: Adam, η = 0.05, 200 pasos, 5 inicializaciones aleatorias. Métrica: error normalizado |(E − E₀)/E₀| con E₀ por diagonalización exacta. Los demás optimizadores usan los mismos pasos y reinicios; el learning rate solo aplica a los métodos de gradiente.</div>
+        </div>
+        <div>
+          <h3>Trayectorias de energía</h3>
+          <div class="chart-wrap"><svg id="vqeChart" width="100%" height="280" viewBox="0 0 640 280"></svg></div>
+          <div class="hint" id="vqeStatus">Sin ejecuciones todavía.</div>
+        </div>
+      </div>
+      <h3>Resultados</h3>
+      <div class="table-wrap" style="max-height:260px;">
+        <table id="vqeTable">
+          <thead><tr><th>Circuito</th><th>Optimizador</th><th class="num">|P|</th><th class="num">E₀ exacta</th><th class="num">Mejor E</th><th class="num">Error norm. (mejor)</th><th class="num">Error medio ± σ</th><th class="num">Fidelidad GS</th><th class="num">Evals/reinicio</th><th class="num">Tiempo</th></tr></thead>
+          <tbody></tbody>
+        </table>
+      </div>
+      <div id="vqeAmplitudes" style="margin-top:14px;"></div>
+    </section>
+  </div>
+</main>
+
+<script>
+(function () {
+  'use strict';
+  const $ = (id) => document.getElementById(id);
+  const fmt = (v, d = 3) => (v === null || v === undefined || Number.isNaN(v)) ? '—' : Number(v).toFixed(d);
+  const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+  const PALETTE = ['#7aa2ff', '#38d9c6', '#f6b73c', '#ff6b8b', '#b388ff', '#5ee6a1', '#ffa860', '#59c2ff', '#f072d6', '#c5e06f'];
+  const genColor = (g) => PALETTE[g % PALETTE.length];
+  const PAPER_PARETO = ['A14','A13','A19','A11','A12','A08','A17','A04','A15','A10','A01'];
+
+  const state = {
+    catalog: null, hamiltonian: 'tfim', hamParams: {}, templates: new Set(),
+    runId: null, source: null, candidates: new Map(), maxGen: 0, generation: 0,
+    bestId: null, paretoIds: new Set(), genBest: [], startTime: null, timer: null,
+    selectedId: null, running: false, evaluating: new Set(),
+    vqe: { id: null, source: null, traj: {}, results: [], exact: null, running: false },
+  };
+
+  // ------------------------------------------------------------ catalog / config UI
+  if (location.protocol === 'file:') {
+    $('configError').innerHTML = 'Esta página necesita el servidor local. Ejecuta en un terminal, dentro del proyecto: <code>python3 -m verfeinert.cli serve</code> y abre <code>http://127.0.0.1:8765/</code>.';
+    $('statusLine').textContent = 'Servidor no disponible: abre la página a través de «python3 -m verfeinert.cli serve», no como archivo.';
+    $('startBtn').disabled = true;
+  }
+  fetch('/api/catalog').then(r => r.json()).then(cat => {
+    state.catalog = cat;
+    $('versionPill').textContent = 'v' + cat.version;
+    $('workers').value = cat.defaults.workers;
+    $('nTrials').value = cat.defaults.n_trials;
+    renderHamiltonians();
+    renderTemplates();
+    renderVqeOptimizers();
+    applyQueryPreset();
+  }).catch(err => {
+    if (location.protocol !== 'file:') $('configError').textContent = 'No se pudo cargar el catálogo del servidor (' + err + '). ¿Está en marcha «python3 -m verfeinert.cli serve»?';
+  });
+
+  function applyQueryPreset() {
+    const q = new URLSearchParams(location.search);
+    if (!q.size) return;
+    const setNum = (id, key) => { if (q.has(key)) $(id).value = q.get(key); };
+    setNum('nQubits', 'n_qubits'); setNum('nTrials', 'n_trials'); setNum('generations', 'generations'); setNum('elite', 'elite');
+    setNum('children', 'children'); setNum('workers', 'workers'); setNum('seed', 'seed'); setNum('layers', 'layers');
+    if (q.has('protocol')) { $('protocol').value = q.get('protocol'); $('protocol').onchange(); }
+    if (q.has('hamiltonian')) { state.hamiltonian = q.get('hamiltonian'); state.hamParams = {}; renderHamiltonians(); }
+    if (q.has('templates')) { state.templates = new Set(q.get('templates').split(',')); renderTemplates(); }
+    if (q.has('optimizer')) { $('vqeOptimizer').value = q.get('optimizer'); onVqeOptimizerChange(); }
+    if (q.has('autostart')) $('startBtn').click();
+  }
+
+  function renderHamiltonians() {
+    const grid = $('hamGrid'); grid.innerHTML = '';
+    for (const h of state.catalog.hamiltonians) {
+      const el = document.createElement('div');
+      el.className = 'ham' + (h.kind === state.hamiltonian ? ' active' : '');
+      el.innerHTML = `<div class="name">${esc(h.label)}</div><div class="def">${esc(h.definition.replace(/\s\([^()]*\)$/, ''))}</div>`;
+      el.onclick = () => { state.hamiltonian = h.kind; state.hamParams = {}; renderHamiltonians(); };
+      grid.appendChild(el);
+    }
+    renderHamParams();
+  }
+  function renderHamParams() {
+    const h = state.catalog.hamiltonians.find(x => x.kind === state.hamiltonian);
+    const box = $('hamParams'); box.innerHTML = '';
+    for (const p of h.parameters) {
+      const wrap = document.createElement('div');
+      const value = state.hamParams[p.name] !== undefined ? state.hamParams[p.name] : p.default;
+      wrap.innerHTML = `<label title="${esc(p.description)}">${esc(p.name)}</label><input type="number" step="0.1" value="${value}">`;
+      wrap.querySelector('input').oninput = (e) => { state.hamParams[p.name] = parseFloat(e.target.value); };
+      box.appendChild(wrap);
+    }
+  }
+  function renderTemplates() {
+    const box = $('templates'); box.innerHTML = '';
+    if (state.templates.size === 0) state.catalog.templates.forEach(t => state.templates.add(t.template_id));
+    for (const t of state.catalog.templates) {
+      const el = document.createElement('div');
+      el.className = 'tpl' + (state.templates.has(t.template_id) ? ' active' : '');
+      el.textContent = t.template_id; el.title = t.description;
+      el.onclick = () => { state.templates.has(t.template_id) ? state.templates.delete(t.template_id) : state.templates.add(t.template_id); renderTemplates(); };
+      box.appendChild(el);
+    }
+  }
+  $('tplAll').onclick = () => { state.templates = new Set(state.catalog.templates.map(t => t.template_id)); renderTemplates(); };
+  $('tplNone').onclick = () => { state.templates = new Set(); renderTemplates(); };
+  $('tplPareto').onclick = () => { state.templates = new Set(PAPER_PARETO); renderTemplates(); };
+  $('protocol').onchange = () => { $('customSampling').hidden = $('protocol').value !== 'custom'; };
+
+  function buildConfig() {
+    const layers = $('layers').value.split(',').map(s => parseInt(s.trim(), 10)).filter(n => n > 0);
+    if (!layers.length) throw new Error('Indica al menos una capa.');
+    if (state.templates.size === 0) throw new Error('Selecciona al menos una plantilla.');
+    const h = state.catalog.hamiltonians.find(x => x.kind === state.hamiltonian);
+    const params = {};
+    for (const p of h.parameters) params[p.name] = state.hamParams[p.name] !== undefined ? state.hamParams[p.name] : p.default;
+    const mutations = Array.from($('mutations').selectedOptions).map(o => o.value);
+    const cfg = {
+      n_qubits: parseInt($('nQubits').value, 10),
+      hamiltonian: { kind: state.hamiltonian, parameters: params, boundary: $('boundary').value },
+      n_trials: parseInt($('nTrials').value, 10),
+      protocol: $('protocol').value,
+      template_ids: Array.from(state.templates),
+      layers,
+      max_generations: parseInt($('generations').value, 10),
+      elite_size: parseInt($('elite').value, 10),
+      children_per_parent: parseInt($('children').value, 10),
+      random_seed: parseInt($('seed').value, 10),
+      workers: parseInt($('workers').value, 10),
+      mutation_types: mutations.length ? mutations : undefined,
+    };
+    if ($('costThreshold').value) cfg.cost_threshold = parseFloat($('costThreshold').value);
+    if (cfg.protocol === 'custom') {
+      cfg.n_pairs = parseInt($('nPairs').value, 10); cfg.n_bins = parseInt($('nBins').value, 10); cfg.n_samples = parseInt($('nSamples').value, 10);
+    }
+    return cfg;
+  }
+
+  // ------------------------------------------------------------ run control
+  $('startBtn').onclick = async () => {
+    $('configError').textContent = '';
+    let cfg;
+    try { cfg = buildConfig(); } catch (e) { $('configError').textContent = e.message; return; }
+    resetRun();
+    const res = await fetch('/api/runs', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(cfg) });
+    const body = await res.json();
+    if (!res.ok) { $('configError').textContent = body.error || 'error'; return; }
+    state.runId = body.run_id; state.maxGen = cfg.max_generations; state.running = true;
+    state.startTime = Date.now();
+    $('kGenSub').textContent = 'de ' + cfg.max_generations;
+    setRunning(true);
+    state.timer = setInterval(() => { $('kTime').textContent = ((Date.now() - state.startTime) / 1000).toFixed(0) + ' s'; }, 500);
+    connect(body.run_id);
+  };
+  $('cancelBtn').onclick = () => { if (state.runId) fetch(`/api/runs/${state.runId}/cancel`, { method: 'POST' }); };
+  $('exportBtn').onclick = () => { if (state.runId) window.open(`/api/runs/${state.runId}/export`, '_blank'); };
+  $('downloadCandidate').onclick = () => { if (state.runId && state.selectedId) window.open(`/api/runs/${state.runId}/candidates/${state.selectedId}`, '_blank'); };
+
+  function setRunning(on) {
+    state.running = on;
+    $('startBtn').disabled = on; $('cancelBtn').disabled = !on;
+    $('statusPill').textContent = on ? 'evolucionando' : (state.runId ? 'terminado' : 'inactivo');
+    $('statusPill').className = 'pill' + (on ? ' live' : '');
+    $('exportBtn').disabled = !state.runId;
+    if (!on && state.timer) { clearInterval(state.timer); state.timer = null; }
+    updateVqeSelect();
+  }
+  function resetRun() {
+    if (state.source) state.source.close();
+    state.candidates = new Map(); state.bestId = null; state.paretoIds = new Set(); state.genBest = []; state.generation = 0;
+    state.selectedId = null; state.evaluating = new Set();
+    $('feed').innerHTML = ''; $('leaderboard').querySelector('tbody').innerHTML = '';
+    $('kEval').textContent = '0'; $('kBest').textContent = '—'; $('kET').textContent = '—'; $('kGen').textContent = '0';
+    $('kBestSub').textContent = ''; $('kETSub').textContent = ''; $('kEvalSub').textContent = '';
+    $('progressBar').style.width = '0%';
+    drawScatter(); drawProgress(); drawCircuit(null);
+  }
+
+  function connect(runId) {
+    const src = new EventSource(`/api/runs/${runId}/events`);
+    state.source = src;
+    const on = (type, fn) => src.addEventListener(type, (e) => fn(JSON.parse(e.data)));
+    on('run_started', (e) => {
+      const h = e.hamiltonian;
+      const e0 = e.ground_state_energy;
+      log(`Inicio · ${h.label} · n=${e.config.n_qubits} · trials=${e.config.n_trials} · protocolo=${e.config.protocol}` + (e0 !== null && e0 !== undefined ? ` · E₀=${fmt(e0, 5)}` : ''), 'gen');
+      $('statusLine').textContent = `Evaluando la población inicial (${e.config.template_ids.length} plantillas × ${e.config.layers.length} capas)…`;
+    });
+    on('population_initialized', (e) => {
+      for (const c of e.candidates) state.candidates.set(c.candidate_id, c);
+      log(`Población inicial: ${e.candidates.length} circuitos`, 'gen');
+      renderAll();
+    });
+    on('candidate_evaluating', (e) => { state.evaluating.add(e.candidate_id); $('kEvalSub').textContent = 'evaluando ' + e.label; });
+    on('candidate_evaluated', (e) => {
+      const c = e.candidate; state.candidates.set(c.candidate_id, c); state.evaluating.delete(c.candidate_id);
+      if (c.status !== 'computed') log(`✗ ${c.label}: ${(c.errors || []).join('; ')}`, 'warn');
+      updateProgress(); renderAll();
+    });
+    on('new_best', (e) => {
+      const c = e.candidate; state.bestId = c.candidate_id;
+      const imp = e.improvement !== null && e.improvement !== undefined ? ` (+${fmt(e.improvement, 4)})` : '';
+      log(`★ Nuevo mejor: ${c.label} · score ${fmt(c.score, 4)}${imp}`, 'best');
+      if (!state.selectedId || state.selectedId === e.previous_best_id) selectCandidate(c.candidate_id);
+      renderAll();
+    });
+    on('generation_planned', (e) => { state.generation = e.generation; $('kGen').textContent = e.generation; $('statusLine').textContent = `Generación ${e.generation}: mutando ${e.parent_ids.length} padres…`; });
+    on('children_generated', (e) => { for (const c of e.candidates) state.candidates.set(c.candidate_id, c); log(`Generación ${e.generation}: ${e.candidates.length} circuitos nuevos`, 'gen'); renderAll(); });
+    on('generation_completed', (e) => {
+      state.generation = e.generation; state.paretoIds = new Set(e.pareto_ids);
+      state.genBest[e.generation] = { gen: e.generation, best: e.best ? e.best.score : null, genBest: e.generation_best ? e.generation_best.score : null };
+      if (e.best) state.bestId = e.best.candidate_id;
+      log(`Generación ${e.generation} completada · mejor ${e.best ? fmt(e.best.score, 4) : '—'} · Pareto: ${e.pareto_ids.length}`, 'gen');
+      $('kGen').textContent = e.generation; updateProgress(); renderAll();
+    });
+    on('log', (e) => log(e.message, e.level === 'warning' ? 'warn' : ''));
+    const finish = (label) => (e) => {
+      log(label + ` · ${e.evaluated_count} circuitos evaluados`, 'gen');
+      $('statusLine').textContent = label + '. Puedes lanzar la validación VQE con los mejores circuitos.';
+      $('progressBar').style.width = '100%';
+      setRunning(false); src.close();
+    };
+    on('run_completed', finish('Búsqueda completada'));
+    on('run_cancelled', finish('Búsqueda cancelada'));
+    on('run_failed', (e) => { log('Error: ' + e.error, 'warn'); $('statusLine').textContent = 'Error: ' + e.error; setRunning(false); src.close(); });
+    src.addEventListener('end', () => src.close());
+    src.onerror = () => { if (state.running) $('statusLine').textContent = 'Conexión perdida con el servidor…'; };
+  }
+
+  function updateProgress() {
+    const evaluated = Array.from(state.candidates.values()).filter(c => c.status === 'computed' || c.status === 'failed').length;
+    const total = state.candidates.size;
+    const genShare = state.maxGen > 0 ? state.generation / (state.maxGen + 1) : 0;
+    const within = total ? (evaluated / total) / (state.maxGen + 1) : 0;
+    $('progressBar').style.width = Math.min(100, 100 * (genShare + within)) + '%';
+    $('kEval').textContent = evaluated;
+    if (evaluated === total) $('kEvalSub').textContent = '';
+  }
+
+  function log(msg, cls) {
+    const el = document.createElement('div'); el.className = cls || '';
+    el.textContent = `[${new Date().toLocaleTimeString()}] ${msg}`;
+    const feed = $('feed'); feed.prepend(el);
+    while (feed.children.length > 300) feed.lastChild.remove();
+  }
+
+  // ------------------------------------------------------------ rendering
+  function computed() { return Array.from(state.candidates.values()).filter(c => c.status === 'computed'); }
+  function renderAll() {
+    const rows = computed().sort((a, b) => b.score - a.score);
+    const best = rows.find(r => r.candidate_id === state.bestId) || rows[0];
+    if (best) {
+      $('kBest').textContent = fmt(best.score, 4); $('kBestSub').textContent = best.label.length > 34 ? best.label.slice(0, 34) + '…' : best.label;
+      $('kET').textContent = `${fmt(best.expressibility, 3)} / ${fmt(best.trainability, 3)}`;
+      $('kETSub').textContent = `± ${fmt(best.expressibility_std, 3)} / ± ${fmt(best.trainability_std, 3)}`;
+    }
+    renderLeaderboard(rows); drawScatter(rows); drawProgress(); updateVqeSelect(rows);
+  }
+  function renderLeaderboard(rows) {
+    const tbody = $('leaderboard').querySelector('tbody'); tbody.innerHTML = '';
+    rows.slice(0, 60).forEach((c, i) => {
+      const tr = document.createElement('tr'); tr.className = c.candidate_id === state.selectedId ? 'selected' : '';
+      const tags = [];
+      if (c.candidate_id === state.bestId) tags.push('<span class="tag best">mejor</span>');
+      if (state.paretoIds.has(c.candidate_id)) tags.push('<span class="tag pareto">pareto</span>');
+      if (c.feasible === false) tags.push('<span class="tag infeasible">coste</span>');
+      tr.innerHTML = `<td class="num">${i + 1}</td><td title="${esc(c.label)}"><span style="color:${genColor(c.generation)}">●</span> ${esc(c.label.length > 40 ? c.label.slice(0, 40) + '…' : c.label)}</td>
+        <td class="num">${c.generation}</td><td class="num"><b>${fmt(c.score, 4)}</b></td>
+        <td class="num">${fmt(c.expressibility, 3)} ± ${fmt(c.expressibility_std, 3)}</td><td class="num">${fmt(c.trainability, 3)} ± ${fmt(c.trainability_std, 3)}</td>
+        <td class="num">${fmt(c.structural_cost, 3)}</td><td class="num">${c.parameter_count}</td><td class="num">${c.depth}</td><td class="num">${c.two_qubit_operation_count}</td><td>${tags.join(' ')}</td>`;
+      tr.onclick = () => selectCandidate(c.candidate_id);
+      tbody.appendChild(tr);
+    });
+  }
+  function selectCandidate(id) {
+    state.selectedId = id; const c = state.candidates.get(id);
+    drawCircuit(c); renderLeaderboard(computed().sort((a, b) => b.score - a.score)); drawScatter();
+    $('downloadCandidate').disabled = !c;
+  }
+
+  function axis(min, max, pad = 0.08) { const span = (max - min) || 1; return [min - span * pad, max + span * pad]; }
+  function drawScatter(rowsIn) {
+    const rows = rowsIn || computed();
+    const svg = $('scatter'); const W = 760, H = 360, L = 58, R = 20, T = 16, B = 44;
+    if (!rows.length) { svg.innerHTML = `<text x="${W / 2}" y="${H / 2}" text-anchor="middle">Sin circuitos evaluados todavía</text>`; return; }
+    const [x0, x1] = axis(Math.min(...rows.map(r => r.expressibility - r.expressibility_std)), Math.max(...rows.map(r => r.expressibility + r.expressibility_std)));
+    const [y0, y1] = axis(Math.min(0, ...rows.map(r => r.trainability - r.trainability_std)), Math.max(...rows.map(r => r.trainability + r.trainability_std)));
+    const sx = (v) => L + (v - x0) / (x1 - x0) * (W - L - R), sy = (v) => H - B - (v - y0) / (y1 - y0) * (H - T - B);
+    let out = '';
+    for (let i = 0; i <= 5; i++) {
+      const xv = x0 + (x1 - x0) * i / 5, yv = y0 + (y1 - y0) * i / 5;
+      out += `<line x1="${sx(xv)}" x2="${sx(xv)}" y1="${T}" y2="${H - B}" stroke="#26315c" stroke-dasharray="2 4"/><text x="${sx(xv)}" y="${H - B + 16}" text-anchor="middle">${xv.toFixed(2)}</text>`;
+      out += `<line x1="${L}" x2="${W - R}" y1="${sy(yv)}" y2="${sy(yv)}" stroke="#26315c" stroke-dasharray="2 4"/><text x="${L - 6}" y="${sy(yv) + 4}" text-anchor="end">${yv.toFixed(2)}</text>`;
+    }
+    out += `<text x="${(L + W - R) / 2}" y="${H - 6}" text-anchor="middle">Expresividad, −log₁₀ D_KL</text>`;
+    out += `<text transform="translate(14 ${(T + H - B) / 2}) rotate(-90)" text-anchor="middle">Trainability, ⟨Var[∂ₖE]⟩</text>`;
+    const pareto = rows.filter(r => state.paretoIds.has(r.candidate_id)).sort((a, b) => a.expressibility - b.expressibility);
+    if (pareto.length > 1) out += `<polyline fill="none" stroke="#38d9c6" stroke-dasharray="6 4" stroke-width="1.5" points="${pareto.map(p => `${sx(p.expressibility)},${sy(p.trainability)}`).join(' ')}"/>`;
+    for (const r of rows) {
+      const cx = sx(r.expressibility), cy = sy(r.trainability), col = genColor(r.generation);
+      out += `<line x1="${sx(r.expressibility - r.expressibility_std)}" x2="${sx(r.expressibility + r.expressibility_std)}" y1="${cy}" y2="${cy}" stroke="${col}" stroke-opacity=".5"/>`;
+      out += `<line x1="${cx}" x2="${cx}" y1="${sy(r.trainability - r.trainability_std)}" y2="${sy(r.trainability + r.trainability_std)}" stroke="${col}" stroke-opacity=".5"/>`;
+      const sel = r.candidate_id === state.selectedId;
+      out += `<circle data-id="${esc(r.candidate_id)}" cx="${cx}" cy="${cy}" r="${sel ? 7 : 5}" fill="${col}" fill-opacity="${r.feasible === false ? .3 : .9}" stroke="${sel ? '#fff' : '#0b1020'}" stroke-width="${sel ? 2 : 1}" style="cursor:pointer"><title>${esc(r.label)}\nscore ${fmt(r.score, 4)}\nExpr ${fmt(r.expressibility, 3)} ± ${fmt(r.expressibility_std, 3)}\nTrain ${fmt(r.trainability, 3)} ± ${fmt(r.trainability_std, 3)}\ncoste ${fmt(r.structural_cost, 3)}</title></circle>`;
+      if (r.candidate_id === state.bestId) out += `<text x="${cx}" y="${cy - 10}" text-anchor="middle" style="fill:#f6b73c;font-size:16px">★</text>`;
+    }
+    // legend
+    const gens = Array.from(new Set(rows.map(r => r.generation))).sort((a, b) => a - b);
+    gens.forEach((g, i) => { out += `<circle cx="${W - R - 90}" cy="${T + 10 + i * 16}" r="5" fill="${genColor(g)}"/><text x="${W - R - 80}" y="${T + 14 + i * 16}">gen ${g}</text>`; });
+    svg.innerHTML = out;
+    svg.querySelectorAll('circle[data-id]').forEach(el => { el.onclick = () => selectCandidate(el.getAttribute('data-id')); });
+  }
+  function drawProgress() {
+    const svg = $('progressChart'); const W = 480, H = 360, L = 56, R = 16, T = 16, B = 44;
+    const pts = state.genBest.filter(Boolean);
+    if (!pts.length) { svg.innerHTML = `<text x="${W / 2}" y="${H / 2}" text-anchor="middle">Esperando la primera generación</text>`; return; }
+    const ys = pts.flatMap(p => [p.best, p.genBest]).filter(v => v !== null);
+    const [y0, y1] = axis(Math.min(...ys), Math.max(...ys), 0.15);
+    const xmax = Math.max(state.maxGen, pts.length - 1, 1);
+    const sx = (g) => L + g / xmax * (W - L - R), sy = (v) => H - B - (v - y0) / (y1 - y0) * (H - T - B);
+    let out = '';
+    for (let i = 0; i <= 4; i++) { const yv = y0 + (y1 - y0) * i / 4; out += `<line x1="${L}" x2="${W - R}" y1="${sy(yv)}" y2="${sy(yv)}" stroke="#26315c" stroke-dasharray="2 4"/><text x="${L - 6}" y="${sy(yv) + 4}" text-anchor="end">${yv.toFixed(3)}</text>`; }
+    for (let g = 0; g <= xmax; g++) out += `<text x="${sx(g)}" y="${H - B + 16}" text-anchor="middle">${g}</text>`;
+    out += `<text x="${(L + W - R) / 2}" y="${H - 6}" text-anchor="middle">generación</text><text transform="translate(14 ${(T + H - B) / 2}) rotate(-90)" text-anchor="middle">score = Expr′ × Train</text>`;
+    out += `<polyline fill="none" stroke="#f6b73c" stroke-width="2" points="${pts.map(p => `${sx(p.gen)},${sy(p.best)}`).join(' ')}"/>`;
+    for (const p of pts) { if (p.genBest !== null) out += `<circle cx="${sx(p.gen)}" cy="${sy(p.genBest)}" r="5" fill="${genColor(p.gen)}"/>`; out += `<circle cx="${sx(p.gen)}" cy="${sy(p.best)}" r="3" fill="#f6b73c"/>`; }
+    svg.innerHTML = out;
+  }
+
+  // ------------------------------------------------------------ circuit drawing
+  function drawCircuit(c) {
+    const svg = $('circuitSvg');
+    if (!c) { svg.innerHTML = ''; $('circuitMeta').textContent = 'Selecciona un circuito en la tabla o en el gráfico.'; return; }
+    const n = c.n_qubits, ops = c.operations || [];
+    const cols = new Array(n).fill(-1); const placed = [];
+    for (const op of ops) { const col = Math.max(...op.qubits.map(q => cols[q])) + 1; op.qubits.forEach(q => cols[q] = col); placed.push({ op, col }); }
+    const ncol = Math.max(...cols) + 1; const cw = 46, rh = 40, left = 50, top = 20;
+    const W = left + ncol * cw + 30, H = top + n * rh + 10;
+    svg.setAttribute('width', W); svg.setAttribute('height', H); svg.setAttribute('viewBox', `0 0 ${W} ${H}`);
+    const y = (q) => top + q * rh + rh / 2, x = (col) => left + col * cw + cw / 2;
+    let out = '';
+    for (let q = 0; q < n; q++) out += `<text x="8" y="${y(q) + 4}">q${q}</text><line x1="${left - 6}" x2="${W - 10}" y1="${y(q)}" y2="${y(q)}" stroke="#4b5a94"/>`;
+    const gateColor = (g) => ({ rx: '#7aa2ff', ry: '#38d9c6', rz: '#b388ff', h: '#f6b73c', x: '#ff6b8b', y: '#ff6b8b', z: '#ff6b8b', crx: '#7aa2ff', cry: '#38d9c6', crz: '#b388ff', cx: '#e7ecff', cnot: '#e7ecff', cz: '#e7ecff', swap: '#e7ecff' }[g] || '#e7ecff');
+    for (const { op, col } of placed) {
+      const g = op.gate, cx = x(col), param = op.parameters && op.parameters.length ? op.parameters[0] : null;
+      const plabel = param ? (param.kind === 'trainable' ? `θ${param.index}` : Number(param.value).toFixed(2)) : '';
+      if (op.qubits.length === 1) {
+        const cy = y(op.qubits[0]);
+        out += `<rect x="${cx - 18}" y="${cy - 14}" width="36" height="28" rx="6" fill="#151d3a" stroke="${gateColor(g)}" stroke-width="1.5"/><text x="${cx}" y="${cy - 1}" text-anchor="middle" style="fill:#e7ecff;font-size:10.5px;font-weight:600">${esc(g.toUpperCase())}</text>`;
+        if (plabel) out += `<text x="${cx}" y="${cy + 10}" text-anchor="middle" style="font-size:9px">${esc(plabel)}</text>`;
+      } else {
+        const [a, b] = op.qubits, ya = y(a), yb = y(b);
+        out += `<line x1="${cx}" x2="${cx}" y1="${ya}" y2="${yb}" stroke="${gateColor(g)}" stroke-width="1.5"/>`;
+        if (g === 'swap') { out += `<text x="${cx}" y="${ya + 5}" text-anchor="middle" style="fill:#e7ecff;font-size:16px">×</text><text x="${cx}" y="${yb + 5}" text-anchor="middle" style="fill:#e7ecff;font-size:16px">×</text>`; }
+        else if (g === 'cz') { out += `<circle cx="${cx}" cy="${ya}" r="5" fill="#e7ecff"/><circle cx="${cx}" cy="${yb}" r="5" fill="#e7ecff"/>`; }
+        else if (g === 'cx' || g === 'cnot') { out += `<circle cx="${cx}" cy="${ya}" r="5" fill="#e7ecff"/><circle cx="${cx}" cy="${yb}" r="10" fill="none" stroke="#e7ecff" stroke-width="1.5"/><line x1="${cx - 10}" x2="${cx + 10}" y1="${yb}" y2="${yb}" stroke="#e7ecff" stroke-width="1.5"/><line x1="${cx}" x2="${cx}" y1="${yb - 10}" y2="${yb + 10}" stroke="#e7ecff" stroke-width="1.5"/>`; }
+        else { out += `<circle cx="${cx}" cy="${ya}" r="5" fill="${gateColor(g)}"/><rect x="${cx - 18}" y="${yb - 14}" width="36" height="28" rx="6" fill="#151d3a" stroke="${gateColor(g)}" stroke-width="1.5"/><text x="${cx}" y="${yb - 1}" text-anchor="middle" style="fill:#e7ecff;font-size:10px;font-weight:600">${esc(g.toUpperCase())}</text>`; if (plabel) out += `<text x="${cx}" y="${yb + 10}" text-anchor="middle" style="font-size:9px">${esc(plabel)}</text>`; }
+      }
+    }
+    svg.innerHTML = out;
+    const mut = c.mutation ? ` · mutación: ${c.mutation.type}${c.mutation.operation ? ' (' + c.mutation.operation + ')' : ''}` : '';
+    $('circuitMeta').innerHTML = `<b>${esc(c.label)}</b> <span class="mono">${esc(c.candidate_id)}</span> · gen ${c.generation}${c.parent_id ? ' · padre <span class="mono">' + esc(c.parent_id) + '</span>' : ''}${esc(mut)}<br>
+      score <b>${fmt(c.score, 4)}</b> · Expr′ ${fmt(c.expressibility, 3)} ± ${fmt(c.expressibility_std, 3)} · Train ${fmt(c.trainability, 4)} ± ${fmt(c.trainability_std, 4)} · coste ${fmt(c.structural_cost, 3)} · |P|=${c.parameter_count} · profundidad ${c.depth} · 2q ${c.two_qubit_operation_count} · ${fmt(c.elapsed_seconds, 1)} s`;
+  }
+
+  // ------------------------------------------------------------ VQE
+  const FAMILY_LABELS = { gradient: 'Basados en gradiente', natural_gradient: 'Gradiente natural', analytic: 'Analíticos (Rotosolve)', stochastic: 'Estocásticos', scipy: 'SciPy (sin gradiente / cuasi-Newton)' };
+  function vqeOptimizerSpec(key) { return ((state.catalog && state.catalog.vqe_optimizers) || []).find(o => o.key === key) || null; }
+  function vqeOptimizerLabel(key) { const o = vqeOptimizerSpec(key); return o ? o.label : key; }
+  function renderVqeOptimizers() {
+    const sel = $('vqeOptimizer'); const specs = (state.catalog && state.catalog.vqe_optimizers) || [];
+    if (!specs.length) return;
+    const current = sel.value; sel.innerHTML = '';
+    const groups = new Map();
+    for (const o of specs) { if (!groups.has(o.family)) groups.set(o.family, []); groups.get(o.family).push(o); }
+    for (const [family, items] of groups) {
+      const g = document.createElement('optgroup'); g.label = FAMILY_LABELS[family] || items[0].family_label || family;
+      for (const o of items) { const opt = document.createElement('option'); opt.value = o.key; opt.textContent = o.label + (o.key === state.catalog.vqe_defaults.optimizer ? ' (paper)' : ''); g.appendChild(opt); }
+      sel.appendChild(g);
+    }
+    sel.value = specs.some(o => o.key === current) ? current : state.catalog.vqe_defaults.optimizer;
+    onVqeOptimizerChange();
+  }
+  function onVqeOptimizerChange() {
+    const o = vqeOptimizerSpec($('vqeOptimizer').value);
+    if (!o) return;
+    $('vqeLr').disabled = !o.uses_learning_rate;
+    if (o.uses_learning_rate && o.default_learning_rate) $('vqeLr').value = o.default_learning_rate;
+    $('vqeOptimizerHint').textContent = o.description + (o.uses_learning_rate ? '' : ' (no usa learning rate)');
+    if (!state.vqe.running) $('vqeBtn').textContent = `⚛ Ejecutar VQE (${o.label})`;
+  }
+  $('vqeOptimizer').onchange = onVqeOptimizerChange;
+  function updateVqeSelect(rowsIn) {
+    const box = $('vqeSelect');
+    const rows = (rowsIn || computed().sort((a, b) => b.score - a.score)).slice(0, 12);
+    if (!rows.length || state.running) { if (!rows.length) box.innerHTML = '<span class="muted">Termina o cancela una búsqueda para elegir circuitos.</span>'; $('vqeBtn').disabled = true; return; }
+    const checked = new Set(Array.from(box.querySelectorAll('input:checked')).map(i => i.value));
+    box.innerHTML = '';
+    rows.forEach((c, i) => {
+      const l = document.createElement('label');
+      const isChecked = checked.size ? checked.has(c.candidate_id) : i < 3;
+      l.innerHTML = `<input type="checkbox" value="${esc(c.candidate_id)}" ${isChecked ? 'checked' : ''}> <span class="mono">${i + 1}.</span> ${esc(c.label.length > 44 ? c.label.slice(0, 44) + '…' : c.label)} <span class="muted mono">score ${fmt(c.score, 4)}</span>`;
+      box.appendChild(l);
+    });
+    $('vqeBtn').disabled = state.vqe.running;
+  }
+  $('vqeBtn').onclick = async () => {
+    const ids = Array.from($('vqeSelect').querySelectorAll('input:checked')).map(i => i.value);
+    if (!ids.length) { $('vqeStatus').textContent = 'Selecciona al menos un circuito.'; return; }
+    const payload = { candidate_ids: ids, optimizer: $('vqeOptimizer').value, steps: parseInt($('vqeSteps').value, 10), learning_rate: parseFloat($('vqeLr').value), restarts: parseInt($('vqeRestarts').value, 10), record_every: 2 };
+    const res = await fetch(`/api/runs/${state.runId}/vqe`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+    const body = await res.json();
+    if (!res.ok) { $('vqeStatus').textContent = body.error; return; }
+    state.vqe = { id: body.vqe_id, source: null, traj: {}, results: [], exact: null, running: true, current: null, optimizer: $('vqeOptimizer').value };
+    $('vqeBtn').disabled = true; $('vqeCancelBtn').disabled = false; $('vqeTable').querySelector('tbody').innerHTML = ''; $('vqeAmplitudes').innerHTML = '';
+    connectVqe(body.vqe_id);
+  };
+  $('vqeCancelBtn').onclick = () => { if (state.vqe.id) fetch(`/api/vqe/${state.vqe.id}/cancel`, { method: 'POST' }); };
+
+  function connectVqe(id) {
+    const src = new EventSource(`/api/vqe/${id}/events`); state.vqe.source = src;
+    const on = (type, fn) => src.addEventListener(type, (e) => fn(JSON.parse(e.data)));
+    on('vqe_started', (e) => { state.vqe.current = e.candidate_id; state.vqe.exact = e.exact_energy; state.vqe.traj[e.candidate_id] = {}; $('vqeStatus').textContent = `Optimizando ${labelOf(e.candidate_id)} con ${vqeOptimizerLabel(e.config.optimizer)} (|P|=${e.parameter_count})…`; });
+    on('vqe_step', (e) => { const t = state.vqe.traj[e.candidate_id]; (t[e.restart] = t[e.restart] || []).push([e.step, e.energy]); if (e.step % 10 === 0) drawVqe(); });
+    on('vqe_restart_completed', (e) => { $('vqeStatus').textContent = `${labelOf(e.candidate_id)} · reinicio ${e.restart + 1}: E=${fmt(e.final_energy, 5)} · error ${fmt(e.normalized_error, 4)}`; drawVqe(); });
+    on('vqe_completed', (e) => { state.vqe.results.push(e.result); renderVqeTable(); drawVqe(); });
+    const done = (msg) => () => { state.vqe.running = false; $('vqeStatus').textContent = msg; $('vqeBtn').disabled = false; $('vqeCancelBtn').disabled = true; src.close(); drawVqe(); onVqeOptimizerChange(); };
+    on('vqe_batch_completed', done('VQE completado.'));
+    on('vqe_batch_cancelled', done('VQE cancelado.'));
+    on('vqe_batch_failed', (e) => { done('Error VQE: ' + e.error)(); });
+    src.addEventListener('end', () => src.close());
+  }
+  function labelOf(id) { const c = state.candidates.get(id); return c ? c.label : id; }
+  function drawVqe() {
+    const svg = $('vqeChart'); const W = 640, H = 280, L = 62, R = 16, T = 14, B = 40;
+    const series = [];
+    const ids = Object.keys(state.vqe.traj);
+    ids.forEach((id, ci) => { for (const r of Object.keys(state.vqe.traj[id])) series.push({ id, color: PALETTE[ci % PALETTE.length], pts: state.vqe.traj[id][r] }); });
+    if (!series.length) { svg.innerHTML = `<text x="${W / 2}" y="${H / 2}" text-anchor="middle">Sin trayectorias</text>`; return; }
+    const allY = series.flatMap(s => s.pts.map(p => p[1])); if (state.vqe.exact !== null) allY.push(state.vqe.exact);
+    const [y0, y1] = axis(Math.min(...allY), Math.max(...allY), 0.1);
+    const xmax = Math.max(...series.flatMap(s => s.pts.map(p => p[0])), 1);
+    const sx = (v) => L + v / xmax * (W - L - R), sy = (v) => H - B - (v - y0) / (y1 - y0) * (H - T - B);
+    let out = '';
+    for (let i = 0; i <= 4; i++) { const yv = y0 + (y1 - y0) * i / 4; out += `<line x1="${L}" x2="${W - R}" y1="${sy(yv)}" y2="${sy(yv)}" stroke="#26315c" stroke-dasharray="2 4"/><text x="${L - 6}" y="${sy(yv) + 4}" text-anchor="end">${yv.toFixed(2)}</text>`; }
+    for (let i = 0; i <= 4; i++) { const xv = Math.round(xmax * i / 4); out += `<text x="${sx(xv)}" y="${H - B + 16}" text-anchor="middle">${xv}</text>`; }
+    out += `<text x="${(L + W - R) / 2}" y="${H - 6}" text-anchor="middle">paso · ${esc(vqeOptimizerLabel(state.vqe.optimizer || 'adam'))}</text><text transform="translate(14 ${(T + H - B) / 2}) rotate(-90)" text-anchor="middle">⟨H⟩</text>`;
+    if (state.vqe.exact !== null) out += `<line x1="${L}" x2="${W - R}" y1="${sy(state.vqe.exact)}" y2="${sy(state.vqe.exact)}" stroke="#5ee6a1" stroke-dasharray="6 4"/><text x="${W - R}" y="${sy(state.vqe.exact) - 4}" text-anchor="end" style="fill:#5ee6a1">E₀ = ${state.vqe.exact.toFixed(4)}</text>`;
+    for (const s of series) out += `<polyline fill="none" stroke="${s.color}" stroke-opacity=".75" stroke-width="1.5" points="${s.pts.map(p => `${sx(p[0])},${sy(p[1])}`).join(' ')}"/>`;
+    ids.forEach((id, ci) => { out += `<rect x="${L + 8}" y="${T + 4 + ci * 16}" width="10" height="10" fill="${PALETTE[ci % PALETTE.length]}"/><text x="${L + 22}" y="${T + 13 + ci * 16}">${esc(labelOf(id).slice(0, 40))}</text>`; });
+    svg.innerHTML = out;
+  }
+  function renderVqeTable() {
+    const tbody = $('vqeTable').querySelector('tbody'); tbody.innerHTML = '';
+    const amp = $('vqeAmplitudes'); amp.innerHTML = '';
+    for (const r of state.vqe.results) {
+      const tr = document.createElement('tr');
+      const optLabel = r.optimizer_label || vqeOptimizerLabel((r.config || {}).optimizer);
+      tr.innerHTML = `<td>${esc(labelOf(r.candidate_id))}</td><td>${esc(optLabel)}</td><td class="num">${r.parameter_count}</td><td class="num">${fmt(r.exact_energy, 5)}</td><td class="num"><b>${fmt(r.best_energy, 5)}</b></td><td class="num">${fmt(r.best_normalized_error, 5)}</td><td class="num">${fmt(r.mean_normalized_error, 4)} ± ${fmt(r.std_normalized_error, 4)}</td><td class="num">${fmt(r.ground_state_fidelity, 4)}</td><td class="num">${fmt(r.mean_evaluations, 0)}</td><td class="num">${fmt(r.elapsed_seconds, 1)} s</td>`;
+      tbody.appendChild(tr);
+      const block = document.createElement('div');
+      let generators = '';
+      if (r.selected_generators && r.selected_generators.length) {
+        const changed = r.selected_generators.filter(g => g.selected !== g.original);
+        generators = `<div class="hint">Rotoselect · generadores elegidos (${changed.length} de ${r.selected_generators.length} cambiados): ${r.selected_generators.map(g => `<span class="mono">${esc(g.parameter_id)}: ${esc(g.original.toUpperCase())}${g.selected !== g.original ? ' → <b>' + esc(g.selected.toUpperCase()) + '</b>' : ''}</span>`).join(' · ')}</div>`;
+      }
+      block.innerHTML = `<h3>Estado final de ${esc(labelOf(r.candidate_id))} · ${esc(optLabel)} · amplitudes dominantes (mejor reinicio)</h3>${generators}<div class="amp-bars">${r.top_amplitudes.map(a => `<div class="amp"><span>|${esc(a.basis)}⟩</span><div class="bar"><div style="width:${(100 * a.probability).toFixed(1)}%"></div></div><span>${(100 * a.probability).toFixed(1)} %</span></div>`).join('')}</div>`;
+      amp.appendChild(block);
+    }
+  }
+  drawScatter(); drawProgress(); drawVqe();
+})();
+</script>
+</body>
+</html>

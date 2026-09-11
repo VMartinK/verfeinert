@@ -1,0 +1,174 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<title>PROPUESTA METRICAS · Escalado del cálculo de expresividad y entrenabilidad</title>
+<style>
+  @page { size: A4; margin: 18mm 16mm 18mm 16mm; }
+  body { font: 10.5pt/1.45 "Helvetica Neue", Helvetica, Arial, sans-serif; color: #1a1f36; max-width: 178mm; margin: 0 auto; }
+  h1 { font-size: 20pt; margin: 0 0 4px; color: #0b1a3a; }
+  h2 { font-size: 13.5pt; margin: 22px 0 8px; color: #0b1a3a; border-bottom: 2px solid #38b6a6; padding-bottom: 3px; }
+  h3 { font-size: 11pt; margin: 14px 0 4px; color: #16324f; }
+  .subtitle { color: #4a5578; font-size: 10pt; margin-bottom: 14px; }
+  .meta { font-size: 9pt; color: #4a5578; border: 1px solid #d5dbea; border-radius: 6px; padding: 8px 10px; background: #f6f8fc; margin-bottom: 12px; }
+  table { border-collapse: collapse; width: 100%; font-size: 9pt; margin: 8px 0 12px; page-break-inside: avoid; }
+  th, td { border: 1px solid #cfd6e6; padding: 4px 6px; vertical-align: top; text-align: left; }
+  th { background: #e8eef9; }
+  td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
+  code { font-family: Menlo, Consolas, monospace; font-size: 8.8pt; background: #f1f4fa; padding: 0 3px; border-radius: 3px; }
+  .box { border-left: 4px solid #38b6a6; background: #f2fbf9; padding: 8px 12px; margin: 10px 0; page-break-inside: avoid; }
+  .warn { border-left-color: #e6a23c; background: #fff8ec; }
+  .prop { border: 1px solid #d5dbea; border-radius: 6px; padding: 8px 12px; margin: 10px 0; page-break-inside: avoid; }
+  .prop h3 { margin-top: 0; }
+  .tags span { display: inline-block; font-size: 8pt; border: 1px solid #b9c4dd; border-radius: 10px; padding: 1px 7px; margin-right: 4px; color: #33405e; background: #f6f8fc; }
+  ul { margin: 4px 0 8px 18px; padding: 0; }
+  li { margin: 2px 0; }
+  .small { font-size: 8.5pt; color: #4a5578; }
+  .formula { font-family: "Times New Roman", serif; font-style: italic; }
+</style>
+</head>
+<body>
+<h1>PROPUESTA METRICAS</h1>
+<div class="subtitle">Propuestas para eliminar el cuello de botella del tiempo de cómputo de expresividad y entrenabilidad por ansatz, necesarias para escalar la exploración a más qubits.</div>
+<div class="meta">
+  Proyecto <b>Verfeinert</b> · fecha 9 de septiembre de 2026 · alcance: documento de propuesta (ninguna de las medidas de la sección 4 está implementada; la sección 2 describe la línea base ya existente en el código).
+  Referencia metodológica: Sanz et al., <i>Efficiently Architecting VQAs: Expressibility–Trainability–Resources Pareto-Optimality</i> (manuscrito TQE, 2.ª revisión).
+</div>
+
+<h2>1. Diagnóstico: de dónde sale el coste</h2>
+<p>Para cada ansatz <span class="formula">U(θ)</span> con <span class="formula">|P|</span> parámetros y <span class="formula">n</span> qubits, el protocolo del manuscrito requiere, por trial:</p>
+<table>
+  <tr><th>Métrica</th><th>Muestreo</th><th>Simulaciones por trial</th><th>Con 5 trials</th><th>Coste por simulación (statevector)</th></tr>
+  <tr><td>Expresividad (Alg. 1)</td><td>N<sub>pairs</sub> = 10 000 pares, 75 bins</td><td class="num">20 000 estados</td><td class="num">100 000 estados</td><td>O(G · 2<sup>n</sup>) (G = nº de puertas)</td></tr>
+  <tr><td>Entrenabilidad (Alg. 2)</td><td>N<sub>s</sub> = 3 000 muestras de θ</td><td class="num">3 000 gradientes completos (|P| componentes)</td><td class="num">15 000 gradientes</td><td>parameter-shift: 2|P| · O(G·2<sup>n</sup>); backprop: ≈ 3–5 × O(G·2<sup>n</sup>) + memoria O(G·2<sup>n</sup>)</td></tr>
+</table>
+<p>El coste total de un ansatz escala como <span class="formula">T ≈ (N<sub>trials</sub>) · (2N<sub>pairs</sub> + c·N<sub>s</sub>) · G · 2<sup>n</sup></span>. Los tres factores independientes son (i) el <b>número de muestras</b> exigido por el estimador, (ii) el <b>coste unitario de una simulación</b> (exponencial en n) y (iii) el <b>número de ansätze</b> evaluados (en una búsqueda evolutiva, cientos o miles). Las propuestas se organizan por el factor que atacan.</p>
+
+<div class="box warn"><b>Observación clave.</b> Parte del coste medido en la versión anterior no era intrínseco al problema sino a la forma de invocar el simulador: un QNode por estado, un gradiente por muestra y una matriz densa 2<sup>n</sup>×2<sup>n</sup> para el Hamiltoniano. Ese sobrecoste ya se ha eliminado (sección 2) y define la nueva línea base sobre la que se estiman las ganancias de la sección 4.</div>
+
+<h2>2. Línea base ya implementada en Verfeinert (medida en esta sesión, n = 4, ansatz A04-L1, CPU 8 núcleos)</h2>
+<table>
+  <tr><th>Componente</th><th>Antes</th><th>Ahora</th><th class="num">Ganancia</th></tr>
+  <tr><td>Estados para expresividad</td><td>1 QNode por estado (≈1,5 ms)</td><td>Lotes por <i>parameter broadcasting</i> de PennyLane (≈9 µs/estado)</td><td class="num">≈150×</td></tr>
+  <tr><td>Gradientes para entrenabilidad</td><td>1 <code>qml.grad</code> por muestra sobre ⟨ψ|H|ψ⟩ con H denso</td><td>Un backprop por lote sobre un QNode <code>expval(H)</code> (H como suma de Paulis, sin matriz densa)</td><td class="num">≈40×</td></tr>
+  <tr><td>Protocolo completo (5 trials, 10 000 pares, 3 000 muestras)</td><td>≈ 87 s + 56 s por ansatz (extrapolado)</td><td><b>0,51 s + 0,27 s por ansatz</b> (medido)</td><td class="num">≈180×</td></tr>
+  <tr><td>Paralelismo</td><td>secuencial</td><td>procesos por candidato (motor en vivo) y multiprocessing del analizador</td><td class="num">≈ nº de núcleos</td></tr>
+  <tr><td>Reutilización</td><td>—</td><td>deduplicación estructural de hijos; caché de resultados por huella de configuración (<code>analysis_result_reuse</code>)</td><td class="num">evita repeticiones</td></tr>
+</table>
+<p class="small">La equivalencia numérica con la implementación previa está verificada: mismos números aleatorios (muestreo par a par) y mismos valores hasta 10<sup>-9</sup> en modo lote y secuencial; el fixture de referencia se reproduce dígito a dígito.</p>
+
+<h2>3. Extrapolación del coste con n (línea base actual)</h2>
+<p>Con simulación de vector de estado el tiempo por estado crece como n·2<sup>n</sup> y la memoria de un lote como <span class="formula">B · 2<sup>n</sup> · 16 bytes</span> (más los intermedios de backprop, ≈ G veces). Estimación para un ansatz con la familia Sanz19 a L = 1 (G ∝ n), protocolo completo con 5 trials, un solo proceso:</p>
+<table>
+  <tr><th class="num">n</th><th class="num">dim 2<sup>n</sup></th><th class="num">tiempo/ansatz (estimado)</th><th class="num">familia 19×3 = 57 ansätze</th><th>Comentario</th></tr>
+  <tr><td class="num">4</td><td class="num">16</td><td class="num">≈ 0,8 s</td><td class="num">≈ 1 min</td><td>medido</td></tr>
+  <tr><td class="num">8</td><td class="num">256</td><td class="num">≈ 10–20 s</td><td class="num">≈ 10–20 min</td><td>lote automático 2<sup>18</sup>/2<sup>8</sup> = 1 024 muestras</td></tr>
+  <tr><td class="num">12</td><td class="num">4 096</td><td class="num">≈ 5–10 min</td><td class="num">≈ 5–10 h</td><td>coste dominado por G·2<sup>n</sup>; 8 procesos → ≈ 1 h</td></tr>
+  <tr><td class="num">14</td><td class="num">16 384</td><td class="num">≈ 30–60 min</td><td class="num">≈ 1–2 días</td><td>límite práctico del manuscrito (n = 14) sin nuevas técnicas</td></tr>
+  <tr><td class="num">16–20</td><td class="num">65 k – 1 M</td><td class="num">horas–días</td><td class="num">semanas</td><td>inviable sin las propuestas de la sección 4</td></tr>
+</table>
+<p class="small">Estimaciones de orden de magnitud a partir de la escala 2<sup>n</sup>·n medida a n = 4 en CPU; en una búsqueda evolutiva hay que multiplicar por el número de hijos evaluados (decenas–miles).</p>
+
+<h2>4. Propuestas (no implementadas)</h2>
+<p>Cada propuesta indica el factor que ataca, la ganancia esperada, el esfuerzo y el riesgo científico (si cambia o no el estimador del manuscrito).</p>
+
+<div class="prop">
+<h3>P1 · Cribado multifidelidad y muestreo adaptativo con parada por confianza</h3>
+<div class="tags"><span>factor: nº de muestras</span><span>ganancia: 5–20× en búsquedas</span><span>esfuerzo: bajo</span><span>riesgo científico: nulo (el resultado final usa el protocolo completo)</span></div>
+<ul>
+  <li><b>Multifidelidad.</b> Evaluar todos los hijos de una generación con un presupuesto reducido (p. ej. 1 000 pares / 300 muestras / 1 trial, ya disponible como preset <code>fast</code>) y refinar con el protocolo completo solo a los que entran en el top-k o en el frente de Pareto (con margen de 1–2σ). En una búsqueda típica el 80–90 % de los hijos nunca necesita el protocolo completo.</li>
+  <li><b>Parada secuencial.</b> Acumular pares/muestras en bloques (p. ej. de 1 000) y detener cuando el intervalo de confianza bootstrap de Expr′ y de Var[∂E] es menor que una tolerancia (p. ej. 2 % relativo) o cuando ya no puede cambiar la decisión de selección (el candidato está claramente dentro o fuera del élite). El manuscrito ya observa que la entrenabilidad converge con dos órdenes de magnitud menos de varianza que la expresividad: con parada adaptativa N<sub>s</sub> puede bajar de 3 000 a unos cientos sin perder precisión.</li>
+  <li><b>Trials como reutilización.</b> Los 5 trials son 5 muestras independientes del mismo estimador: la media sobre trials equivale a un único trial 5× mayor; la desviación estándar se puede estimar por bootstrap sobre las fidelidades de una sola tirada, ahorrando hasta 5× cuando solo se necesita la barra de error.</li>
+</ul>
+</div>
+
+<div class="prop">
+<h3>P2 · Reutilización de prefijos y evaluación incremental de hijos</h3>
+<div class="tags"><span>factor: coste unitario × nº de ansätze</span><span>ganancia: 2–10× en evolución</span><span>esfuerzo: medio</span><span>riesgo científico: nulo</span></div>
+<ul>
+  <li>Las mutaciones que modifican solo la cola del circuito (inserción/reemplazo tras la posición k, o añadir una capa) comparten con el padre el prefijo <span class="formula">U<sub>1..k</sub>(θ)</span>. Si se almacenan los estados intermedios del padre para las mismas semillas de θ (o al menos los del último bloque), el hijo solo aplica las puertas nuevas: coste O(G − k) en lugar de O(G).</li>
+  <li>Requiere fijar la política de muestreo de θ por linaje (mismos números aleatorios para los parámetros heredados; nuevos solo para los parámetros añadidos) y un caché LRU de estados en disco/memoria (para n = 12 y 10 000 pares: 10 000 × 4 096 × 16 B ≈ 650 MB por circuito, viable en caché acotada).</li>
+  <li>Para gradientes, la misma idea con el <i>adjoint method</i>: el estado tras el prefijo se reutiliza y la retropropagación solo recorre la cola mutada para los parámetros nuevos; los parámetros del prefijo pueden actualizarse con el gradiente heredado corregido por el operador de la cola (exacto para inserciones al final).</li>
+</ul>
+</div>
+
+<div class="prop">
+<h3>P3 · Entrenabilidad clásicamente simulable: muestreo de puntos Clifford / propagación de Paulis</h3>
+<div class="tags"><span>factor: coste unitario (exponencial → polinómico)</span><span>ganancia: permite n = 20–100</span><span>esfuerzo: alto</span><span>riesgo científico: bajo (estimador equivalente para rotaciones de Pauli; validar contra el protocolo a n ≤ 12)</span></div>
+<ul>
+  <li>Para circuitos formados por puertas Clifford y rotaciones de Pauli (todo el conjunto Sanz19: RX, RY, RZ, CRX/CRY/CRZ descompuestas, CX, CZ, H), la varianza del gradiente respecto a θ uniforme se puede escribir como una expectación sobre un conjunto discreto de ángulos {0, π/2, π, 3π/2} (Heyraud et al., PRX Quantum 4, 040335, 2023, ref. [53] del manuscrito). En esos puntos el circuito es Clifford y cada término de <span class="formula">Var[∂<sub>k</sub>E]</span> se evalúa en tiempo polinómico con el formalismo de tableau (Aaronson–Gottesman), sin vector de estado.</li>
+  <li>Implementación: muestrear M configuraciones Clifford por parámetro k, propagar cada término de Pauli de H (TFIM, Heisenberg y Local-X son sumas de O(n) Paulis) por el circuito conjugado, y acumular (⟨∂<sub>k</sub>E⟩<sup>2</sup>) con signos exactos. Coste O(M · |P| · n<sup>2</sup> · G) frente a O(N<sub>s</sub> · G · 2<sup>n</sup>).</li>
+  <li>Alternativa complementaria: <b>propagación de Paulis truncada</b> (Angrisani et al. 2025, ref. [33]) para estimar ⟨H⟩ y su gradiente con truncamiento en peso de Pauli, especialmente eficiente en circuitos poco profundos y con ruido.</li>
+</ul>
+</div>
+
+<div class="prop">
+<h3>P4 · Expresividad a escala: estimadores sin histograma y reducción de varianza</h3>
+<div class="tags"><span>factor: nº de muestras y coste unitario</span><span>ganancia: 3–10×</span><span>esfuerzo: medio</span><span>riesgo científico: medio (métrica complementaria; mantener D<sub>KL</sub> para el resultado publicado)</span></div>
+<ul>
+  <li><b>Frame potential / momentos de fidelidad.</b> Los momentos <span class="formula">E[F<sup>t</sup>]</span> (t = 1, 2) se estiman con error O(1/√N) sin necesidad de 75 bins bien poblados; su desviación respecto a los valores Haar (<span class="formula">E[F<sup>2</sup>]<sub>Haar</sub> = 2/(N(N+1))</span>) es un proxy monótono de la expresibilidad utilizable como cribado con ≈ 10× menos pares. Además, el momento t = 2 admite evaluación exacta por Clifford/Pauli para la misma familia de circuitos que P3.</li>
+  <li><b>Corrección de sesgo del histograma.</b> Con bins de igual masa (ya implementado) el sesgo del estimador plug-in de D<sub>KL</sub> es ≈ (n<sub>bins</sub> − 1)/(2 N<sub>pairs</sub>); la corrección de Miller–Madow o el jackknife permiten reducir N<sub>pairs</sub> 2–4× manteniendo el sesgo del manuscrito.</li>
+  <li><b>Muestreo antitético / cuasi-Monte Carlo</b> para θ (secuencias de Sobol en [0, 2π)<sup>|P|</sup>): reduce la varianza del histograma para |P| moderado sin cambiar el estimador.</li>
+  <li><b>Precisión reducida.</b> Estados en <code>complex64</code> para expresividad (los overlaps solo alimentan un histograma): 2× memoria y ancho de banda, y habilita GPU en float32.</li>
+</ul>
+</div>
+
+<div class="prop">
+<h3>P5 · Backends de simulación: lightning, GPU/JAX y redes de tensores</h3>
+<div class="tags"><span>factor: coste unitario</span><span>ganancia: 5–50× (GPU); polinómico en n para circuitos poco entrelazados (MPS)</span><span>esfuerzo: bajo–medio (backends existentes en PennyLane)</span><span>riesgo científico: nulo/bajo</span></div>
+<ul>
+  <li><code>lightning.qubit</code> (C++) con diferenciación <i>adjoint</i>: memoria O(2<sup>n</sup>) en lugar de O(G · 2<sup>n</sup>) del backprop, lo que permite lotes mucho mayores a n ≥ 12; <code>lightning.gpu</code>/<code>lightning.kokkos</code> para GPU. La materialización actual ya expone <code>device</code>, <code>interface</code> y <code>diff_method</code> por configuración.</li>
+  <li>Interfaz <code>jax</code> + <code>vmap</code>/<code>jit</code> sobre <code>default.qubit</code>: compila una vez por estructura de circuito (ideal en evolución, donde miles de muestras comparten estructura) y vectoriza sobre θ en GPU.</li>
+  <li><code>default.tensor</code> (MPS/TN): para circuitos con conectividad lineal y L ≤ 3 el entrelazamiento es acotado; con dimensión de enlace χ ≈ 32–64 el coste es O(n · χ<sup>3</sup> · G), independiente de 2<sup>n</sup>. La fidelidad entre dos MPS y el gradiente de ⟨H⟩ (H local) son operaciones estándar. Adecuado para extrapolar a n = 20–50 los ansätze lineales/circulares (que son precisamente los que dominan los frentes de Pareto del manuscrito).</li>
+</ul>
+</div>
+
+<div class="prop">
+<h3>P6 · Gradientes más baratos: submuestreo de parámetros y estimadores insesgados</h3>
+<div class="tags"><span>factor: nº de muestras (|P|)</span><span>ganancia: |P|/k</span><span>esfuerzo: bajo</span><span>riesgo científico: nulo (estimador insesgado de la misma cantidad)</span></div>
+<ul>
+  <li>La métrica es un promedio sobre parámetros de <span class="formula">E[(∂<sub>k</sub>E)<sup>2</sup>]</span>. Con parameter-shift (o en hardware) basta evaluar por muestra un subconjunto aleatorio de k parámetros: el estimador sigue siendo insesgado y el coste pasa de 2|P| a 2k evaluaciones por muestra. Con backprop la ganancia es menor, pero permite fijar un presupuesto independiente de |P| (importante: |P| crece con n y L).</li>
+  <li>Estimar primero con k pequeño y asignar más muestras a los parámetros de mayor varianza (muestreo estratificado por bloque/capa).</li>
+</ul>
+</div>
+
+<div class="prop">
+<h3>P7 · Modelos sustitutos (surrogates) y aprendizaje activo en el espacio de diseño</h3>
+<div class="tags"><span>factor: nº de ansätze evaluados</span><span>ganancia: 10–100× en búsquedas</span><span>esfuerzo: medio–alto</span><span>riesgo científico: bajo si el sustituto solo preselecciona</span></div>
+<ul>
+  <li><b>Regresión sobre rasgos estructurales</b> (|P|, profundidad, nº de 2q, conectividad, conjunto de puertas, n, L): el manuscrito ya muestra que un MLP sobre el espacio de diseño predice el score Expr×Train (Fig. 7). En el motor evolutivo puede puntuar cientos de hijos candidatos en milisegundos y evaluar de verdad solo los N mejores (aprendizaje activo con criterio de mejora esperada/UCB).</li>
+  <li><b>GNN de expresividad</b> (Aktar et al., QCE 2024, ref. [52]): entrenar con los resultados acumulados por Verfeinert (cada <code>AnalysisResult</code> es un ejemplo etiquetado) y usar transferencia entre n.</li>
+  <li><b>Extrapolación en n.</b> Ajustar, por familia estructural, curvas Expr′(n) y Train(n) a partir de n = 4…10 (el manuscrito observa mesetas predecibles por L) y reservar la simulación completa para verificar únicamente los candidatos extrapolados como óptimos.</li>
+</ul>
+</div>
+
+<div class="prop">
+<h3>P8 · Ingeniería de cómputo: caché persistente, colas de trabajo y reproducibilidad</h3>
+<div class="tags"><span>factor: nº de ansätze y tiempo de pared</span><span>ganancia: 2–8× (núcleos) y cero repeticiones</span><span>esfuerzo: bajo–medio</span><span>riesgo científico: nulo</span></div>
+<ul>
+  <li>Caché persistente indexada por (hash estructural, n, configuración de métrica, semilla): los resultados de expresividad son independientes del Hamiltoniano y se reutilizan entre campañas TFIM/Heisenberg/Local-X; hoy la reutilización existe por huella de configuración dentro de un workflow.</li>
+  <li>Cola de trabajos (multiproceso local hoy; Ray/Dask o SLURM para clúster) con evaluación asíncrona: el motor evolutivo puede generar la siguiente generación en cuanto llegan resultados suficientes (evolución en <i>steady state</i>) en lugar de esperar a la generación completa.</li>
+  <li>Fijar semillas por linaje (P2) y registrar la varianza por trial permite comparar hijos y padres con ruido común (<i>common random numbers</i>), reduciendo la varianza de la diferencia de scores y, por tanto, el número de muestras necesario para decidir la selección.</li>
+</ul>
+</div>
+
+<h2>5. Priorización y hoja de ruta sugerida</h2>
+<table>
+  <tr><th>Fase</th><th>Propuestas</th><th>Ganancia acumulada esperada</th><th>Alcance en n</th></tr>
+  <tr><td><b>Corto plazo</b> (días)</td><td>P1 (multifidelidad + parada por confianza), P6, P8 (caché por hash estructural), P5 (<code>lightning.qubit</code> + adjoint)</td><td>10–50× sobre la línea base actual en búsquedas evolutivas</td><td>n ≤ 12 interactivo; n = 14–16 por lotes</td></tr>
+  <tr><td><b>Medio plazo</b> (semanas)</td><td>P2 (evaluación incremental), P4 (momentos de fidelidad + corrección de sesgo, complex64), P5 (GPU/JAX)</td><td>otro 5–20×</td><td>n ≤ 16–18 interactivo</td></tr>
+  <tr><td><b>Largo plazo</b> (meses)</td><td>P3 (Clifford/Pauli), P5 (MPS), P7 (surrogates + aprendizaje activo)</td><td>coste polinómico en n para la familia Sanz19 y sus mutaciones</td><td>n = 20–100 para circuitos poco profundos</td></tr>
+</table>
+
+<div class="box">
+<b>Criterio de validación común a todas las propuestas.</b> Cualquier estimador acelerado debe compararse contra el protocolo completo del manuscrito (10 000 pares / 75 bins / 3 000 muestras / 5 trials) en n = 4…10 con la familia Sanz19 completa, reportando (i) el error relativo de Expr′ y Train, (ii) la coincidencia de los frentes de Pareto y del top-k por score, y (iii) la correlación de Spearman con el error VQE (Tabla 5 del manuscrito). Verfeinert ya dispone de los artefactos (<code>AnalysisResult</code>, comparación con huellas de compatibilidad, VQE en <code>verfeinert.live</code>) necesarios para automatizar esta validación.
+</div>
+
+<h2>6. Resumen ejecutivo</h2>
+<ul>
+  <li>El cuello de botella tiene tres factores: muestras por estimador, coste exponencial por simulación y número de ansätze. La línea base actual ya elimina el sobrecoste de invocación (≈180× medido) pero sigue siendo exponencial en n.</li>
+  <li>Sin cambiar la metodología publicada, el cribado multifidelidad, la parada adaptativa, el submuestreo de parámetros, la evaluación incremental y la caché ofrecen entre 10× y 100× adicionales en búsquedas evolutivas.</li>
+  <li>Para superar n ≈ 14–16 hace falta cambiar el simulador (MPS, GPU) o el estimador (puntos Clifford / propagación de Paulis para la entrenabilidad y momentos de fidelidad para la expresividad), manteniendo el protocolo del manuscrito como referencia de validación en n pequeño.</li>
+</ul>
+</body>
+</html>

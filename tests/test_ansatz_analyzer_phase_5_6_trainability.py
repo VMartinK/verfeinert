@@ -87,9 +87,24 @@ class AnalyzerPhase56TrainabilityTests(unittest.TestCase):
         self.assertAlmostEqual(energy_from_state_local_x(zero, n_qubits=1), 0.0)
         self.assertAlmostEqual(energy_from_state_local_x(plus, n_qubits=1), 1.0)
 
-    def test_trainability_config_rejects_tfim(self) -> None:
+    def test_trainability_config_rejects_unknown_hamiltonian(self) -> None:
         with self.assertRaises(ValueError):
-            TrainabilityConfig(hamiltonian="tfim")
+            TrainabilityConfig(hamiltonian="not-a-hamiltonian")
+        with self.assertRaises(ValueError):
+            TrainabilityConfig(hamiltonian="tfim", hamiltonian_parameters={"Jx": 1.0})
+
+    def test_trainability_config_accepts_manuscript_hamiltonians(self) -> None:
+        tfim = TrainabilityConfig(hamiltonian="ising", hamiltonian_parameters={"J": 0.5})
+        self.assertEqual(tfim.hamiltonian, "tfim")
+        self.assertEqual(tfim.hamiltonian_kind, "tfim")
+        self.assertEqual(tfim.hamiltonian_parameters, {"J": 0.5, "h": 1.0})
+        heisenberg = TrainabilityConfig.from_mapping(
+            {"hamiltonian": {"kind": "heisenberg", "parameters": {"Jz": 2.0}}},
+        )
+        self.assertEqual(heisenberg.hamiltonian_parameters, {"Jx": 1.0, "Jy": 1.0, "Jz": 2.0, "h": 0.0})
+        legacy = TrainabilityConfig(hamiltonian_kind="sum_x", hamiltonian_scale=2.0)
+        self.assertEqual(legacy.hamiltonian, "local_x")
+        self.assertEqual(legacy.hamiltonian_parameters, {"h": 2.0})
 
     def test_direct_trainability_metric_is_deterministic(self) -> None:
         view = _candidate_view()
