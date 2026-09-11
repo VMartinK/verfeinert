@@ -143,6 +143,8 @@ development material, not runtime or package dependencies.
 ## Document Map
 
 - `core.md`: shared primitives and dependency boundaries.
+- `hamiltonians_and_protocol.md`: benchmark Hamiltonians, manuscript
+  protocol presets, multi-trial/batched metrics and the live engine.
 - `data_model.md`: canonical artifacts, identity, and provenance.
 - `schemas.md`: schema versioning and JSON Schema contracts.
 - `data_and_output_policy.md`: source/input/output separation.

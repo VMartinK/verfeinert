@@ -8,6 +8,8 @@ from verfeinert.ansatz_generator.operations import PARAMETERIZED_GATES
 
 
 SANZ19_TEMPLATE_IDS = tuple(f"A{i:02d}" for i in range(1, 20))
+# Layer counts used by the Sanz19 reference study. Any positive layer count is
+# accepted by the builders; this tuple only documents the reference sweep.
 SUPPORTED_SANZ19_LAYERS = (1, 2, 3)
 
 
@@ -83,8 +85,8 @@ def build_sanz19_candidate_record(
     """Return one base Sanz19 parent candidate record."""
     normalized_template = normalize_sanz19_template_id(template_id)
     normalized_layer = int(layer)
-    if normalized_layer not in SUPPORTED_SANZ19_LAYERS:
-        raise ValueError(f"layer must be one of {SUPPORTED_SANZ19_LAYERS}")
+    if normalized_layer < 1:
+        raise ValueError("layer must be a positive integer.")
     circuit_id = f"SANZ19-{normalized_template}-L{normalized_layer}"
     operations = build_sanz19_operations(
         normalized_template,

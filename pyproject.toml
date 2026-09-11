@@ -32,6 +32,7 @@ dependencies = [
     "numpy>=1.26",
     "pennylane>=0.36",
     "referencing>=0.30",
+    "scipy>=1.10",
 ]
 
 [project.urls]
@@ -49,6 +50,9 @@ dev = [
 quantum = [
     "joblib",
 ]
+scipy = [
+    "scipy",
+]
 visualization = [
     "matplotlib",
 ]
@@ -59,6 +63,7 @@ include = ["verfeinert*"]
 
 [tool.setuptools.package-data]
 "verfeinert.schemas" = ["*.schema.json"]
+"verfeinert.live" = ["static/*.html"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

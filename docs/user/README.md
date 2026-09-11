@@ -204,6 +204,14 @@ final stopping reason when evolution ran. Traceability rows connect candidate
 IDs, structural and lineage hashes, AnalysisResult IDs, available metric
 values, selection roles, and stopping facts.
 
+## Scientific Overrides And Live UI
+
+`run` and `validate` accept `--n-qubits`, `--hamiltonian` (`local_x`, `tfim`
+or `ising`, `heisenberg`), repeatable `--hamiltonian-param NAME=VALUE`,
+`--trials` and `--protocol paper|fast`, which rewrite the workflow mapping
+before validation. `verfeinert serve` starts the interactive evolution page
+described in `live_ui.md`.
+
 ## Official Examples
 
 - `cx01_reproduction.md`: CX-01 individual reproduction workflow with a fast
@@ -212,6 +220,9 @@ values, selection roles, and stopping facts.
 - `mixt5g_reproduction.md`: MIXT-5G evolutionary reproduction with a bounded
   smoke profile, documented full schedule, and a declarative full-lite CLI
   config.
+- `examples/paper_protocol/`: manuscript-protocol evaluation of the full
+  Sanz19 family for any qubit count and Hamiltonian.
+- `live_ui.md`: the `verfeinert serve` web UI (live evolution + VQE).
 
 Both examples write artifacts only under caller-provided output roots. The
 full-lite configs are CI-friendly and compute selected metrics with tiny

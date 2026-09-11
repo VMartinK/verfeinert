@@ -41,6 +41,11 @@ class AnsatzGeneratorSanz19MutationTests(unittest.TestCase):
         self.assertEqual(len(records), 57)
         self.assertEqual(records[0]["circuit_id"], "SANZ19-A01-L1")
         self.assertEqual(records[-1]["circuit_id"], "SANZ19-A19-L3")
+        deeper = build_sanz19_candidate_record("A14", 5, n_qubits=3)
+        self.assertEqual(deeper["circuit_id"], "SANZ19-A14-L5")
+        self.assertEqual(len(deeper["operations"]), 5 * len(build_sanz19_candidate_record("A14", 1, n_qubits=3)["operations"]))
+        with self.assertRaises(ValueError):
+            build_sanz19_candidate_record("A14", 0)
 
         a02_ops = build_sanz19_operations("A02", n_qubits=4, n_layers=1)
         self.assertEqual(a02_ops[0]["gate"], "rx")

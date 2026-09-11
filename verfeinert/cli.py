@@ -22,6 +22,8 @@ from verfeinert.workflow import (
     render_workflow_report_markdown,
     run_workflow,
 )
+from verfeinert.ansatz_analyzer.metrics.hamiltonians import HAMILTONIAN_KINDS, HamiltonianError
+from verfeinert.ansatz_analyzer.metrics.protocol import PROTOCOL_NAMES, apply_protocol_to_workflow_mapping
 from verfeinert.ansatz_analyzer.visualization import VisualizationDependencyError
 
 
@@ -47,6 +49,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         help="path to a workflow YAML configuration (JSON is also accepted)",
     )
     validate_parser.add_argument("--output-root", default=None, help="override paths.output_root")
+    _add_scientific_overrides(validate_parser)
 
     run_parser = subparsers.add_parser("run", help="run a workflow config")
     run_parser.add_argument(
@@ -54,6 +57,16 @@ def main(argv: Sequence[str] | None = None) -> int:
         help="path to a workflow YAML configuration (JSON is also accepted)",
     )
     run_parser.add_argument("--output-root", default=None, help="override paths.output_root")
+    _add_scientific_overrides(run_parser)
+
+    serve_parser = subparsers.add_parser(
+        "serve",
+        help="start the local live-evolution web UI (Hamiltonian, qubits, trials, VQE)",
+    )
+    serve_parser.add_argument("--host", default="127.0.0.1", help="bind host (default 127.0.0.1)")
+    serve_parser.add_argument("--port", type=int, default=8765, help="bind port (default 8765)")
+    serve_parser.add_argument("--no-browser", action="store_true", help="do not open a browser tab")
+    serve_parser.add_argument("--verbose", action="store_true", help="log HTTP requests")
 
     resume_parser = subparsers.add_parser("resume", help="resume from a workflow checkpoint")
     resume_parser.add_argument(
@@ -77,16 +90,26 @@ def main(argv: Sequence[str] | None = None) -> int:
     )
 
     args = parser.parse_args(argv)
+    if args.command == "serve":
+        from verfeinert.live.server import serve
+
+        return serve(args.host, args.port, open_browser=not args.no_browser, verbose=args.verbose)
     if args.command == "validate":
         try:
-            config = _load_workflow_config(args.config, output_root=args.output_root)
+            overrides = _scientific_overrides(args)
+            config = _load_workflow_config(args.config, output_root=args.output_root, overrides=overrides)
         except (CliError, CoreValidationError, ValueError) as exc:
             _print_error(exc)
             return CONFIG_ERROR_EXIT_CODE
         print(json.dumps(_validation_summary(config, config_path=args.config), sort_keys=True))
         return 0
     if args.command == "run":
-        return _run_command(args.config, output_root=args.output_root)
+        try:
+            overrides = _scientific_overrides(args)
+        except (CliError, ValueError) as exc:
+            _print_error(exc)
+            return CONFIG_ERROR_EXIT_CODE
+        return _run_command(args.config, output_root=args.output_root, overrides=overrides)
     if args.command == "resume":
         return _resume_command(
             args.checkpoint_or_run,
@@ -105,9 +128,73 @@ def main(argv: Sequence[str] | None = None) -> int:
     return CONFIG_ERROR_EXIT_CODE
 
 
-def _run_command(config_path: str | Path, *, output_root: str | Path | None) -> int:
+def _add_scientific_overrides(parser: argparse.ArgumentParser) -> None:
+    group = parser.add_argument_group("scientific overrides")
+    group.add_argument("--n-qubits", type=int, default=None, help="override generation.n_qubits")
+    group.add_argument(
+        "--hamiltonian",
+        default=None,
+        help=f"trainability cost Hamiltonian: one of {HAMILTONIAN_KINDS} (aliases: ising, sum_x)",
+    )
+    group.add_argument(
+        "--hamiltonian-param",
+        action="append",
+        default=[],
+        metavar="NAME=VALUE",
+        help="Hamiltonian parameter override, e.g. J=1.0 or h=0.5 (repeatable)",
+    )
+    group.add_argument("--trials", type=int, default=None, help="independent metric trials (manuscript: 3-5)")
+    group.add_argument(
+        "--protocol",
+        choices=PROTOCOL_NAMES,
+        default=None,
+        help="apply a sampling protocol preset (paper: 10000 pairs/75 bins, 3000 samples)",
+    )
+
+
+def _scientific_overrides(args: argparse.Namespace) -> dict[str, Any]:
+    parameters: dict[str, float] = {}
+    for item in getattr(args, "hamiltonian_param", []) or []:
+        if "=" not in item:
+            raise CliError(f"--hamiltonian-param expects NAME=VALUE, got {item!r}")
+        name, raw = item.split("=", 1)
+        try:
+            parameters[name.strip()] = float(raw)
+        except ValueError as exc:
+            raise CliError(f"--hamiltonian-param {name!r} must be numeric.") from exc
+    return {
+        "n_qubits": getattr(args, "n_qubits", None),
+        "hamiltonian": getattr(args, "hamiltonian", None),
+        "hamiltonian_parameters": parameters or None,
+        "n_trials": getattr(args, "trials", None),
+        "protocol": getattr(args, "protocol", None),
+    }
+
+
+def _apply_overrides(mapping: Mapping[str, Any], overrides: Mapping[str, Any] | None) -> dict[str, Any]:
+    if not overrides or not any(value is not None for value in overrides.values()):
+        return dict(mapping)
     try:
-        result = _run_config(config_path, output_root=output_root)
+        return apply_protocol_to_workflow_mapping(
+            mapping,
+            protocol=overrides.get("protocol"),
+            n_qubits=overrides.get("n_qubits"),
+            n_trials=overrides.get("n_trials"),
+            hamiltonian=overrides.get("hamiltonian"),
+            hamiltonian_parameters=overrides.get("hamiltonian_parameters"),
+        )
+    except HamiltonianError as exc:
+        raise CliError(str(exc)) from exc
+
+
+def _run_command(
+    config_path: str | Path,
+    *,
+    output_root: str | Path | None,
+    overrides: Mapping[str, Any] | None = None,
+) -> int:
+    try:
+        result = _run_config(config_path, output_root=output_root, overrides=overrides)
     except VisualizationDependencyError as exc:
         print(
             "verfeinert: error: visualization extra is required for "
@@ -164,8 +251,13 @@ def _resume_command(
     return 0
 
 
-def _run_config(config_path: str | Path, *, output_root: str | Path | None):
-    config = _load_workflow_config(config_path, output_root=output_root)
+def _run_config(
+    config_path: str | Path,
+    *,
+    output_root: str | Path | None,
+    overrides: Mapping[str, Any] | None = None,
+):
+    config = _load_workflow_config(config_path, output_root=output_root, overrides=overrides)
     return run_workflow(config)
 
 
@@ -173,8 +265,10 @@ def _load_workflow_config(
     config_path: str | Path,
     *,
     output_root: str | Path | None,
+    overrides: Mapping[str, Any] | None = None,
 ) -> WorkflowConfig:
-    return WorkflowConfig.from_mapping(_with_output_root(_load_config_mapping(config_path), output_root))
+    mapping = _apply_overrides(_load_config_mapping(config_path), overrides)
+    return WorkflowConfig.from_mapping(_with_output_root(mapping, output_root))
 
 
 def _load_config_mapping(config_path: str | Path) -> dict[str, Any]:

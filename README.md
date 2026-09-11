@@ -36,7 +36,10 @@ verfeinert
 - reference-based evolver population, mutation, selection, and EvolutionRun
   export foundations;
 - workflow runner and researcher-facing CX-01 and MIXT-5G reproducibility
-  examples.
+  examples;
+- parametrized Local-X / Ising / Heisenberg Hamiltonians, multi-trial
+  manuscript-protocol metrics for any qubit count, and a live evolution web UI
+  with VQE validation (`verfeinert serve`).
 
 ## Installation
 
@@ -160,6 +163,51 @@ config = AnalyzerConfig.from_mapping({
 
 Automatic materialization is disabled by default. Explicit user-provided state
 callables still take precedence over automatic materialization.
+
+## Manuscript Protocol For Any Number Of Qubits
+
+Trainability supports the three benchmark Hamiltonians of the reference
+manuscript with user-selectable parameters, and both expensive metrics can be
+repeated over independent trials (mean +- standard deviation):
+
+```yaml
+analyzer:
+  metric_configs:
+    expressibility: {n_pairs: 10000, n_bins: 75, bin_strategy: equal_mass, n_trials: 5}
+    trainability:
+      n_repeats: 3000
+      n_trials: 5
+      average_over: all
+      hamiltonian: tfim            # local_x | tfim (ising) | heisenberg
+      hamiltonian_parameters: {J: 1.0, h: 1.0}
+```
+
+The same settings can be injected into any workflow from the CLI, together
+with the qubit count:
+
+```bash
+verfeinert run examples/paper_protocol/config/tfim_paper_protocol_n6.yaml \
+  --output-root outputs/paper-n8 --n-qubits 8 \
+  --hamiltonian heisenberg --hamiltonian-param Jz=1.5 --trials 5 --protocol paper
+```
+
+Materialized circuits are simulated with PennyLane parameter broadcasting, so
+the full protocol takes about one second per 4-qubit circuit. See
+`docs/architecture/hamiltonians_and_protocol.md` and `PROPUESTA METRICAS.pdf`
+(scaling proposals).
+
+## Live Evolution UI
+
+```bash
+verfeinert serve
+```
+
+opens a local web page where you choose the Hamiltonian and its parameters,
+the number of qubits and trials, watch the evolutionary search discover better
+circuits in real time (expressibility-trainability plane, Pareto front,
+leaderboard, circuit diagrams) and validate the best-scoring circuits with a
+VQE (Adam, 200 steps, 5 restarts, normalized energy error and ground-state
+fidelity). See `docs/user/live_ui.md`.
 
 ## Artifact-Oriented Workflows
 

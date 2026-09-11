@@ -41,6 +41,12 @@ from .models import (
     MetricRecord,
     OperationView,
 )
+from .metrics.hamiltonians import HamiltonianSpec, hamiltonian_catalog
+from .metrics.protocol import (
+    apply_protocol_to_workflow_mapping,
+    protocol_metric_configs,
+    protocol_summary,
+)
 from .materialization import (
     CircuitMaterializationError,
     MaterializationCapability,
@@ -104,6 +110,7 @@ __all__ = [
     "CompatibilityIssue",
     "CompatibilityReport",
     "CostRecord",
+    "HamiltonianSpec",
     "MaterializationCapability",
     "MaterializedCircuit",
     "MetricRecord",
@@ -119,6 +126,7 @@ __all__ = [
     "StructuralCostConfig",
     "analyze_and_write",
     "analyze_candidates",
+    "apply_protocol_to_workflow_mapping",
     "build_analysis_context",
     "build_analysis_result_record",
     "compare_analysis_collections",
@@ -126,12 +134,15 @@ __all__ = [
     "compute_pareto_classifications",
     "cost_value",
     "dominates",
+    "hamiltonian_catalog",
     "load_candidate_document",
     "load_candidate_views",
     "inspect_materialization_capability",
     "make_state_callable",
     "materialize_candidate",
     "metric_value",
+    "protocol_metric_configs",
+    "protocol_summary",
     "rank_analysis_results",
     "read_comparison_result_json",
     "validate_analysis_result_document",

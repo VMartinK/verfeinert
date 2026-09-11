@@ -2,6 +2,58 @@
 
 All notable changes to Verfeinert will be documented in this file.
 
+## Unreleased - n-qubit manuscript protocol, benchmark Hamiltonians, live UI
+
+### Scientific Metrics
+
+- Added `verfeinert.ansatz_analyzer.metrics.hamiltonians` with parametrized
+  Local-X, transverse-field Ising (`J`, `h`) and Heisenberg (`Jx`, `Jy`, `Jz`,
+  `h`) Hamiltonians for any qubit count (Pauli terms, PennyLane observable,
+  sparse/dense matrices, exact ground state). Trainability accepts
+  `hamiltonian`, `hamiltonian_parameters` and `hamiltonian_boundary`; legacy
+  `hamiltonian_kind: sum_x` / `hamiltonian_scale` still work and Local-X
+  metadata is unchanged.
+- Added multi-trial estimation (`n_trials`) to expressibility and trainability
+  with mean, sample standard deviation and per-trial metadata, equal-mass Haar
+  bins (`bin_strategy: equal_mass`) and the `average_over: all` estimator
+  (manuscript Eq. 10). `n_trials=1` reproduces earlier artifacts exactly.
+- Added PennyLane parameter-broadcast batching for materialized circuits (both
+  metrics) and `expval`-QNode gradients for trainability, removing the dense
+  `2^n x 2^n` matrix from the materialized path (roughly 40-150x faster).
+- Added `verfeinert.ansatz_analyzer.metrics.protocol` presets reproducing the
+  manuscript sampling (10000 pairs / 75 equal-mass bins / 3000 gradient
+  samples / 5 trials), IBM Heron r2 cost weights, `Expr x Train` ranking and
+  Pareto cost thresholds.
+- Comparison compatibility now includes Hamiltonian parameters and boundary.
+
+### CLI, Live UI And Examples
+
+- `verfeinert run|validate` accept `--n-qubits`, `--hamiltonian`,
+  `--hamiltonian-param NAME=VALUE`, `--trials` and `--protocol paper|fast`.
+- Added `verfeinert serve`: a local web UI (`verfeinert.live`) to choose the
+  Hamiltonian, qubits and trials, watch an elitist mutation search improve
+  circuits in real time (SSE), inspect circuits, export Candidate JSON and run
+  the manuscript VQE (Adam, 0.05, 200 steps, 5 restarts) on the best circuits.
+- The live VQE (`verfeinert.live.VQEConfig(optimizer=...)`, `POST
+  /api/runs/<id>/vqe`, UI selector) supports, besides Adam and gradient
+  descent, Momentum, Nesterov, RMSProp, Adagrad, quantum natural gradient,
+  SPSA, Rotosolve, Rotoselect and the SciPy methods COBYLA, Nelder-Mead,
+  Powell and L-BFGS-B. Rotosolve/Rotoselect use an exact Fourier
+  reconstruction per parameter (frequency spectra derived from the gates,
+  including controlled rotations); Rotoselect reports the selected RX/RY/RZ
+  generators. Results include per-restart `iterations` and `evaluations`;
+  `GET /api/catalog` exposes `vqe_optimizers`.
+- `materialize_candidate` accepts `rotation_overrides` (operation id ->
+  `rx`/`ry`/`rz`) to swap single-qubit rotation generators at execution time.
+- `build_sanz19_candidate_record` (and therefore the live UI *Capas* field and
+  the CLI `layers`) accepts any positive layer count; `SUPPORTED_SANZ19_LAYERS`
+  now only documents the reference sweep `(1, 2, 3)`.
+- Added `examples/paper_protocol/` and `docs/user/live_ui.md`,
+  `docs/architecture/hamiltonians_and_protocol.md`, and
+  `PROPUESTA METRICAS.pdf` (scaling proposals for metric computation).
+- `scipy` is now a runtime dependency (sparse Hamiltonians and exact ground
+  states); `verfeinert.live` static assets ship as package data.
+
 ## v0.4.0 - 2026-08-21 - Declarative Scientific Workflow Productization
 
 ### Workflow Product Surface

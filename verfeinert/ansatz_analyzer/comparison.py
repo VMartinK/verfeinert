@@ -651,6 +651,8 @@ def _metric_fingerprint(metric_name: str, metric: Mapping[str, Any]) -> dict[str
                     "hamiltonian_kind": metadata.get("hamiltonian_kind"),
                     "hamiltonian_definition": metadata.get("hamiltonian_definition"),
                     "hamiltonian_scale": metadata.get("hamiltonian_scale"),
+                    "hamiltonian_parameters": metadata.get("hamiltonian_parameters"),
+                    "hamiltonian_boundary": metadata.get("hamiltonian_boundary"),
                 },
                 "value_schema": _value_schema(metric.get("value")),
             },
@@ -786,6 +788,8 @@ def _without_runtime_noise(configuration: Mapping[str, Any]) -> dict[str, Any]:
         "max_total_qnode_calls",
         "max_gradient_components",
         "max_parameters_per_circuit",
+        "batch_size",
+        "max_batch_state_elements",
     }
     return {
         key: value
